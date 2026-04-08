@@ -2,6 +2,7 @@
 
 ## 项目结构
 
+```
 dpsk-opc/                          # 主 Git 仓库
 ├── .gitmodules
 ├── .gitignore
@@ -100,3 +101,4 @@ dpsk-opc/                          # 主 Git 仓库
 │
 └── sandbox_images/                # 可选：沙箱镜像
     └── ...
+```
