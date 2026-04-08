@@ -1,0 +1,3 @@
+[submodule "security"]
+	path = security
+	url = git@github.com:dpsk-opc/opc-security-kernel.git
