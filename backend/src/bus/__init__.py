@@ -2,6 +2,11 @@
 
 This module provides the core message bus functionality for agent communication.
 
+from __future__ import annotations must be at the very top of the file.
+"""
+
+from __future__ import annotations
+
 ================================================================================
                            BUS 通信使用指南
 ================================================================================

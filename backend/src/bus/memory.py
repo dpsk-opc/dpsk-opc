@@ -4,11 +4,13 @@ This module provides an in-memory implementation of the message bus,
 suitable for development and testing.
 """
 
+from __future__ import annotations
+
 import asyncio
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 from src.bus.models import (
     AggregationPolicy,
@@ -38,7 +40,7 @@ class PendingRequest:
 
     request: TaskRequest
     future: asyncio.Future[TaskResponse]
-    timeout_handle: asyncio.TimerHandle | None = None
+    timeout_handle: Optional[asyncio.TimerHandle] = None
 
 
 @dataclass

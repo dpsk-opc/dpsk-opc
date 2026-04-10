@@ -22,7 +22,7 @@ classifiers = [
 
 dependencies = [
     # Async runtime
-    "tokio[full]>=1.36",
+    # "tokio[full]>=1.36",
     
     # Web framework
     "fastapi>=0.109",

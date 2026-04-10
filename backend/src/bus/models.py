@@ -8,7 +8,7 @@ import time
 import uuid
 from datetime import datetime
 from enum import Enum
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, Optional, TypeVar, Union
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -93,7 +93,7 @@ class Message(BaseModel):
     source: str = Field(..., description="Source agent or system identifier")
     target: Target = Field(..., description="Message destination")
     payload: dict[str, Any] = Field(default_factory=dict)
-    correlation_id: str | None = Field(default=None, description="For matching request-response pairs")
+    correlation_id: Optional[str] = Field(default=None, description="For matching request-response pairs")
     timestamp: int = Field(default_factory=lambda: int(time.time()))
     ttl: int = Field(default=60, ge=0, description="Time to live in seconds, 0 means no expiration")
     priority: int = Field(default=0, ge=0, description="Message priority (higher = more urgent)")
@@ -180,7 +180,7 @@ class TaskResponse(Message):
 
     success: bool = Field(default=True, description="Whether the task succeeded")
     result: dict[str, Any] = Field(default_factory=dict, description="Task result data")
-    error: str | None = Field(default=None, description="Error message if failed")
+    error: Optional[str] = Field(default=None, description="Error message if failed")
 
     def __init__(self, **data: Any) -> None:
         if "msg_type" not in data:
@@ -261,7 +261,7 @@ class QueryResponse(Message):
 
     success: bool = Field(default=True, description="Whether the query succeeded")
     result: dict[str, Any] = Field(default_factory=dict, description="Query result")
-    error: str | None = Field(default=None, description="Error message if failed")
+    error: Optional[str] = Field(default=None, description="Error message if failed")
 
     def __init__(self, **data: Any) -> None:
         if "msg_type" not in data:

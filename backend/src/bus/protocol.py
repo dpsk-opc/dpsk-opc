@@ -4,7 +4,7 @@ This module defines the abstract interfaces for the message bus system.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Optional, Union
 
 from src.bus.models import (
     AggregationPolicy,
@@ -19,7 +19,7 @@ from src.bus.models import (
 class BusError(Exception):
     """Base exception for bus-related errors."""
 
-    def __init__(self, message: str, details: dict[str, Any] | None = None) -> None:
+    def __init__(self, message: str, details: Optional[dict[str, Any]] = None) -> None:
         super().__init__(message)
         self.message = message
         self.details = details or {}
@@ -75,7 +75,7 @@ class MessageHandler:
     either None (for fire-and-forget) or a Message (for responses).
     """
 
-    HandlerResult = Message | None
+    HandlerResult = Optional[Message]
 
     def __call__(self, message: Message) -> HandlerResult:
         raise NotImplementedError
