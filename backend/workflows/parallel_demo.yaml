@@ -1,0 +1,15 @@
+tasks:
+  - id: parallel_task_1
+    agent: 秘书
+    task: 并行任务1：搜索相关信息
+    depends_on: []
+  - id: parallel_task_2
+    agent: 秘书
+    task: 并行任务2：准备资源
+    depends_on: []
+  - id: combine_results
+    agent: 秘书
+    task: 合并两个任务的结果
+    depends_on:
+      - parallel_task_1
+      - parallel_task_2
