@@ -26,6 +26,9 @@ from src.opc import (
 )
 from src.utils.logging import configure_logging, get_logger
 
+# Import Chat API router
+from src.api.chat import router as chat_router
+
 # Initialize logger
 logger = get_logger(__name__)
 
@@ -81,11 +84,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         available_agents=available_agents,
     )
     
-    # Create agent invoker
+    # Create agent invoker (convert OPCConfig to dict for compatibility)
     agent_invoker = LocalAgentInvoker(
         agent_manager=agent_manager,
         security_module=None,  # Security module integration pending
-        config=opc_config,
+        config=opc_config.to_dict() if hasattr(opc_config, "to_dict") else opc_config,
     )
     
     # Create execution strategy
@@ -104,6 +107,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     
     app.state.opc_client = opc_client
     logger.info("OPC-Client initialized")
+    
+    # Initialize MVP Chat Service
+    from src.api.chat import set_chat_service
+    from src.services.chat_service import ChatService
+    
+    chat_service = ChatService()
+    set_chat_service(chat_service)
+    
+    # Register Chat API router
+    app.include_router(chat_router)
+    logger.info("MVP Chat API registered")
     
     yield
     

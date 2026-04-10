@@ -39,8 +39,19 @@ class LocalAgentInvoker:
         """
         self.agent_manager = agent_manager
         self.security_module = security_module
-        self.config = config or {}
-        self._timeout = config.get("default_task_timeout_secs", 300) if config else 300
+        self.config = config
+        
+        # Handle both dict and Pydantic model config
+        if config is None:
+            self._timeout = 300
+        elif hasattr(config, "default_task_timeout_secs"):
+            # Pydantic model
+            self._timeout = config.default_task_timeout_secs
+        elif isinstance(config, dict):
+            # Dictionary
+            self._timeout = config.get("default_task_timeout_secs", 300)
+        else:
+            self._timeout = 300
 
     async def invoke(
         self,
