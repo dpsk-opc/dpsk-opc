@@ -98,13 +98,23 @@ class LocalAgentSpawner(AgentSpawner):
     In production, this would integrate with the security module.
     """
 
-    def __init__(self) -> None:
-        """Initialize the spawner."""
+    def __init__(self, bus: Any = None) -> None:
+        """Initialize the spawner.
+
+        Args:
+            bus: Message bus instance for agent communication
+        """
         self._instances: dict[str, AgentInstance] = {}
         self._handles: dict[str, AgentHandle] = {}
         self._queues: dict[str, deque[dict[str, Any]]] = {}  # agent_id -> pending tasks
         self._instance_counts: dict[str, int] = {}  # agent_id -> current count
         self._lock = asyncio.Lock()
+        self._bus = bus
+        self._handlers: dict[str, Any] = {}  # instance_id -> handler function
+        
+    def set_bus(self, bus: Any) -> None:
+        """Set the message bus instance."""
+        self._bus = bus
 
     async def spawn(
         self,
@@ -157,12 +167,28 @@ class LocalAgentSpawner(AgentSpawner):
 
             instance.status = InstanceStatus.RUNNING
             self._instances[instance_id] = instance
-            self._handles[instance_id] = AgentHandle(instance=instance, agent_def=agent_def)
+            handle = AgentHandle(instance=instance, agent_def=agent_def)
+            self._handles[instance_id] = handle
             self._instance_counts[agent_id] += 1
+
+            # Create task handler for this instance
+            task_handler = self._create_task_handler(instance_id, agent_def)
+            self._handlers[instance_id] = task_handler
+            
+            # Set handler on handle for fallback
+            handle.set_task_handler(task_handler)
+            
+            # Register with bus if available
+            if self._bus is not None:
+                await self._register_with_bus(handle, task_handler)
+                handle.set_bus(self._bus)
+                logger.info(f"Registered agent {agent_id} with message bus")
+            else:
+                logger.warning(f"Message bus not available, agent {agent_id} running in standalone mode")
 
             logger.info(f"Spawned instance {instance_id} for {agent_id}")
 
-            return self._handles[instance_id]
+            return handle
 
     async def get_instance(self, instance_id: str) -> Optional[AgentInstance]:
         """Get an instance by ID."""
@@ -228,3 +254,131 @@ class LocalAgentSpawner(AgentSpawner):
         # This would be called when an instance becomes free
         # For now, just log
         logger.debug(f"Queue for {agent_id} has {len(queue)} pending tasks")
+
+    def _create_task_handler(
+        self,
+        instance_id: str,
+        agent_def: AgentDef,
+    ) -> Any:
+        """Create a task handler function for an agent instance.
+
+        Args:
+            instance_id: The instance identifier
+            agent_def: The agent definition
+
+        Returns:
+            Async task handler function
+        """
+        async def handle_task(task_name: str, task_data: dict[str, Any]) -> dict[str, Any]:
+            """Handle incoming task requests.
+
+            Args:
+                task_name: Name of the task to execute
+                task_data: Task input data
+
+            Returns:
+                Task execution result
+            """
+            from src.agent.runner import handle_task_request
+
+            instance = self._instances.get(instance_id)
+            if instance is None:
+                return {
+                    "success": False,
+                    "error": f"Instance {instance_id} not found",
+                    "result": {},
+                }
+
+            # Update instance state
+            instance.increment_task_count()
+            instance.update_heartbeat()
+
+            logger.info(
+                f"Executing task '{task_name}' on agent {agent_def.agent_id} (instance: {instance_id})",
+                extra={"task_name": task_name, "instance_id": instance_id}
+            )
+
+            try:
+                # Execute the task
+                result = await handle_task_request(
+                    task_name=task_name,
+                    task_data=task_data,
+                )
+                return result
+            except Exception as e:
+                logger.exception(f"Task execution failed: {task_name}")
+                return {
+                    "success": False,
+                    "error": str(e),
+                    "result": {},
+                }
+
+        return handle_task
+
+    async def _register_with_bus(
+        self,
+        handle: AgentHandle,
+        task_handler: Any,
+    ) -> None:
+        """Register an agent with the message bus.
+
+        Args:
+            handle: Agent handle
+            task_handler: Task handler function
+        """
+        from src.bus.models import Target, TargetType, MessageType, TaskResponse
+        import uuid
+
+        agent_id = handle.agent_id
+        target = Target(type=TargetType.AGENT, value=agent_id)
+
+        async def bus_handler(message: Any) -> Any:
+            """Handle incoming bus messages.
+
+            Args:
+                message: Incoming message
+
+            Returns:
+                Response message if needed
+            """
+            try:
+                # Extract task info from message
+                task_name = getattr(message, 'task_name', None) or message.payload.get('task_name', 'execute')
+                task_data = getattr(message, 'task_data', None) or message.payload.get('task_data', {})
+                
+                # Execute task via handler
+                result = await task_handler(task_name, task_data)
+                
+                # Build response
+                response = TaskResponse(
+                    source=agent_id,
+                    target=Target(type=TargetType.AGENT, value=message.source) if hasattr(message, 'source') else message.target,
+                    success=result.get("success", False),
+                    result=result.get("result", {}),
+                    error=result.get("error"),
+                    correlation_id=getattr(message, 'correlation_id', None) or getattr(message, 'id', None),
+                    trace_id=getattr(message, 'trace_id', ''),
+                )
+                response.id = str(uuid.uuid4())
+                
+                return response
+                
+            except Exception as e:
+                logger.exception(f"Error in bus handler for {agent_id}")
+                # Return error response
+                return TaskResponse(
+                    source=agent_id,
+                    target=message.target if hasattr(message, 'target') else Target(type=TargetType.AGENT, value="unknown"),
+                    success=False,
+                    result={},
+                    error=str(e),
+                    correlation_id=getattr(message, 'correlation_id', None),
+                    trace_id=getattr(message, 'trace_id', ''),
+                )
+
+        # Subscribe to bus
+        try:
+            await self._bus.subscribe(target, bus_handler)
+            logger.info(f"Agent {agent_id} subscribed to bus at {target}")
+        except Exception as e:
+            logger.error(f"Failed to subscribe agent {agent_id} to bus: {e}")

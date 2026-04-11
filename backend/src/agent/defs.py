@@ -172,6 +172,7 @@ class AgentHandle:
     instance: AgentInstance
     agent_def: AgentDef
     _bus = None  # Reference to message bus (injected later)
+    _task_handler = None  # Task handler function (injected later)
 
     @property
     def instance_id(self) -> str:
@@ -188,27 +189,106 @@ class AgentHandle:
         """Get current status."""
         return self.instance.status
 
+    def set_bus(self, bus: Any) -> None:
+        """Set the message bus reference."""
+        self._bus = bus
+
+    def set_task_handler(self, handler: Any) -> None:
+        """Set the task handler function."""
+        self._task_handler = handler
+
     async def send_task(
         self,
         task_name: str,
         task_data: dict[str, Any],
         timeout: float = 60.0,
     ) -> dict[str, Any]:
-        """Send a task to this Agent instance."""
-        from src.bus.models import MessageType, Target, TargetType
+        """Send a task to this Agent instance via message bus.
 
-        # Import here to avoid circular dependency
-        from src.agent.runner import TaskRequest
+        Args:
+            task_name: Name of the task to execute
+            task_data: Task input data
+            timeout: Request timeout in seconds
+
+        Returns:
+            Task result dictionary
+        """
+        from src.bus.models import MessageType, Target, TargetType
+        from src.bus.protocol import TimeoutError as BusTimeoutError
+
+        if self._bus is None:
+            # Fallback to direct handler call for backward compatibility
+            if self._task_handler is not None:
+                return await self._execute_via_handler(task_name, task_data)
+            return {"error": "Bus not available and no task handler set"}
 
         target = Target(type=TargetType.AGENT, value=self.agent_id)
+        
+        # Create task request
+        from src.bus.models import TaskRequest, Message
+        import uuid
+        
         request = TaskRequest(
             source="system",
             target=target,
             task_name=task_name,
             task_data=task_data,
         )
-        # TODO: Send via bus when available
-        return {"error": "Not implemented: bus integration pending"}
+        request.id = str(uuid.uuid4())
+        request.correlation_id = request.id
+        
+        try:
+            # Send via bus and wait for response
+            response = await self._bus.request(
+                target=target,
+                message=request,
+                timeout=timeout,
+            )
+            
+            # Convert response to dict format
+            if hasattr(response, 'success'):
+                return {
+                    "success": response.success,
+                    "result": response.result if hasattr(response, 'result') else {},
+                    "error": response.error if hasattr(response, 'error') else None,
+                }
+            return {"result": response}
+            
+        except BusTimeoutError as e:
+            return {
+                "success": False,
+                "error": f"Task timeout: {e}",
+                "result": {},
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "result": {},
+            }
+
+    async def _execute_via_handler(
+        self,
+        task_name: str,
+        task_data: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Execute task via direct handler call (fallback).
+
+        Args:
+            task_name: Name of the task
+            task_data: Task input data
+
+        Returns:
+            Task result dictionary
+        """
+        try:
+            if asyncio.iscoroutinefunction(self._task_handler):
+                result = await self._task_handler(task_name, task_data)
+            else:
+                result = self._task_handler(task_name, task_data)
+            return {"success": True, "result": result, "error": None}
+        except Exception as e:
+            return {"success": False, "result": {}, "error": str(e)}
 
     async def stop(self, timeout: float = 10.0) -> None:
         """Gracefully stop the Agent instance."""

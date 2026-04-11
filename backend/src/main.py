@@ -59,8 +59,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     
     agents_root = Path.home() / ".dpskopc" / "agents"
     registry = AgentRegistry()
-    spawner = LocalAgentSpawner()
-    agent_manager = AgentManager(registry, spawner, agents_root)
+    spawner = LocalAgentSpawner(bus=app.state.bus)  # Pass bus to spawner
+    agent_manager = AgentManager(registry, spawner, agents_root, bus=app.state.bus)
     
     await agent_manager.initialize()
     app.state.agent_manager = agent_manager

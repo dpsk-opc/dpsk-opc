@@ -27,6 +27,7 @@ class AgentManager:
         registry: AgentRegistry,
         spawner: AgentSpawner,
         agents_root: Optional[Path] = None,
+        bus: Any = None,
     ) -> None:
         """Initialize the Agent Manager.
 
@@ -34,11 +35,27 @@ class AgentManager:
             registry: Agent registry instance
             spawner: Agent spawner instance
             agents_root: Root directory for agent definitions
+            bus: Message bus instance for agent communication
         """
         self.registry = registry
         self.spawner = spawner
         self.agents_root = agents_root or Path.home() / ".dpskopc" / "agents"
         self._initialized = False
+        self._bus = bus
+        
+        # Set bus on spawner if available
+        if bus is not None and hasattr(self.spawner, 'set_bus'):
+            self.spawner.set_bus(bus)
+    
+    def set_bus(self, bus: Any) -> None:
+        """Set the message bus instance.
+
+        Args:
+            bus: Message bus instance
+        """
+        self._bus = bus
+        if hasattr(self.spawner, 'set_bus'):
+            self.spawner.set_bus(bus)
 
     async def initialize(self) -> None:
         """Initialize the manager and load agents."""
