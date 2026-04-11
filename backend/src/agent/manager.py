@@ -28,6 +28,8 @@ class AgentManager:
         spawner: AgentSpawner,
         agents_root: Optional[Path] = None,
         bus: Any = None,
+        llm_registry: Any = None,
+        default_llm_client: Any = None,
     ) -> None:
         """Initialize the Agent Manager.
 
@@ -36,16 +38,28 @@ class AgentManager:
             spawner: Agent spawner instance
             agents_root: Root directory for agent definitions
             bus: Message bus instance for agent communication
+            llm_registry: LLM registry for model management
+            default_llm_client: Default LLM client for agents without custom model
         """
         self.registry = registry
         self.spawner = spawner
         self.agents_root = agents_root or Path.home() / ".dpskopc" / "agents"
         self._initialized = False
         self._bus = bus
+        self._llm_registry = llm_registry
+        self._default_llm_client = default_llm_client
         
         # Set bus on spawner if available
         if bus is not None and hasattr(self.spawner, 'set_bus'):
             self.spawner.set_bus(bus)
+        
+        # Set LLM registry on spawner if available
+        if llm_registry is not None and hasattr(self.spawner, 'set_llm_registry'):
+            self.spawner.set_llm_registry(llm_registry)
+        
+        # Set default LLM client on spawner if available
+        if default_llm_client is not None and hasattr(self.spawner, 'set_default_llm_client'):
+            self.spawner.set_default_llm_client(default_llm_client)
     
     def set_bus(self, bus: Any) -> None:
         """Set the message bus instance.
@@ -56,6 +70,26 @@ class AgentManager:
         self._bus = bus
         if hasattr(self.spawner, 'set_bus'):
             self.spawner.set_bus(bus)
+    
+    def set_llm_registry(self, registry: Any) -> None:
+        """Set the LLM registry.
+        
+        Args:
+            registry: LLM registry instance
+        """
+        self._llm_registry = registry
+        if hasattr(self.spawner, 'set_llm_registry'):
+            self.spawner.set_llm_registry(registry)
+    
+    def set_default_llm_client(self, client: Any) -> None:
+        """Set the default LLM client.
+        
+        Args:
+            client: Default LLM client
+        """
+        self._default_llm_client = client
+        if hasattr(self.spawner, 'set_default_llm_client'):
+            self.spawner.set_default_llm_client(client)
 
     async def initialize(self) -> None:
         """Initialize the manager and load agents."""

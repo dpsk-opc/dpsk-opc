@@ -20,10 +20,33 @@ logger = logging.getLogger(__name__)
 # Global skill handlers registry
 SKILL_HANDLERS: dict[str, Callable[[dict[str, Any]], Any]] = {}
 
+# Global LLM client (injected at runtime)
+_llm_client = None
+
 # Configuration from environment
 AGENT_ID = os.environ.get("AGENT_ID", "unknown")
 MESSAGE_BUS_ADDRESS = os.environ.get("MESSAGE_BUS_ADDRESS", "memory")
 TEMP_TOKEN = os.environ.get("TEMP_TOKEN", "")
+
+
+def set_llm_client(client: Any) -> None:
+    """Set the global LLM client.
+    
+    Args:
+        client: LLM client instance
+    """
+    global _llm_client
+    _llm_client = client
+    logger.info(f"LLM client set: {client.__class__.__name__}")
+
+
+def get_llm_client() -> Optional[Any]:
+    """Get the global LLM client.
+    
+    Returns:
+        LLM client or None
+    """
+    return _llm_client
 
 
 def register_skill(task_name: str, handler: Callable[[dict[str, Any]], Any]) -> None:
@@ -82,13 +105,20 @@ async def handle_task_request(
     task_name: str,
     task_data: dict[str, Any],
     experience_db: Optional[Any] = None,
+    agent_info: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Handle a task request.
 
+    This is the core execution function for an agent. It:
+    1. Checks experience pool for cached results
+    2. Executes skill handler if available
+    3. Falls back to LLM call using agent's system prompt
+
     Args:
-        task_name: Name of the skill to execute
-        task_data: Input data for the skill
+        task_name: Name of the task to execute
+        task_data: Input data for the task
         experience_db: Optional experience database for caching
+        agent_info: Agent information including system prompt
 
     Returns:
         Task response dictionary
@@ -106,18 +136,25 @@ async def handle_task_request(
                 result["from_experience"] = True
                 return result
 
-        # 2. Execute skill handler
+        # 2. Execute skill handler if available
         handler = SKILL_HANDLERS.get(task_name)
-        if not handler:
-            result["success"] = False
-            result["error"] = f"Unknown skill: {task_name}"
-            return result
+        if handler:
+            # Execute skill handler
+            skill_result = await handler(task_data)
+            result["result"] = skill_result
+            logger.info(f"Executed skill handler: {task_name}")
+        else:
+            # 3. No skill found, use LLM with agent's system prompt
+            logger.info(f"No skill handler for '{task_name}', falling back to LLM")
+            llm_result = await _execute_with_llm(
+                task_name=task_name,
+                task_data=task_data,
+                agent_info=agent_info,
+            )
+            result["result"] = llm_result
+            result["llm_generated"] = True
 
-        # Execute handler
-        skill_result = await handler(task_data)
-        result["result"] = skill_result
-
-        # 3. Store experience asynchronously
+        # 4. Store experience asynchronously
         if experience_db:
             asyncio.create_task(
                 experience_db.store(AGENT_ID, task_name, task_data, skill_result)
@@ -156,24 +193,128 @@ async def call_security_operation(operation: str, params: dict[str, Any]) -> dic
 async def call_llm(
     prompt: str,
     model: Optional[str] = None,
+    system_prompt: Optional[str] = None,
+    messages: Optional[list[dict[str, str]]] = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
-    """Call LLM via message bus.
+    """Call LLM using the global LLM client.
 
     Args:
         prompt: The prompt to send
-        model: Model to use (optional, uses Agent default)
+        model: Model to use (optional, uses current client if matches)
+        system_prompt: Optional system prompt
+        messages: Optional conversation history
         **kwargs: Additional model parameters
 
     Returns:
-        LLM response
-
-    Raises:
-        RuntimeError: If bus is not available
+        LLM response dictionary with 'content', 'error', etc.
     """
-    # This would normally send a message via bus to system.llm
-    logger.warning("LLM call requested (bus integration pending)")
-    return {"error": "Bus integration not implemented"}
+    client = get_llm_client()
+    
+    if client is None:
+        logger.error("LLM client not available")
+        return {
+            "error": "LLM client not initialized. "
+                     "Set LLM client with runner.set_llm_client()",
+            "content": "",
+        }
+    
+    try:
+        # Check if we need to switch models
+        if model and model != client.model:
+            # Try to get a client for the specific model
+            from src.llm.registry import get_llm_registry
+            registry = get_llm_registry()
+            model_client = registry.get_client(model=model)
+            if model_client:
+                client = model_client
+            else:
+                logger.warning(f"Model {model} not available, using default: {client.model}")
+        
+        # Call LLM
+        response = await client.complete(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            messages=messages,
+            **kwargs,
+        )
+        
+        if response.success:
+            return {
+                "content": response.content,
+                "model": response.model,
+                "usage": response.usage,
+                "finish_reason": response.finish_reason,
+                "error": None,
+            }
+        else:
+            return {
+                "content": "",
+                "error": response.error,
+            }
+            
+    except Exception as e:
+        logger.exception(f"LLM call failed: {e}")
+        return {
+            "content": "",
+            "error": str(e),
+        }
+
+
+async def _execute_with_llm(
+    task_name: str,
+    task_data: dict[str, Any],
+    agent_info: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """Execute task using LLM with agent's system prompt.
+
+    This is the fallback when no skill handler is available.
+    It uses the agent's system prompt (description) to guide the LLM.
+
+    Args:
+        task_name: Name of the task
+        task_data: Task input data
+        agent_info: Agent information dict with 'description' as system prompt
+
+    Returns:
+        Task execution result
+    """
+    # Get agent's system prompt
+    system_prompt = ""
+    if agent_info and agent_info.get("description"):
+        system_prompt = agent_info["description"]
+    
+    # Build user prompt from task data
+    if isinstance(task_data, dict):
+        user_prompt = task_data.get("instruction", "") or task_data.get("input", "") or str(task_data)
+    else:
+        user_prompt = str(task_data)
+    
+    if not user_prompt:
+        # If no user input, use task name as prompt
+        user_prompt = task_name
+    
+    # Call LLM
+    result = await call_llm(
+        prompt=user_prompt,
+        system_prompt=system_prompt,
+    )
+    
+    if result.get("error"):
+        return {
+            "success": False,
+            "error": result["error"],
+            "content": "",
+        }
+    
+    return {
+        "success": True,
+        "content": result.get("content", ""),
+        "model": result.get("model", ""),
+        "usage": result.get("usage", {}),
+        "agent_id": agent_info.get("agent_id", "unknown") if agent_info else "unknown",
+        "task_name": task_name,
+    }
 
 
 class TaskRequest:

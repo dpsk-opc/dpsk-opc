@@ -98,11 +98,18 @@ class LocalAgentSpawner(AgentSpawner):
     In production, this would integrate with the security module.
     """
 
-    def __init__(self, bus: Any = None) -> None:
+    def __init__(
+        self,
+        bus: Any = None,
+        llm_registry: Any = None,
+        default_llm_client: Any = None,
+    ) -> None:
         """Initialize the spawner.
 
         Args:
             bus: Message bus instance for agent communication
+            llm_registry: LLM registry for getting LLM clients
+            default_llm_client: Default LLM client for agents without custom model
         """
         self._instances: dict[str, AgentInstance] = {}
         self._handles: dict[str, AgentHandle] = {}
@@ -110,11 +117,29 @@ class LocalAgentSpawner(AgentSpawner):
         self._instance_counts: dict[str, int] = {}  # agent_id -> current count
         self._lock = asyncio.Lock()
         self._bus = bus
+        self._llm_registry = llm_registry
+        self._default_llm_client = default_llm_client
         self._handlers: dict[str, Any] = {}  # instance_id -> handler function
         
     def set_bus(self, bus: Any) -> None:
         """Set the message bus instance."""
         self._bus = bus
+    
+    def set_llm_registry(self, registry: Any) -> None:
+        """Set the LLM registry.
+        
+        Args:
+            registry: LLM registry instance
+        """
+        self._llm_registry = registry
+    
+    def set_default_llm_client(self, client: Any) -> None:
+        """Set the default LLM client.
+        
+        Args:
+            client: Default LLM client
+        """
+        self._default_llm_client = client
 
     async def spawn(
         self,
@@ -269,6 +294,18 @@ class LocalAgentSpawner(AgentSpawner):
         Returns:
             Async task handler function
         """
+        # Get LLM client for this agent
+        llm_client = self._get_llm_client_for_agent(agent_def)
+        
+        # Extract agent info for LLM calls
+        agent_info = {
+            "agent_id": agent_def.agent_id,
+            "name": agent_def.name,
+            "description": agent_def.description,  # System prompt
+            "model": agent_def.model,
+            "model_config": agent_def.model_config,
+        }
+        
         async def handle_task(task_name: str, task_data: dict[str, Any]) -> dict[str, Any]:
             """Handle incoming task requests.
 
@@ -279,7 +316,7 @@ class LocalAgentSpawner(AgentSpawner):
             Returns:
                 Task execution result
             """
-            from src.agent.runner import handle_task_request
+            from src.agent.runner import handle_task_request, set_llm_client
 
             instance = self._instances.get(instance_id)
             if instance is None:
@@ -293,16 +330,25 @@ class LocalAgentSpawner(AgentSpawner):
             instance.increment_task_count()
             instance.update_heartbeat()
 
+            # Set LLM client for this agent
+            client = llm_client or self._default_llm_client
+            if client is not None:
+                set_llm_client(client)
+                logger.debug(f"Using LLM client: {client.model} for agent {agent_def.agent_id}")
+            else:
+                logger.warning(f"No LLM client available for agent {agent_def.agent_id}")
+
             logger.info(
                 f"Executing task '{task_name}' on agent {agent_def.agent_id} (instance: {instance_id})",
                 extra={"task_name": task_name, "instance_id": instance_id}
             )
 
             try:
-                # Execute the task
+                # Execute the task with agent context
                 result = await handle_task_request(
                     task_name=task_name,
                     task_data=task_data,
+                    agent_info=agent_info,
                 )
                 return result
             except Exception as e:
@@ -314,6 +360,40 @@ class LocalAgentSpawner(AgentSpawner):
                 }
 
         return handle_task
+    
+    def _get_llm_client_for_agent(self, agent_def: AgentDef) -> Any:
+        """Get the appropriate LLM client for an agent.
+        
+        Priority:
+        1. Agent's custom model (from agent_def.model)
+        2. Default LLM client
+        
+        Args:
+            agent_def: Agent definition
+            
+        Returns:
+            LLM client or None
+        """
+        # If agent has a custom model, try to get a client for it
+        if agent_def.model:
+            if self._llm_registry:
+                client = self._llm_registry.get_client(
+                    model=agent_def.model,
+                    model_config=agent_def.model_config,
+                )
+                if client:
+                    logger.info(f"Using custom model '{agent_def.model}' for agent {agent_def.agent_id}")
+                    return client
+                else:
+                    logger.warning(
+                        f"Could not get LLM client for custom model '{agent_def.model}', "
+                        f"falling back to default"
+                    )
+            else:
+                logger.warning(f"No LLM registry available for agent {agent_def.agent_id} with custom model")
+        
+        # Return default client
+        return self._default_llm_client
 
     async def _register_with_bus(
         self,

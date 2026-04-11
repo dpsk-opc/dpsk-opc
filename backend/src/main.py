@@ -59,8 +59,49 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     
     agents_root = Path.home() / ".dpskopc" / "agents"
     registry = AgentRegistry()
-    spawner = LocalAgentSpawner(bus=app.state.bus)  # Pass bus to spawner
-    agent_manager = AgentManager(registry, spawner, agents_root, bus=app.state.bus)
+    
+    # Initialize LLM client
+    llm_registry = None
+    default_llm_client = None
+    try:
+        from src.llm import get_llm_registry
+        from src.llm.base import LLMConfig
+        from src.llm.openai_client import OpenAIClient
+        
+        llm_registry = get_llm_registry()
+        
+        # Get LLM config from application config
+        llm_config = config.llm if hasattr(config, 'llm') else {}
+        
+        # Initialize default LLM client
+        default_llm_client = OpenAIClient(
+            config=LLMConfig(
+                model=llm_config.get("model", "gpt-3.5-turbo"),
+                api_key=llm_config.get("api_key"),
+                base_url=llm_config.get("base_url"),
+                temperature=llm_config.get("temperature", 0.7),
+            )
+        )
+        llm_registry.set_default_client(default_llm_client)
+        logger.info(f"LLM client initialized: {default_llm_client.model}")
+    except ImportError as e:
+        logger.warning(f"LLM dependencies not available: {e}")
+    except Exception as e:
+        logger.warning(f"Failed to initialize LLM client: {e}")
+    
+    spawner = LocalAgentSpawner(
+        bus=app.state.bus,
+        llm_registry=llm_registry,
+        default_llm_client=default_llm_client,
+    )
+    agent_manager = AgentManager(
+        registry, 
+        spawner, 
+        agents_root, 
+        bus=app.state.bus,
+        llm_registry=llm_registry,
+        default_llm_client=default_llm_client,
+    )
     
     await agent_manager.initialize()
     app.state.agent_manager = agent_manager
