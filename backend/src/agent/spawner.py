@@ -11,11 +11,24 @@ import time
 import uuid
 from abc import ABC, abstractmethod
 from collections import deque
-from typing import Any, Optional
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from typing import Any, Optional, cast
 
 from src.agent.defs import AgentDef, AgentHandle, AgentInstance, InstanceStatus
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class QueuedTask:
+    """Represents a queued task waiting for an available instance."""
+    agent_def: AgentDef
+    task_context: Optional[dict[str, Any]] = None
+    future: asyncio.Future[Any] = field(default_factory=lambda: asyncio.Future())
+    queued_at: float = field(default_factory=time.time)
+    task_name: str = "execute"
+    task_data: dict[str, Any] = field(default_factory=dict)
 
 
 class AgentSpawner(ABC):
@@ -121,6 +134,11 @@ class LocalAgentSpawner(AgentSpawner):
         self._default_llm_client = default_llm_client
         self._handlers: dict[str, Any] = {}  # instance_id -> handler function
         
+        # Queue processing state
+        self._queued_tasks: dict[str, deque[QueuedTask]] = {}  # agent_id -> queued tasks with futures
+        self._queue_processors: dict[str, asyncio.Task[Any]] = {}  # agent_id -> processor task
+        self._started = False
+        
     def set_bus(self, bus: Any) -> None:
         """Set the message bus instance."""
         self._bus = bus
@@ -148,7 +166,14 @@ class LocalAgentSpawner(AgentSpawner):
         reuse_existing: bool = False,
         ttl_seconds: Optional[float] = None,
     ) -> AgentHandle:
-        """Spawn a new Agent instance."""
+        """Spawn a new Agent instance.
+        
+        If all instances are at max capacity, the request will be queued and
+        processed automatically when an instance becomes available.
+        """
+        # Start queue processor if not already running
+        await self._ensure_queue_processor_started()
+        
         async with self._lock:
             agent_id = agent_def.agent_id
 
@@ -157,6 +182,8 @@ class LocalAgentSpawner(AgentSpawner):
                 self._instance_counts[agent_id] = 0
             if agent_id not in self._queues:
                 self._queues[agent_id] = deque()
+            if agent_id not in self._queued_tasks:
+                self._queued_tasks[agent_id] = deque()
 
             # Check concurrent instance limit
             current_count = self._instance_counts[agent_id]
@@ -168,52 +195,40 @@ class LocalAgentSpawner(AgentSpawner):
                         f"Agent {agent_id} at max capacity: "
                         f"{current_count} instances, queue full ({agent_def.queue_size})"
                     )
-                # Queue the task
-                queue.append({"agent_def": agent_def, "context": task_context})
-                logger.info(f"Task queued for {agent_id}, queue size: {len(queue)}")
-                raise RuntimeError(f"Task queued for {agent_id}")
+                
+                # Queue the task and return a handle that waits for processing
+                queued_task = QueuedTask(
+                    agent_def=agent_def,
+                    task_context=task_context,
+                )
+                self._queued_tasks[agent_id].append(queued_task)
+                logger.info(f"Task queued for {agent_id}, queue size: {len(self._queued_tasks[agent_id])}")
+                
+                # Create a placeholder handle for the queued task
+                # This handle will resolve when the task is processed
+                instance_id = f"{agent_id}-queued-{uuid.uuid4().hex[:8]}"
+                sandbox_id = f"sandbox-{instance_id}"
+                now = time.time()
+                
+                # Create a special "queued" instance
+                queued_instance = AgentInstance(
+                    instance_id=instance_id,
+                    agent_id=agent_id,
+                    sandbox_id=sandbox_id,
+                    status=InstanceStatus.QUEUED,  # Special queued status
+                    created_at=now,
+                    last_heartbeat=now,
+                )
+                
+                handle = AgentHandle(instance=queued_instance, agent_def=agent_def)
+                # Set the queued task future so send_task can wait on it
+                handle.set_queued_task(queued_task, task_context)
+                
+                logger.info(f"Created queued handle for {agent_id}, waiting for instance availability")
+                return handle
 
             # Create new instance
-            instance_id = f"{agent_id}-{uuid.uuid4().hex[:8]}"
-            sandbox_id = f"sandbox-{instance_id}"
-            now = time.time()
-
-            instance = AgentInstance(
-                instance_id=instance_id,
-                agent_id=agent_id,
-                sandbox_id=sandbox_id,
-                status=InstanceStatus.CREATING,
-                created_at=now,
-                last_heartbeat=now,
-            )
-
-            # Simulate sandbox creation
-            await asyncio.sleep(0.1)  # Simulate async operation
-
-            instance.status = InstanceStatus.RUNNING
-            self._instances[instance_id] = instance
-            handle = AgentHandle(instance=instance, agent_def=agent_def)
-            self._handles[instance_id] = handle
-            self._instance_counts[agent_id] += 1
-
-            # Create task handler for this instance
-            task_handler = self._create_task_handler(instance_id, agent_def)
-            self._handlers[instance_id] = task_handler
-            
-            # Set handler on handle for fallback
-            handle.set_task_handler(task_handler)
-            
-            # Register with bus if available
-            if self._bus is not None:
-                await self._register_with_bus(handle, task_handler)
-                handle.set_bus(self._bus)
-                logger.info(f"Registered agent {agent_id} with message bus")
-            else:
-                logger.warning(f"Message bus not available, agent {agent_id} running in standalone mode")
-
-            logger.info(f"Spawned instance {instance_id} for {agent_id}")
-
-            return handle
+            return await self._spawn_instance(agent_def, task_context)
 
     async def get_instance(self, instance_id: str) -> Optional[AgentInstance]:
         """Get an instance by ID."""
@@ -268,17 +283,168 @@ class LocalAgentSpawner(AgentSpawner):
 
     async def get_queue_size(self, agent_id: str) -> int:
         """Get the number of pending tasks in queue."""
-        return len(self._queues.get(agent_id, deque()))
+        return len(self._queued_tasks.get(agent_id, deque()))
+
+    async def _spawn_instance(
+        self,
+        agent_def: AgentDef,
+        task_context: Optional[dict[str, Any]] = None,
+    ) -> AgentHandle:
+        """Spawn a new agent instance.
+        
+        Args:
+            agent_def: Agent definition
+            task_context: Optional context for the task
+            
+        Returns:
+            AgentHandle for the spawned instance
+        """
+        agent_id = agent_def.agent_id
+        
+        # Create new instance
+        instance_id = f"{agent_id}-{uuid.uuid4().hex[:8]}"
+        sandbox_id = f"sandbox-{instance_id}"
+        now = time.time()
+
+        instance = AgentInstance(
+            instance_id=instance_id,
+            agent_id=agent_id,
+            sandbox_id=sandbox_id,
+            status=InstanceStatus.CREATING,
+            created_at=now,
+            last_heartbeat=now,
+        )
+
+        # Simulate sandbox creation
+        await asyncio.sleep(0.1)  # Simulate async operation
+
+        instance.status = InstanceStatus.RUNNING
+        self._instances[instance_id] = instance
+        handle = AgentHandle(instance=instance, agent_def=agent_def)
+        self._handles[instance_id] = handle
+        self._instance_counts[agent_id] += 1
+
+        # Create task handler for this instance
+        task_handler = self._create_task_handler(instance_id, agent_def)
+        self._handlers[instance_id] = task_handler
+        
+        # Set handler on handle for fallback
+        handle.set_task_handler(task_handler)
+        
+        # Register with bus if available
+        if self._bus is not None:
+            logger.info(f"[SPAWN] About to register {agent_id} with bus")
+            try:
+                await self._register_with_bus(handle, task_handler)
+                handle.set_bus(self._bus)
+                logger.info(f"[SPAWN] Successfully registered agent {agent_id} with message bus")
+            except Exception as e:
+                logger.exception(f"[SPAWN] Failed to register {agent_id} with bus: {e}")
+        else:
+            logger.warning(f"Message bus not available, agent {agent_id} running in standalone mode")
+
+        logger.info(f"Spawned instance {instance_id} for {agent_id}")
+
+        return handle
+
+    async def _ensure_queue_processor_started(self) -> None:
+        """Ensure the global queue processor is running."""
+        if self._started:
+            return
+        self._started = True
+        # Start a background task to process queues
+        asyncio.create_task(self._queue_processor_loop())
+
+    async def _queue_processor_loop(self) -> None:
+        """Background loop that processes queued tasks when instances become available."""
+        logger.info("[QUEUE_PROC] Queue processor loop started")
+        while True:
+            try:
+                await asyncio.sleep(0.5)  # Check every 500ms
+                await self._process_all_queues()
+            except asyncio.CancelledError:
+                logger.info("[QUEUE_PROC] Queue processor loop cancelled")
+                break
+            except Exception as e:
+                logger.exception(f"[QUEUE_PROC] Error in queue processor: {e}")
+
+    async def _process_all_queues(self) -> None:
+        """Process all agent queues."""
+        async with self._lock:
+            for agent_id, queue in list(self._queued_tasks.items()):
+                if queue:
+                    await self._process_next_in_queue(agent_id)
+
+    async def _process_next_in_queue(self, agent_id: str) -> None:
+        """Process the next task in the queue for an agent.
+        
+        This method checks if there's capacity and processes a queued task.
+        """
+        agent_def = None
+        queued_task = None
+        
+        # Get the first queued task
+        queue = self._queued_tasks.get(agent_id)
+        if not queue:
+            return
+            
+        # Peek at the first queued task to get agent_def
+        queued_task = queue[0]
+        agent_def = queued_task.agent_def
+        
+        # Check if we have capacity
+        current_count = self._instance_counts.get(agent_id, 0)
+        if current_count >= agent_def.max_instances:
+            # No capacity available yet
+            logger.debug(f"[QUEUE_PROC] No capacity for {agent_id}, instances={current_count}/{agent_def.max_instances}")
+            return
+        
+        # We have capacity! Process the queued task
+        queue.popleft()
+        logger.info(f"[QUEUE_PROC] Processing queued task for {agent_id}, remaining in queue: {len(queue)}")
+        
+        try:
+            # Spawn a new instance
+            handle = await self._spawn_instance(agent_def, queued_task.task_context)
+            
+            # Execute the queued task on the new instance
+            handler = handle._task_handler
+            if handler:
+                logger.info(f"[QUEUE_PROC] Executing queued task on instance {handle.instance_id}")
+                # Cast to the expected callable type since the linter doesn't know it's async
+                task_callable = cast(Callable[..., Awaitable[Any]], handler)
+                result = await task_callable(queued_task.task_name, queued_task.task_data)
+                
+                # Resolve the future with the result
+                if not queued_task.future.done():
+                    queued_task.future.set_result(result)
+                    
+                logger.info(f"[QUEUE_PROC] Queued task completed for {agent_id}")
+            else:
+                logger.warning(f"[QUEUE_PROC] No task handler on handle for {agent_id}")
+                
+        except Exception as e:
+            logger.exception(f"[QUEUE_PROC] Error processing queued task for {agent_id}: {e}")
+            if queued_task and not queued_task.future.done():
+                queued_task.future.set_result({
+                    "success": False,
+                    "error": str(e),
+                    "result": {},
+                })
 
     async def _process_queue(self, agent_id: str) -> None:
-        """Process next task from queue."""
-        queue = self._queues.get(agent_id)
-        if not queue or not queue:
+        """Process next task from queue (legacy compatibility).
+        
+        Called when an instance becomes free (stopped or destroyed).
+        This triggers queue processing for the agent.
+        """
+        queue = self._queued_tasks.get(agent_id)
+        if not queue:
             return
-
-        # This would be called when an instance becomes free
-        # For now, just log
-        logger.debug(f"Queue for {agent_id} has {len(queue)} pending tasks")
+            
+        if len(queue) > 0:
+            logger.info(f"[PROCESS_QUEUE] Instance freed for {agent_id}, {len(queue)} tasks pending")
+            await self._process_next_in_queue(agent_id)
 
     def _create_task_handler(
         self,
@@ -320,6 +486,7 @@ class LocalAgentSpawner(AgentSpawner):
 
             instance = self._instances.get(instance_id)
             if instance is None:
+                logger.error(f"[HANDLER] Instance {instance_id} not found")
                 return {
                     "success": False,
                     "error": f"Instance {instance_id} not found",
@@ -334,13 +501,20 @@ class LocalAgentSpawner(AgentSpawner):
             client = llm_client or self._default_llm_client
             if client is not None:
                 set_llm_client(client)
-                logger.debug(f"Using LLM client: {client.model} for agent {agent_def.agent_id}")
+                logger.info(
+                    f"[HANDLER] Using LLM client: model={client.model} for agent {agent_def.agent_id}",
+                    extra={"task_name": task_name, "instance_id": instance_id},
+                )
             else:
-                logger.warning(f"No LLM client available for agent {agent_def.agent_id}")
+                logger.warning(f"[HANDLER] No LLM client available for agent {agent_def.agent_id}")
 
             logger.info(
-                f"Executing task '{task_name}' on agent {agent_def.agent_id} (instance: {instance_id})",
-                extra={"task_name": task_name, "instance_id": instance_id}
+                f"[HANDLER] Task STARTED: '{task_name}' on agent {agent_def.agent_id}",
+                extra={
+                    "task_name": task_name,
+                    "instance_id": instance_id,
+                    "agent_id": agent_def.agent_id,
+                },
             )
 
             try:
@@ -350,9 +524,18 @@ class LocalAgentSpawner(AgentSpawner):
                     task_data=task_data,
                     agent_info=agent_info,
                 )
+                logger.info(
+                    f"[HANDLER] Task COMPLETED: '{task_name}' success={result.get('success', False)}",
+                    extra={
+                        "task_name": task_name,
+                        "instance_id": instance_id,
+                        "success": result.get("success", False),
+                        "error": result.get("error"),
+                    },
+                )
                 return result
             except Exception as e:
-                logger.exception(f"Task execution failed: {task_name}")
+                logger.exception(f"[HANDLER] Task FAILED: {task_name}")
                 return {
                     "success": False,
                     "error": str(e),
@@ -411,6 +594,8 @@ class LocalAgentSpawner(AgentSpawner):
 
         agent_id = handle.agent_id
         target = Target(type=TargetType.AGENT, value=agent_id)
+        
+        logger.info(f"[_REGISTER] Starting registration for agent {agent_id}")
 
         async def bus_handler(message: Any) -> Any:
             """Handle incoming bus messages.
@@ -422,21 +607,23 @@ class LocalAgentSpawner(AgentSpawner):
                 Response message if needed
             """
             try:
-                # Extract task info from message
-                task_name = getattr(message, 'task_name', None) or message.payload.get('task_name', 'execute')
-                task_data = getattr(message, 'task_data', None) or message.payload.get('task_data', {})
+                # Extract task info
+                task_name = getattr(message, 'task_name', None) or 'execute'
+                task_data = getattr(message, 'task_data', None) or {}
                 
                 # Execute task via handler
                 result = await task_handler(task_name, task_data)
                 
                 # Build response
+                correlation_id = getattr(message, 'correlation_id', None) or getattr(message, 'id', None)
+                
                 response = TaskResponse(
                     source=agent_id,
                     target=Target(type=TargetType.AGENT, value=message.source) if hasattr(message, 'source') else message.target,
                     success=result.get("success", False),
                     result=result.get("result", {}),
                     error=result.get("error"),
-                    correlation_id=getattr(message, 'correlation_id', None) or getattr(message, 'id', None),
+                    correlation_id=correlation_id,
                     trace_id=getattr(message, 'trace_id', ''),
                 )
                 response.id = str(uuid.uuid4())
@@ -444,7 +631,7 @@ class LocalAgentSpawner(AgentSpawner):
                 return response
                 
             except Exception as e:
-                logger.exception(f"Error in bus handler for {agent_id}")
+                logger.exception(f"Bus handler error for {agent_id}: {e}")
                 # Return error response
                 return TaskResponse(
                     source=agent_id,
@@ -452,13 +639,16 @@ class LocalAgentSpawner(AgentSpawner):
                     success=False,
                     result={},
                     error=str(e),
-                    correlation_id=getattr(message, 'correlation_id', None),
+                    correlation_id=getattr(message, 'correlation_id', None) or getattr(message, 'id', None),
                     trace_id=getattr(message, 'trace_id', ''),
                 )
 
         # Subscribe to bus
+        logger.info(f"[_REGISTER] About to subscribe {agent_id} to bus")
         try:
             await self._bus.subscribe(target, bus_handler)
-            logger.info(f"Agent {agent_id} subscribed to bus at {target}")
+            logger.info(f"[_REGISTER] Successfully subscribed {agent_id} to bus")
         except Exception as e:
-            logger.error(f"Failed to subscribe agent {agent_id} to bus: {e}")
+            logger.error(f"[_REGISTER] Failed to subscribe agent {agent_id} to bus: {e}")
+        
+        logger.info(f"[_REGISTER] Registration complete for {agent_id}")

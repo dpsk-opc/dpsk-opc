@@ -35,6 +35,11 @@ dependencies = [
     
     # Configuration
     "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+    
+    # LLM (Large Language Model)
+    "openai>=1.12",
+    "httpx>=0.26",
     
     # Logging & Tracing
     "structlog>=24.1",
@@ -57,7 +62,6 @@ dependencies = [
     "pytest-asyncio>=0.23",
     "pytest-cov>=4.1",
     "pytest-mock>=3.12",
-    "httpx>=0.26",
 ]
 
 [project.optional-dependencies]

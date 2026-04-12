@@ -44,8 +44,93 @@ def _json_serializer(obj: Any, **kw: Any) -> str:
 def _console_renderer(
     logger: Any, method_name: str, event_dict: Any
 ) -> str:
-    """Console renderer for structlog."""
-    return structlog.dev.ConsoleRenderer()(logger, method_name, event_dict)
+    """Console renderer for structlog with logger name."""
+    # Get logger name from event_dict
+    logger_name = event_dict.pop("logger", "")
+    log_level = event_dict.pop("level", method_name.upper())
+    
+    # Format timestamp
+    timestamp = event_dict.pop("timestamp", "")
+    if timestamp:
+        # Remove date part, keep time
+        if "T" in timestamp:
+            timestamp = timestamp.split("T")[1][:8]
+    
+    # Build output
+    parts = []
+    
+    # Timestamp
+    if timestamp:
+        parts.append(f"{timestamp}")
+    
+    # Level
+    level_colors = {
+        "DEBUG": "\033[36m",    # Cyan
+        "INFO": "\033[32m",     # Green
+        "WARNING": "\033[33m",  # Yellow
+        "ERROR": "\033[31m",    # Red
+        "CRITICAL": "\033[35m", # Magenta
+    }
+    color = level_colors.get(log_level, "")
+    reset = "\033[0m"
+    parts.append(f"{color}[{log_level:8}]{reset}")
+    
+    # Logger name (category)
+    if logger_name:
+        parts.append(f"[{logger_name}]")
+    
+    # Event/message
+    event = event_dict.pop("event", "")
+    parts.append(event)
+    
+    # Remaining fields as key=value
+    if event_dict:
+        extra_parts = []
+        for key, value in event_dict.items():
+            if key not in ("stack_info", "exc_info", "format_exc_info"):
+                extra_parts.append(f"{key}={value}")
+        if extra_parts:
+            parts.append(" ".join(extra_parts))
+    
+    return " ".join(parts)
+
+
+def _console_renderer_simple(
+    logger: Any, method_name: str, event_dict: Any
+) -> str:
+    """Simple console renderer without colors for structlog."""
+    # Get logger name from event_dict
+    logger_name = event_dict.pop("logger", "")
+    log_level = event_dict.pop("level", method_name.upper())
+    
+    # Format timestamp
+    timestamp = event_dict.pop("timestamp", "")
+    if timestamp:
+        if "T" in timestamp:
+            timestamp = timestamp.split("T")[1][:8]
+    
+    # Build output
+    parts = []
+    if timestamp:
+        parts.append(f"{timestamp}")
+    
+    parts.append(f"[{log_level:8}]")
+    
+    if logger_name:
+        parts.append(f"[{logger_name}]")
+    
+    event = event_dict.pop("event", "")
+    parts.append(event)
+    
+    if event_dict:
+        extra_parts = []
+        for key, value in event_dict.items():
+            if key not in ("stack_info", "exc_info", "format_exc_info"):
+                extra_parts.append(f"{key}={value}")
+        if extra_parts:
+            parts.append(" ".join(extra_parts))
+    
+    return " ".join(parts)
 
 
 def configure_logging(level: str = "INFO", format: str = "json") -> None:
@@ -87,7 +172,8 @@ def configure_logging(level: str = "INFO", format: str = "json") -> None:
                 structlog.stdlib.add_logger_name,
                 structlog.stdlib.add_log_level,
                 structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S"),
-                structlog.dev.ConsoleRenderer(colors=True),
+                structlog.processors.UnicodeDecoder(),
+                _console_renderer,
             ],
             wrapper_class=structlog.stdlib.BoundLogger,
             context_class=dict,
@@ -114,7 +200,7 @@ def configure_logging(level: str = "INFO", format: str = "json") -> None:
         ))
     else:
         handler.setFormatter(structlog.stdlib.ProcessorFormatter(
-            processor=structlog.dev.ConsoleRenderer(colors=True),
+            processor=_console_renderer,
         ))
     
     root_logger.addHandler(handler)

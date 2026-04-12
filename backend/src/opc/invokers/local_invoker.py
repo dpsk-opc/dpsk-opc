@@ -209,18 +209,12 @@ class LocalAgentInvoker:
             trace_id: Trace ID
 
         Returns:
-            Agent handle
+            AgentHandle object
 
         Raises:
             ValueError: If agent not found
         """
-        # Try to get existing instance first
-        instances = await self.agent_manager.list_instances(agent_id)
-        if instances:
-            # Return handle to existing instance
-            return instances[0]
-
-        # Spawn new instance if none exists
+        # Always spawn a new instance for task execution
         try:
             handle = await self.agent_manager.spawn_agent(
                 agent_id,
@@ -228,7 +222,7 @@ class LocalAgentInvoker:
             )
             return handle
         except Exception as e:
-            raise ValueError(f"Failed to get or spawn agent {agent_id}: {e}")
+            raise ValueError(f"Failed to spawn agent {agent_id}: {e}")
 
     async def _execute_task(
         self,

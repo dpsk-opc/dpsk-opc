@@ -112,6 +112,91 @@ class MetricsConfig(BaseModel):
     )
 
 
+class LLMConfig(BaseModel):
+    """LLM (Large Language Model) configuration."""
+
+    # Default LLM settings
+    provider: str = Field(
+        default="openai",
+        description="LLM provider (openai, azure, local, etc.)"
+    )
+    model: str = Field(
+        default="gpt-3.5-turbo",
+        description="Default model name"
+    )
+    api_key: str = Field(
+        default="",
+        description="API key for LLM provider"
+    )
+    base_url: str = Field(
+        default="",
+        description="Base URL for API (useful for proxies or Azure)"
+    )
+    temperature: float = Field(
+        default=0.7,
+        ge=0,
+        le=2,
+        description="Default sampling temperature"
+    )
+    max_tokens: int = Field(
+        default=2000,
+        ge=1,
+        description="Default max tokens for response"
+    )
+    timeout: float = Field(
+        default=60.0,
+        ge=1,
+        description="Request timeout in seconds"
+    )
+    # Streaming settings
+    stream_chunk_delay_ms: int = Field(
+        default=20,
+        ge=0,
+        description="Delay between chunks in streaming mode (ms)"
+    )
+
+
+class AgentConfig(BaseModel):
+    """Agent configuration."""
+
+    # Agent definitions directory
+    agents_root: str = Field(
+        default="~/.dpskopc/agents",
+        description="Directory containing agent definitions"
+    )
+    # Default agent for chat
+    default_agent_id: str = Field(
+        default="秘书",
+        description="Default agent ID for chat requests"
+    )
+    # Execution settings
+    max_instances_per_agent: int = Field(
+        default=5,
+        ge=1,
+        description="Maximum concurrent instances per agent"
+    )
+    agent_task_timeout_secs: int = Field(
+        default=300,
+        ge=1,
+        description="Default task timeout for agent execution"
+    )
+    # Skills directory
+    skills_root: str = Field(
+        default="~/.dpskopc/skills",
+        description="Directory containing skill modules"
+    )
+    # Experience pool (cache)
+    experience_pool_enabled: bool = Field(
+        default=True,
+        description="Enable experience pool for caching results"
+    )
+    experience_pool_max_entries: int = Field(
+        default=1000,
+        ge=0,
+        description="Maximum entries in experience pool"
+    )
+
+
 class Config(BaseModel):
     """Main configuration model."""
 
@@ -120,6 +205,8 @@ class Config(BaseModel):
     log: LogConfig = Field(default_factory=LogConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     metrics: MetricsConfig = Field(default_factory=MetricsConfig)
+    llm: LLMConfig = Field(default_factory=LLMConfig)
+    agent: AgentConfig = Field(default_factory=AgentConfig)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert configuration to dictionary."""
@@ -148,6 +235,12 @@ class Config(BaseModel):
         
         if "metrics" in data:
             config.metrics = MetricsConfig(**data["metrics"])
+        
+        if "llm" in data:
+            config.llm = LLMConfig(**data["llm"])
+        
+        if "agent" in data:
+            config.agent = AgentConfig(**data["agent"])
         
         return config
 
@@ -242,6 +335,34 @@ def _apply_env_overrides(config: Config) -> Config:
     # Metrics overrides
     if prom_port := os.environ.get("PROMETHEUS_PORT"):
         config.metrics.prometheus_port = int(prom_port)
+    
+    # LLM overrides
+    if llm_provider := os.environ.get("LLM_PROVIDER"):
+        config.llm.provider = llm_provider
+    if llm_model := os.environ.get("LLM_MODEL"):
+        config.llm.model = llm_model
+    if llm_api_key := os.environ.get("LLM_API_KEY"):
+        config.llm.api_key = llm_api_key
+    if llm_base_url := os.environ.get("LLM_BASE_URL"):
+        config.llm.base_url = llm_base_url
+    if llm_temp := os.environ.get("LLM_TEMPERATURE"):
+        config.llm.temperature = float(llm_temp)
+    if llm_max_tokens := os.environ.get("LLM_MAX_TOKENS"):
+        config.llm.max_tokens = int(llm_max_tokens)
+    if llm_timeout := os.environ.get("LLM_TIMEOUT"):
+        config.llm.timeout = float(llm_timeout)
+    
+    # Agent overrides
+    if agents_root := os.environ.get("AGENTS_ROOT"):
+        config.agent.agents_root = agents_root
+    if default_agent := os.environ.get("DEFAULT_AGENT_ID"):
+        config.agent.default_agent_id = default_agent
+    if skills_root := os.environ.get("SKILLS_ROOT"):
+        config.agent.skills_root = skills_root
+    if agent_timeout := os.environ.get("AGENT_TASK_TIMEOUT_SECS"):
+        config.agent.agent_task_timeout_secs = int(agent_timeout)
+    if max_instances := os.environ.get("MAX_INSTANCES_PER_AGENT"):
+        config.agent.max_instances_per_agent = int(max_instances)
     
     return config
 

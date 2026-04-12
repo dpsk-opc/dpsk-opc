@@ -5,13 +5,17 @@ This module defines the core data structures for Agent management.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, ClassVar, Optional
 
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 
 class InstanceStatus(str, Enum):
@@ -19,6 +23,7 @@ class InstanceStatus(str, Enum):
 
     CREATING = "creating"
     RUNNING = "running"
+    QUEUED = "queued"  # Waiting in queue for an available instance
     STOPPING = "stopping"
     STOPPED = "stopped"
     FAILED = "failed"
@@ -171,8 +176,20 @@ class AgentHandle:
 
     instance: AgentInstance
     agent_def: AgentDef
-    _bus = None  # Reference to message bus (injected later)
-    _task_handler = None  # Task handler function (injected later)
+    _bus: ClassVar = None  # Reference to message bus (injected later)
+    _task_handler: ClassVar = None  # Task handler function (injected later)
+    _queued_task: ClassVar[Any] = None  # For queued tasks, reference to QueuedTask
+    _task_context: ClassVar[Any] = None  # Task context for queued tasks
+
+    def set_queued_task(self, queued_task: Any, task_context: Any = None) -> None:
+        """Set the queued task reference for delayed execution.
+        
+        Args:
+            queued_task: The QueuedTask object
+            task_context: Optional task context
+        """
+        object.__setattr__(self, '_queued_task', queued_task)
+        object.__setattr__(self, '_task_context', task_context)
 
     @property
     def instance_id(self) -> str:
@@ -216,9 +233,33 @@ class AgentHandle:
         from src.bus.models import MessageType, Target, TargetType
         from src.bus.protocol import TimeoutError as BusTimeoutError
 
+        logger.info(
+            f"[HANDLE] send_task called: agent={self.agent_id}, task={task_name}, timeout={timeout}",
+        )
+
+        # Handle queued tasks - wait for the task to be processed
+        queued_task = object.__getattribute__(self, '_queued_task') if hasattr(self, '_queued_task') else None
+        if queued_task is not None:
+            queued_task.task_name = task_name
+            queued_task.task_data = task_data
+            logger.info(f"[HANDLE] Queued task updated: task={task_name}")
+            
+            # Wait for the queue processor to handle this task
+            try:
+                result = await asyncio.wait_for(queued_task.future, timeout=timeout)
+                return result
+            except asyncio.TimeoutError:
+                logger.warning(f"[HANDLE] Queued task timeout: {task_name}")
+                return {
+                    "success": False,
+                    "error": f"Queued task timeout after {timeout}s",
+                    "result": {},
+                }
+
         if self._bus is None:
             # Fallback to direct handler call for backward compatibility
             if self._task_handler is not None:
+                logger.info(f"[HANDLE] Using fallback handler (no bus)")
                 return await self._execute_via_handler(task_name, task_data)
             return {"error": "Bus not available and no task handler set"}
 
@@ -239,6 +280,7 @@ class AgentHandle:
         
         try:
             # Send via bus and wait for response
+            logger.debug(f"[HANDLE] Sending request via bus: {request.id}")
             response = await self._bus.request(
                 target=target,
                 message=request,
@@ -255,12 +297,14 @@ class AgentHandle:
             return {"result": response}
             
         except BusTimeoutError as e:
+            logger.warning(f"[HANDLE] Task timeout: {e}")
             return {
                 "success": False,
                 "error": f"Task timeout: {e}",
                 "result": {},
             }
         except Exception as e:
+            logger.error(f"[HANDLE] Task error: {e}")
             return {
                 "success": False,
                 "error": str(e),

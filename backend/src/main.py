@@ -8,6 +8,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict, List, Optional
 
+from dotenv import load_dotenv
+
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -31,6 +33,12 @@ from src.api.chat import router as chat_router
 
 # Initialize logger
 logger = get_logger(__name__)
+
+# Load environment variables from .env file
+# Look for .env in the backend directory (relative to this file)
+backend_dir = Path(__file__).parent.parent
+env_file = backend_dir / ".env"
+load_dotenv(env_file)
 
 
 @asynccontextmanager
@@ -57,7 +65,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     from src.agent.spawner import LocalAgentSpawner
     from src.agent.manager import AgentManager
     
-    agents_root = Path.home() / ".dpskopc" / "agents"
+    # Get agent config
+    agent_config = config.agent
+    agents_root = Path(agent_config.agents_root).expanduser()
+    
     registry = AgentRegistry()
     
     # Initialize LLM client
@@ -67,23 +78,30 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         from src.llm import get_llm_registry
         from src.llm.base import LLMConfig
         from src.llm.openai_client import OpenAIClient
+        from src.agent.runner import set_llm_client as set_runner_llm_client
         
         llm_registry = get_llm_registry()
         
         # Get LLM config from application config
-        llm_config = config.llm if hasattr(config, 'llm') else {}
+        llm_config = config.llm
         
         # Initialize default LLM client
         default_llm_client = OpenAIClient(
             config=LLMConfig(
-                model=llm_config.get("model", "gpt-3.5-turbo"),
-                api_key=llm_config.get("api_key"),
-                base_url=llm_config.get("base_url"),
-                temperature=llm_config.get("temperature", 0.7),
+                model=llm_config.model,
+                api_key=llm_config.api_key or None,
+                base_url=llm_config.base_url or None,
+                temperature=llm_config.temperature,
+                max_tokens=llm_config.max_tokens,
+                timeout=llm_config.timeout,
             )
         )
         llm_registry.set_default_client(default_llm_client)
-        logger.info(f"LLM client initialized: {default_llm_client.model}")
+        
+        # Inject LLM client into runner module
+        set_runner_llm_client(default_llm_client)
+        
+        logger.info(f"LLM client initialized: model={llm_config.model}")
     except ImportError as e:
         logger.warning(f"LLM dependencies not available: {e}")
     except Exception as e:
@@ -149,16 +167,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.opc_client = opc_client
     logger.info("OPC-Client initialized")
     
-    # Initialize MVP Chat Service
+    # Initialize Chat Service with OPC-Client integration
     from src.api.chat import set_chat_service
     from src.services.chat_service import ChatService
     
-    chat_service = ChatService()
+    chat_service = ChatService(
+        opc_client=opc_client,
+        agent_manager=agent_manager,
+        default_agent_id=agent_config.default_agent_id,
+    )
     set_chat_service(chat_service)
     
     # Register Chat API router
     app.include_router(chat_router)
-    logger.info("MVP Chat API registered")
+    logger.info("Chat API registered with OPC-Client integration")
     
     yield
     
@@ -596,13 +618,14 @@ def main() -> None:
     # Configure logging
     configure_logging(level=config.log.level, format=config.log.format)
     
-    # Run with uvicorn
+    # Run with uvicorn in reload mode for development
     uvicorn.run(
         "src.main:app",
         host=config.server.host,
         port=config.server.port,
-        reload=False,
-        log_level="info",
+        reload=True,  # 自动检测代码变更并重载
+        reload_dirs=["src"],  # 只监控 src 目录变化
+        log_level="debug",
     )
 
 

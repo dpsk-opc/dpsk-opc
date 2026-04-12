@@ -135,6 +135,15 @@ class InMemoryMessageBus(MessageBus):
         if target.type != TargetType.AGENT:
             raise BusError(f"Request only supports AGENT target, got {target.type}")
 
+        logger.info(
+            f"[BUS] Sending request to {target.value}",
+            extra={
+                "message_id": message.id,
+                "task_name": message.task_name,
+                "timeout": timeout,
+            },
+        )
+
         # Create future for response
         future: asyncio.Future[TaskResponse] = asyncio.get_event_loop().create_future()
         
@@ -153,9 +162,18 @@ class InMemoryMessageBus(MessageBus):
             
             # Wait for response
             try:
+                logger.debug(f"[BUS] Waiting for response: {message.id}")
                 response = await asyncio.wait_for(future, timeout=timeout)
+                logger.info(
+                    f"[BUS] Received response from {target.value}",
+                    extra={"message_id": message.id, "success": response.success},
+                )
                 return response
             except asyncio.TimeoutError:
+                logger.warning(
+                    f"[BUS] Request timed out: {target.value}",
+                    extra={"message_id": message.id, "timeout": timeout},
+                )
                 raise TimeoutError(
                     f"Request to {target.value} timed out after {timeout}s",
                     operation="request",
@@ -364,25 +382,40 @@ class InMemoryMessageBus(MessageBus):
         handlers = self._agent_handlers.get(agent_id, [])
         
         if not handlers:
-            logger.warning(f"No handlers for agent: {agent_id}")
-            # Note: For requests, we do NOT immediately return an error response.
-            # The request will timeout as expected.
+            logger.warning(f"[BUS] No handlers for agent: {agent_id}")
             return
 
+        logger.info(
+            f"[BUS] Delivering message to agent {agent_id}",
+            extra={
+                "message_id": message.id,
+                "handler_count": len(handlers),
+            },
+        )
+
         # Execute handlers
-        for handler in handlers:
+        for i, handler in enumerate(handlers):
+            logger.info(f"[BUS] Executing handler {i+1}/{len(handlers)} for agent {agent_id}")
+            logger.info(f"[BUS] Handler type: {type(handler)}, is_coroutine: {asyncio.iscoroutinefunction(handler)}")
             try:
                 if asyncio.iscoroutinefunction(handler):
+                    logger.info(f"[BUS] Calling async handler...")
                     result = await handler(message)
                 else:
+                    logger.info(f"[BUS] Calling sync handler...")
                     result = handler(message)
+                
+                logger.info(f"[BUS] Handler {i+1} returned: type={type(result)}, is_message={isinstance(result, Message) if result else False}")
                 
                 # If handler returns a response, handle it
                 if result is not None and isinstance(result, Message):
+                    logger.info(f"[BUS] Handling response from handler {i+1}")
                     await self._handle_response(result)
+                else:
+                    logger.warning(f"[BUS] Handler {i+1} returned non-Message or None, not handling as response")
                     
             except Exception as e:
-                logger.error(f"Handler error: {e}", exc_info=True)
+                logger.error(f"[BUS] Handler {i+1} error: {e}", exc_info=True)
 
     async def _deliver_to_topic(self, topic: str, message: Message) -> None:
         """Deliver a message to a topic (broadcast)."""
@@ -435,21 +468,27 @@ class InMemoryMessageBus(MessageBus):
 
     async def _handle_response(self, response: Message) -> None:
         """Handle a response message by matching it to a pending request."""
+        logger.info(f"[_HANDLE_RESPONSE] Processing response: correlation_id={response.correlation_id}")
+        
         if response.correlation_id is None:
-            logger.warning("Response without correlation_id received")
+            logger.warning("[_HANDLE_RESPONSE] Response without correlation_id received")
             return
 
         async with self._lock:
             pending = self._pending_requests.get(response.correlation_id)
         
         if pending is None:
-            logger.warning(f"No pending request for correlation_id: {response.correlation_id}")
+            logger.warning(f"[_HANDLE_RESPONSE] No pending request for correlation_id: {response.correlation_id}")
+            logger.info(f"[_HANDLE_RESPONSE] Available pending requests: {list(self._pending_requests.keys())}")
             return
 
         if not pending.future.done():
+            logger.info(f"[_HANDLE_RESPONSE] Setting result for correlation_id: {response.correlation_id}")
             if isinstance(response, TaskResponse):
                 pending.future.set_result(response)
             else:
                 pending.future.set_exception(
                     BusError(f"Unexpected response type: {type(response)}")
                 )
+        else:
+            logger.warning(f"[_HANDLE_RESPONSE] Future already done for correlation_id: {response.correlation_id}")

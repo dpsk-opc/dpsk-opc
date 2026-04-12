@@ -92,12 +92,13 @@ class LLMRegistry:
         if model is None:
             return self._default_client
         
-        # Check if we already have a client for this model
-        cache_key = f"{model}:{hash(frozenset((model_config or {}).items()))}"
-        
         # If same model as default, return default client
         if self._default_client and model == self._default_client.model:
             return self._default_client
+        
+        # Check if we already have a client for this model
+        # Use only model name as cache key for simplicity
+        cache_key = model
         
         # Check cache
         if cache_key in self._model_clients:

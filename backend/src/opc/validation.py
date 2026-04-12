@@ -59,9 +59,18 @@ def validate_workflow(
 
     # 3. Check agent existence
     if available_agents is not None:
-        agent_set = set(available_agents)
+        # Normalize agents to strings (handle AgentDef objects, dicts, etc.)
+        agent_ids_set = set()
+        for agent in available_agents:
+            if hasattr(agent, 'agent_id'):
+                agent_ids_set.add(agent.agent_id)  # AgentDef object
+            elif isinstance(agent, dict):
+                agent_ids_set.add(agent.get('agent_id', str(agent)))  # dict
+            else:
+                agent_ids_set.add(str(agent))  # string or other
+        
         for task in workflow.tasks:
-            if task.agent not in agent_set:
+            if task.agent not in agent_ids_set:
                 errors.append(f"Agent '{task.agent}' not found in registry (task: {task.id})")
 
     # 4. Check dependency references

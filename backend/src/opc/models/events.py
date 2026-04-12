@@ -73,12 +73,15 @@ class ProgressEvent:
         )
 
     @classmethod
-    def workflow_complete(cls, duration_ms: int, trace_id: str) -> "ProgressEvent":
+    def workflow_complete(cls, duration_ms: int, trace_id: str, output: Any = None) -> "ProgressEvent":
         """Create a workflow complete event."""
+        data = {"duration_ms": duration_ms, "trace_id": trace_id}
+        if output is not None:
+            data["output"] = output
         return cls(
             type=EventType.WORKFLOW_COMPLETE,
             status="completed",
-            data={"duration_ms": duration_ms, "trace_id": trace_id},
+            data=data,
         )
 
     @classmethod

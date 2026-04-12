@@ -292,7 +292,9 @@ class OPCClient:
             total_duration_ms = int((time.time() - start_time) * 1000)
 
             if final_status == WorkflowStatus.COMPLETED:
-                yield ProgressEvent.workflow_complete(total_duration_ms, trace_id)
+                # Extract content from results for response
+                output_content = self._extract_content_from_results(results)
+                yield ProgressEvent.workflow_complete(total_duration_ms, trace_id, output=output_content)
             else:
                 yield ProgressEvent.workflow_failed(
                     f"Workflow ended with status: {final_status.value}",
@@ -381,3 +383,56 @@ class OPCClient:
             return WorkflowStatus.COMPLETED
 
         return WorkflowStatus.FAILED
+
+    def _extract_content_from_results(self, results: dict[str, Any]) -> str:
+        """Extract readable content from task results.
+
+        Args:
+            results: Task results dictionary
+
+        Returns:
+            Extracted content string
+        """
+        if not results:
+            return ""
+
+        def extract_from_output(output: Any) -> str:
+            """Recursively extract content from output."""
+            if not output:
+                return ""
+            if isinstance(output, str):
+                return output
+            if isinstance(output, dict):
+                # Direct content
+                if "content" in output:
+                    content = output.get("content", "")
+                    if content:
+                        return str(content)
+                # Nested result structure: {'success': ..., 'result': {'success': ..., 'content': ...}}
+                if "result" in output:
+                    result = output.get("result", {})
+                    if isinstance(result, dict):
+                        if "content" in result:
+                            content = result.get("content", "")
+                            if content:
+                                return str(content)
+                        # Double nested
+                        if "result" in result:
+                            inner = result.get("result", {})
+                            if isinstance(inner, dict) and "content" in inner:
+                                content = inner.get("content", "")
+                                if content:
+                                    return str(content)
+                    elif isinstance(result, str) and result:
+                        return result
+            return ""
+
+        contents = []
+        for task_id, task_result in results.items():
+            if hasattr(task_result, 'output') and task_result.output:
+                output = task_result.output
+                content = extract_from_output(output)
+                if content:
+                    contents.append(content)
+
+        return "\n".join(contents) if contents else ""

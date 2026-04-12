@@ -139,13 +139,11 @@ async def handle_task_request(
         # 2. Execute skill handler if available
         handler = SKILL_HANDLERS.get(task_name)
         if handler:
-            # Execute skill handler
             skill_result = await handler(task_data)
             result["result"] = skill_result
             logger.info(f"Executed skill handler: {task_name}")
         else:
             # 3. No skill found, use LLM with agent's system prompt
-            logger.info(f"No skill handler for '{task_name}', falling back to LLM")
             llm_result = await _execute_with_llm(
                 task_name=task_name,
                 task_data=task_data,
@@ -212,7 +210,7 @@ async def call_llm(
     client = get_llm_client()
     
     if client is None:
-        logger.error("LLM client not available")
+        logger.error("[LLM] LLM client not available")
         return {
             "error": "LLM client not initialized. "
                      "Set LLM client with runner.set_llm_client()",
@@ -228,8 +226,9 @@ async def call_llm(
             model_client = registry.get_client(model=model)
             if model_client:
                 client = model_client
+                logger.info(f"[LLM] Switched to model: {client.model}")
             else:
-                logger.warning(f"Model {model} not available, using default: {client.model}")
+                logger.warning(f"[LLM] Model {model} not available, using default: {client.model}")
         
         # Call LLM
         response = await client.complete(
@@ -254,7 +253,7 @@ async def call_llm(
             }
             
     except Exception as e:
-        logger.exception(f"LLM call failed: {e}")
+        logger.exception(f"[LLM] LLM call exception: {e}")
         return {
             "content": "",
             "error": str(e),
@@ -301,11 +300,17 @@ async def _execute_with_llm(
     )
     
     if result.get("error"):
+        logger.error(f"[LLM] LLM execution failed: {result['error']}")
         return {
             "success": False,
             "error": result["error"],
             "content": "",
         }
+    
+    logger.info(
+        f"[LLM] LLM execution success: task={task_name}, "
+        f"content_preview={result.get('content', '')[:100]}"
+    )
     
     return {
         "success": True,
