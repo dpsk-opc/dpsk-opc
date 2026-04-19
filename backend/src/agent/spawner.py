@@ -22,6 +22,9 @@ logger = logging.getLogger(__name__)
 # Flag to track if tools have been registered
 _tools_registered = False
 
+# Function to set bus reference in dispatch_task_tool
+_set_dispatch_bus = None
+
 
 def _register_builtin_tools() -> None:
     """Register all built-in tools for Tool Calling mode.
@@ -36,10 +39,35 @@ def _register_builtin_tools() -> None:
     try:
         from src.agent.tools.registry import registry
         from src.agent.tools.scan_org_chart import scan_org_chart_tool
+        from src.agent.tools.list_agents_tool import list_agents_tool
+        from src.agent.tools.dispatch_task_tool import dispatch_task_tool, set_bus as set_dispatch_bus
+        from src.agent.tools.meeting_room_tool import meeting_room_tool
+        from src.agent.tools.file_tools import FILE_TOOLS
+        from src.agent.tools.base import BaseTool
 
+        # Register scan_org_chart tool
         registry.register(scan_org_chart_tool)
+
+        # Register list_agents tool
+        registry.register(list_agents_tool)
+
+        # Register dispatch_task tool
+        registry.register(dispatch_task_tool)
+
+        # Register meeting_room tool
+        registry.register(meeting_room_tool)
+
+        # Register file operation tools
+        for tool in FILE_TOOLS:
+            registry.register(tool)  # type: ignore[arg-type]
+
+        # Store the set_bus function for later use when bus is available
+        global _set_dispatch_bus
+        _set_dispatch_bus = set_dispatch_bus
+
         _tools_registered = True
-        logger.info("Registered built-in tools: scan_org_chart")
+        registered_tools = [t.name for t in registry.get_all()]
+        logger.info(f"Registered built-in tools: {', '.join(registered_tools)}")
     except Exception as e:
         logger.error(f"Failed to register built-in tools: {e}")
 
@@ -170,6 +198,11 @@ class LocalAgentSpawner(AgentSpawner):
     def set_bus(self, bus: Any) -> None:
         """Set the message bus instance."""
         self._bus = bus
+        # Also set bus reference in dispatch_task_tool
+        global _set_dispatch_bus
+        if _set_dispatch_bus is not None:
+            _set_dispatch_bus(bus)
+            logger.info("Set bus reference in dispatch_task_tool")
     
     def set_llm_registry(self, registry: Any) -> None:
         """Set the LLM registry.

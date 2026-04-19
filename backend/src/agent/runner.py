@@ -84,9 +84,33 @@ def _register_builtin_tools() -> None:
     try:
         from .tools.registry import registry
         from .tools.scan_org_chart import scan_org_chart_tool
+        from .tools.list_agents_tool import list_agents_tool
+        from .tools.dispatch_task_tool import dispatch_task_tool
+        from .tools.file_tools import FILE_TOOLS
+        from .tools.meeting_room_tool import meeting_room_tool
 
+        # Register scan_org_chart tool
         registry.register(scan_org_chart_tool)
         logger.info("[INIT] Registered: scan_org_chart")
+
+        # Register list_agents tool
+        registry.register(list_agents_tool)
+        logger.info("[INIT] Registered: list_agents")
+
+        # Register dispatch_task tool
+        registry.register(dispatch_task_tool)
+        logger.info("[INIT] Registered: dispatch_task")
+
+        # Register file operation tools
+        for tool in FILE_TOOLS:
+            registry.register(tool)
+            logger.info(f"[INIT] Registered: {tool.name}")
+
+        # Register meeting_room tool
+        registry.register(meeting_room_tool)
+        logger.info("[INIT] Registered: meeting_room")
+
+        logger.info(f"[INIT] Total tools registered: {len(registry.get_all())}")
     except Exception as e:
         logger.error(f"[INIT] Failed to register built-in tools: {e}")
         import traceback
@@ -214,6 +238,10 @@ async def node_think(state: AgentState) -> AgentState:
             # LLM wants to call tools
             state["tool_calls"] = tool_calls
             state["react_step"] = "act"
+            # Ensure assistant_message has tool_calls field
+            # This is critical for message sequence validation in node_act
+            if "tool_calls" not in assistant_message:
+                assistant_message["tool_calls"] = tool_calls
             # Update messages: append assistant response with tool_calls
             state["messages"] = messages + [assistant_message]
             for tc in tool_calls:
