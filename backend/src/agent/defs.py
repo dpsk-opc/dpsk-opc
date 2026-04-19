@@ -176,10 +176,10 @@ class AgentHandle:
 
     instance: AgentInstance
     agent_def: AgentDef
-    _bus: ClassVar = None  # Reference to message bus (injected later)
-    _task_handler: ClassVar = None  # Task handler function (injected later)
-    _queued_task: ClassVar[Any] = None  # For queued tasks, reference to QueuedTask
-    _task_context: ClassVar[Any] = None  # Task context for queued tasks
+    _bus: Any = None  # Reference to message bus (injected later)
+    _task_handler: Any = None  # Task handler function (instance-level, not ClassVar!)
+    _queued_task: Any = None  # For queued tasks, reference to QueuedTask
+    _task_context: Any = None  # Task context for queued tasks
 
     def set_queued_task(self, queued_task: Any, task_context: Any = None) -> None:
         """Set the queued task reference for delayed execution.
@@ -188,8 +188,8 @@ class AgentHandle:
             queued_task: The QueuedTask object
             task_context: Optional task context
         """
-        object.__setattr__(self, '_queued_task', queued_task)
-        object.__setattr__(self, '_task_context', task_context)
+        self._queued_task = queued_task
+        self._task_context = task_context
 
     @property
     def instance_id(self) -> str:
@@ -234,7 +234,7 @@ class AgentHandle:
         from src.bus.protocol import TimeoutError as BusTimeoutError
 
         logger.info(
-            f"[HANDLE] send_task called: agent={self.agent_id}, task={task_name}, timeout={timeout}",
+            f"[HANDLE] send_task called: agent={self.agent_id}, instance={self.instance_id}, task={task_name}, timeout={timeout}",
         )
 
         # Handle queued tasks - wait for the task to be processed
@@ -263,7 +263,8 @@ class AgentHandle:
                 return await self._execute_via_handler(task_name, task_data)
             return {"error": "Bus not available and no task handler set"}
 
-        target = Target(type=TargetType.AGENT, value=self.agent_id)
+        # Send to instance_id (each instance has its own subscription)
+        target = Target(type=TargetType.AGENT, value=self.instance_id)
         
         # Create task request
         from src.bus.models import TaskRequest, Message

@@ -19,6 +19,30 @@ from src.agent.defs import AgentDef, AgentHandle, AgentInstance, InstanceStatus
 
 logger = logging.getLogger(__name__)
 
+# Flag to track if tools have been registered
+_tools_registered = False
+
+
+def _register_builtin_tools() -> None:
+    """Register all built-in tools for Tool Calling mode.
+
+    This should be called once during initialization.
+    """
+    global _tools_registered
+
+    if _tools_registered:
+        return
+
+    try:
+        from src.agent.tools.registry import registry
+        from src.agent.tools.scan_org_chart import scan_org_chart_tool
+
+        registry.register(scan_org_chart_tool)
+        _tools_registered = True
+        logger.info("Registered built-in tools: scan_org_chart")
+    except Exception as e:
+        logger.error(f"Failed to register built-in tools: {e}")
+
 
 @dataclass
 class QueuedTask:
@@ -133,11 +157,15 @@ class LocalAgentSpawner(AgentSpawner):
         self._llm_registry = llm_registry
         self._default_llm_client = default_llm_client
         self._handlers: dict[str, Any] = {}  # instance_id -> handler function
+        self._instance_handlers: dict[str, Any] = {}  # instance_id -> bus handler (for routing)
         
         # Queue processing state
         self._queued_tasks: dict[str, deque[QueuedTask]] = {}  # agent_id -> queued tasks with futures
         self._queue_processors: dict[str, asyncio.Task[Any]] = {}  # agent_id -> processor task
         self._started = False
+        
+        # Register built-in tools
+        _register_builtin_tools()
         
     def set_bus(self, bus: Any) -> None:
         """Set the message bus instance."""
@@ -248,16 +276,28 @@ class LocalAgentSpawner(AgentSpawner):
                 raise ValueError(f"Instance not found: {instance_id}")
 
             instance.status = InstanceStatus.STOPPING
+            agent_id = instance.agent_id
             logger.info(f"Stopping instance {instance_id}")
 
             # Simulate graceful shutdown
             await asyncio.sleep(0.1)
 
             instance.status = InstanceStatus.STOPPED
-            self._instance_counts[instance.agent_id] -= 1
+            self._instance_counts[agent_id] -= 1
 
-            # Process next in queue
-            await self._process_queue(instance.agent_id)
+            # Cleanup
+            if instance_id in self._handlers:
+                del self._handlers[instance_id]
+
+        # Unregister from bus (outside lock to avoid deadlock)
+        if self._bus is not None:
+            try:
+                await self._unregister_from_bus(instance_id)
+            except Exception as e:
+                logger.warning(f"[_UNREGISTER] Error during unregistration: {e}")
+
+        # Process next in queue
+        await self._process_queue(agent_id)
 
     async def destroy(self, instance_id: str) -> None:
         """Destroy an instance forcefully."""
@@ -275,11 +315,20 @@ class LocalAgentSpawner(AgentSpawner):
                 del self._instances[instance_id]
             if instance_id in self._handles:
                 del self._handles[instance_id]
+            if instance_id in self._handlers:
+                del self._handlers[instance_id]
 
             logger.info(f"Destroyed instance {instance_id}")
 
-            # Process next in queue
-            await self._process_queue(agent_id)
+        # Unregister from bus (outside lock to avoid deadlock)
+        if self._bus is not None:
+            try:
+                await self._unregister_from_bus(instance_id)
+            except Exception as e:
+                logger.warning(f"[_UNREGISTER] Error during unregistration: {e}")
+
+        # Process next in queue
+        await self._process_queue(agent_id)
 
     async def get_queue_size(self, agent_id: str) -> int:
         """Get the number of pending tasks in queue."""
@@ -583,7 +632,10 @@ class LocalAgentSpawner(AgentSpawner):
         handle: AgentHandle,
         task_handler: Any,
     ) -> None:
-        """Register an agent with the message bus.
+        """Register an agent instance with the message bus.
+
+        Each instance subscribes to its unique instance_id, and the spawner
+        routes messages to the appropriate handler based on instance_id.
 
         Args:
             handle: Agent handle
@@ -592,13 +644,16 @@ class LocalAgentSpawner(AgentSpawner):
         from src.bus.models import Target, TargetType, MessageType, TaskResponse
         import uuid
 
+        instance_id = handle.instance_id
         agent_id = handle.agent_id
-        target = Target(type=TargetType.AGENT, value=agent_id)
         
-        logger.info(f"[_REGISTER] Starting registration for agent {agent_id}")
+        logger.info(f"[_REGISTER] Starting registration for instance {instance_id} (agent: {agent_id})")
 
+        # Store the handler for this instance
+        self._instance_handlers[instance_id] = task_handler
+        
         async def bus_handler(message: Any) -> Any:
-            """Handle incoming bus messages.
+            """Handle incoming bus messages for this instance.
 
             Args:
                 message: Incoming message
@@ -611,17 +666,23 @@ class LocalAgentSpawner(AgentSpawner):
                 task_name = getattr(message, 'task_name', None) or 'execute'
                 task_data = getattr(message, 'task_data', None) or {}
                 
+                # Get handler for this instance
+                handler = self._instance_handlers.get(instance_id)
+                if handler is None:
+                    logger.warning(f"[_REGISTER] No handler found for instance {instance_id}")
+                    return None
+                
                 # Execute task via handler
-                result = await task_handler(task_name, task_data)
+                result = await handler(task_name, task_data)
                 
                 # Build response
                 correlation_id = getattr(message, 'correlation_id', None) or getattr(message, 'id', None)
                 
                 response = TaskResponse(
-                    source=agent_id,
+                    source=instance_id,  # Use instance_id as source
                     target=Target(type=TargetType.AGENT, value=message.source) if hasattr(message, 'source') else message.target,
                     success=result.get("success", False),
-                    result=result.get("result", {}),
+                    result=result,  # Use the entire result as the output
                     error=result.get("error"),
                     correlation_id=correlation_id,
                     trace_id=getattr(message, 'trace_id', ''),
@@ -631,10 +692,10 @@ class LocalAgentSpawner(AgentSpawner):
                 return response
                 
             except Exception as e:
-                logger.exception(f"Bus handler error for {agent_id}: {e}")
+                logger.exception(f"[_REGISTER] Bus handler error for {instance_id}: {e}")
                 # Return error response
                 return TaskResponse(
-                    source=agent_id,
+                    source=instance_id,
                     target=message.target if hasattr(message, 'target') else Target(type=TargetType.AGENT, value="unknown"),
                     success=False,
                     result={},
@@ -643,12 +704,43 @@ class LocalAgentSpawner(AgentSpawner):
                     trace_id=getattr(message, 'trace_id', ''),
                 )
 
-        # Subscribe to bus
-        logger.info(f"[_REGISTER] About to subscribe {agent_id} to bus")
+        # Subscribe to bus using instance_id (not agent_id)
+        target = Target(type=TargetType.AGENT, value=instance_id)
+        logger.info(f"[_REGISTER] About to subscribe {instance_id} to bus")
         try:
             await self._bus.subscribe(target, bus_handler)
-            logger.info(f"[_REGISTER] Successfully subscribed {agent_id} to bus")
+            logger.info(f"[_REGISTER] Successfully subscribed instance {instance_id} to bus")
         except Exception as e:
-            logger.error(f"[_REGISTER] Failed to subscribe agent {agent_id} to bus: {e}")
+            logger.error(f"[_REGISTER] Failed to subscribe instance {instance_id} to bus: {e}")
+            # Clean up the handler reference if subscription fails
+            self._instance_handlers.pop(instance_id, None)
+            raise
         
-        logger.info(f"[_REGISTER] Registration complete for {agent_id}")
+        logger.info(f"[_REGISTER] Registration complete for instance {instance_id}")
+    
+    async def _unregister_from_bus(self, instance_id: str) -> None:
+        """Unregister an agent instance from the message bus.
+
+        Args:
+            instance_id: Instance identifier
+        """
+        from src.bus.models import Target, TargetType
+        
+        logger.info(f"[_UNREGISTER] Starting unregistration for instance {instance_id}")
+        
+        # Get the handler for this instance
+        bus_handler = self._instance_handlers.pop(instance_id, None)
+        
+        if bus_handler is None:
+            logger.warning(f"[_UNREGISTER] No handler found for instance {instance_id}")
+            return
+        
+        # Unsubscribe from bus using instance_id
+        target = Target(type=TargetType.AGENT, value=instance_id)
+        try:
+            await self._bus.unsubscribe(target, bus_handler)
+            logger.info(f"[_UNREGISTER] Successfully unsubscribed instance {instance_id} from bus")
+        except Exception as e:
+            logger.warning(f"[_UNREGISTER] Failed to unsubscribe instance {instance_id}: {e}")
+        
+        logger.info(f"[_UNREGISTER] Unregistration complete for instance {instance_id}")

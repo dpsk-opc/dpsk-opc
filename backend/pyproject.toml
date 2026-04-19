@@ -41,6 +41,10 @@ dependencies = [
     "openai>=1.12",
     "httpx>=0.26",
     
+    # LangGraph for agent workflow orchestration
+    "langgraph>=0.2.0",
+    "langchain-core>=0.3.0",
+    
     # Logging & Tracing
     "structlog>=24.1",
     "opentelemetry-api>=1.22",

@@ -16,17 +16,24 @@ logger = logging.getLogger(__name__)
 @dataclass
 class LLMResponse:
     """Response from LLM API."""
-    
+
     content: str = ""
     model: str = ""
     usage: dict[str, int] = field(default_factory=dict)
     finish_reason: Optional[str] = None
     error: Optional[str] = None
-    
+    tool_calls: Optional[list[dict[str, Any]]] = None
+    raw_response: Any = None
+
     @property
     def success(self) -> bool:
         """Check if response is successful."""
-        return self.error is None and self.content
+        return self.error is None and (self.content or self.tool_calls)
+
+    @property
+    def has_tool_calls(self) -> bool:
+        """Check if response contains tool calls."""
+        return bool(self.tool_calls)
 
 
 @dataclass
