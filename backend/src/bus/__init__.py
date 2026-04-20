@@ -281,6 +281,10 @@ from src.bus.models import (
     TargetType,
     TaskRequest,
     TaskResponse,
+    AgentEventType,
+    AgentEventData,
+    AgentEventEmitter,
+    agent_event_emitter,
 )
 from src.bus.memory import InMemoryMessageBus
 from src.bus.protocol import MessageBus, MessageStream
@@ -299,6 +303,11 @@ __all__ = [
     "Command",
     "Query",
     "QueryResponse",
+    # Agent Events
+    "AgentEventType",
+    "AgentEventData",
+    "AgentEventEmitter",
+    "agent_event_emitter",
     # Protocol
     "MessageBus",
     "MessageStream",

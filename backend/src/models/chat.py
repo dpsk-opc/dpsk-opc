@@ -17,6 +17,7 @@ class SSEResponseType(str, Enum):
     LOG = "log"
     MESSAGE = "message"
     DONE = "done"
+    AGENT_EVENT = "agent_event"  # Agent processing events (for observability)
 
 
 class ChatMessage(BaseModel):
@@ -163,6 +164,13 @@ class SSEResponse(BaseModel):
     content: Optional[str] = Field(None, description="Message content")
     is_final: Optional[bool] = Field(None, description="Is final chunk")
     
+    # Agent event fields (for observability)
+    event_type: Optional[str] = Field(None, description="Agent event type")
+    event_message: Optional[str] = Field(None, description="Human-readable event message")
+    event_data: Optional[Dict[str, Any]] = Field(None, description="Additional event data")
+    react_step: Optional[str] = Field(None, description="Current ReAct step")
+    tool_name: Optional[str] = Field(None, description="Tool name (if applicable)")
+    
     # Timestamp
     timestamp: Optional[int] = Field(None, description="Event timestamp")
     
@@ -238,6 +246,40 @@ class SSEResponse(BaseModel):
         """
         return cls(type=SSEResponseType.DONE)
     
+    @classmethod
+    def agent_event(
+        cls,
+        event_type: str,
+        message: str,
+        agent_id: Optional[str] = None,
+        react_step: Optional[str] = None,
+        tool_name: Optional[str] = None,
+        event_data: Optional[Dict[str, Any]] = None,
+    ) -> "SSEResponse":
+        """Create an agent_event for observability.
+
+        Args:
+            event_type: Agent event type (e.g., "agent:task_started")
+            message: Human-readable message
+            agent_id: Agent identifier
+            react_step: Current ReAct step
+            tool_name: Tool name if applicable
+            event_data: Additional event data
+
+        Returns:
+            SSEResponse instance
+        """
+        return cls(
+            type=SSEResponseType.AGENT_EVENT,
+            agent_id=agent_id,
+            event_type=event_type,
+            event_message=message,
+            react_step=react_step,
+            tool_name=tool_name,
+            event_data=event_data,
+            timestamp=int(datetime.now().timestamp())
+        )
+    
     def to_sse_data(self) -> Dict[str, Any]:
         """Convert to SSE data format.
         
@@ -262,5 +304,17 @@ class SSEResponse(BaseModel):
             data["is_final"] = self.is_final
         if self.timestamp is not None:
             data["timestamp"] = self.timestamp
+        
+        # Agent event fields
+        if self.event_type is not None:
+            data["event_type"] = self.event_type
+        if self.event_message is not None:
+            data["message"] = self.event_message
+        if self.react_step is not None:
+            data["react_step"] = self.react_step
+        if self.tool_name is not None:
+            data["tool_name"] = self.tool_name
+        if self.event_data is not None:
+            data["data"] = self.event_data
         
         return data

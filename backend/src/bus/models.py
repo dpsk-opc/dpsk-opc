@@ -4,13 +4,17 @@ This module defines the core message models used for agent communication.
 """
 
 import json
+import logging
 import time
 import uuid
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Generic, Optional, TypeVar, Union
+from typing import Any, Optional, TypeVar
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 
 class MessageType(str, Enum):
@@ -230,6 +234,166 @@ class Event(Message):
             ttl=self.ttl,
             priority=self.priority,
         )
+
+
+class AgentEventType(str, Enum):
+    """Enumeration of agent processing event types.
+
+    These events are published during the agent's ReAct loop execution,
+    allowing upstream systems (like frontend) to track progress.
+    """
+
+    # Task lifecycle events
+    TASK_RECEIVED = "agent:task_received"       # Agent received a task
+    TASK_STARTED = "agent:task_started"        # Agent started processing
+    TASK_COMPLETED = "agent:task_completed"     # Agent completed successfully
+    TASK_FAILED = "agent:task_failed"           # Agent failed with error
+
+    # ReAct loop events
+    REACT_THINK_START = "agent:react:think_start"   # Starting LLM thinking
+    REACT_THINK_END = "agent:react:think_end"       # LLM thinking complete
+    REACT_ACT_START = "agent:react:act_start"       # Starting tool execution
+    REACT_ACT_END = "agent:react:act_end"           # Tool execution complete
+    REACT_OBSERVE_END = "agent:react:observe_end"   # Observation of tool results
+
+    # Tool-level events
+    TOOL_CALL_START = "agent:tool:call_start"   # About to call a tool
+    TOOL_CALL_END = "agent:tool:call_end"       # Tool execution finished
+
+    # LLM-level events
+    LLM_REQUEST_START = "agent:llm:request_start"  # LLM API request started
+    LLM_REQUEST_END = "agent:llm:request_end"      # LLM API request finished
+
+
+@dataclass
+class AgentEventData:
+    """Data payload for agent events."""
+
+    # Basic info
+    agent_id: str
+    instance_id: str
+    task_id: Optional[str] = None
+
+    # Correlation for linking to original request
+    correlation_id: Optional[str] = None
+
+    # Event-specific data
+    event_message: str = ""                                    # Human-readable message
+    react_step: Optional[str] = None                           # Current ReAct step
+    react_iteration: int = 0                                   # Current iteration count
+    tool_name: Optional[str] = None                            # Tool being executed
+    tool_args: Optional[dict[str, Any]] = None                # Tool arguments
+    tool_result: Optional[dict[str, Any]] = None               # Tool result (success/failure)
+    llm_model: Optional[str] = None                             # LLM model used
+    token_usage: Optional[dict[str, int]] = None              # Token usage stats
+    duration_ms: int = 0                                       # Duration of this step
+    error: Optional[str] = None                                # Error message if failed
+
+    # Additional context
+    extra: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        result = {
+            "agent_id": self.agent_id,
+            "instance_id": self.instance_id,
+            "message": self.event_message,
+        }
+
+        # Add optional fields if present
+        if self.task_id:
+            result["task_id"] = self.task_id
+        if self.correlation_id:
+            result["correlation_id"] = self.correlation_id
+        if self.react_step:
+            result["react_step"] = self.react_step
+        if self.react_iteration > 0:
+            result["react_iteration"] = self.react_iteration
+        if self.tool_name:
+            result["tool_name"] = self.tool_name
+        if self.tool_args:
+            result["tool_args"] = self.tool_args
+        if self.tool_result:
+            result["tool_result"] = self.tool_result
+        if self.llm_model:
+            result["llm_model"] = self.llm_model
+        if self.token_usage:
+            result["token_usage"] = self.token_usage
+        if self.duration_ms > 0:
+            result["duration_ms"] = self.duration_ms
+        if self.error:
+            result["error"] = self.error
+        if self.extra:
+            result["extra"] = self.extra
+
+        return result
+
+
+# Global event emitter for agent events
+class AgentEventEmitter:
+    """Emits agent processing events to the message bus.
+
+    This singleton manages event emission during agent execution.
+    It publishes events to a dedicated topic that consumers (like ChatService)
+    can subscribe to for tracking progress.
+    """
+
+    def __init__(self) -> None:
+        """Initialize the event emitter."""
+        self._bus: Any = None  # type: ignore[assignment]
+        self._topic: str = "agent.events"
+        self._enabled: bool = True
+
+    def set_bus(self, bus: Any) -> None:  # type: ignore[type-arg]
+        """Set the message bus for event publishing."""
+        self._bus = bus
+        logger.info(f"[EVENT_EMITTER] Message bus configured, topic={self._topic}")
+
+    def disable(self) -> None:
+        """Disable event emission (useful for testing)."""
+        self._enabled = False
+
+    def enable(self) -> None:
+        """Enable event emission."""
+        self._enabled = True
+
+    async def emit(
+        self,
+        event_type: AgentEventType,
+        data: AgentEventData,
+    ) -> None:
+        """Emit an agent event to the message bus.
+
+        Args:
+            event_type: Type of event
+            data: Event data payload
+        """
+        if not self._enabled:
+            return
+
+        if self._bus is None:
+            logger.warning(f"[EVENT_EMITTER] No bus configured, skipping event: {event_type}")
+            return
+
+        try:
+            event = Event(
+                source=data.instance_id,
+                target=Target(type=TargetType.TOPIC, value=self._topic),
+                event_type=event_type.value,
+                event_data=data.to_dict(),
+                correlation_id=data.correlation_id,
+                trace_id=data.task_id or "",
+            )
+
+            await self._bus.publish_event(topic=self._topic, message=event)
+            logger.debug(f"[EVENT_EMITTER] Emitted: {event_type.value} for {data.agent_id}")
+
+        except Exception as e:
+            logger.error(f"[EVENT_EMITTER] Failed to emit event {event_type}: {e}")
+
+
+# Global singleton instance
+agent_event_emitter = AgentEventEmitter()
 
 
 class Command(Message):

@@ -176,6 +176,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         agent_manager=agent_manager,
         default_agent_id=agent_config.default_agent_id,
     )
+    # Connect ChatService to Message Bus for agent event subscriptions
+    chat_service.set_message_bus(app.state.bus)
     set_chat_service(chat_service)
     
     # Register Chat API router

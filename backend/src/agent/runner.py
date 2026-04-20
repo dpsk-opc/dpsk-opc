@@ -23,6 +23,9 @@ logger = logging.getLogger(__name__)
 # Global LLM client (injected at runtime)
 _llm_client: Optional[Any] = None
 
+# Global event emitter for observability
+_event_emitter: Optional[Any] = None
+
 # Configuration from environment
 AGENT_ID = os.environ.get("AGENT_ID", "unknown")
 MESSAGE_BUS_ADDRESS = os.environ.get("MESSAGE_BUS_ADDRESS", "memory")
@@ -72,6 +75,93 @@ def set_llm_client(client: Any) -> None:
 def get_llm_client() -> Optional[Any]:
     """Get the global LLM client."""
     return _llm_client
+
+
+def set_event_emitter(emitter: Any) -> None:
+    """Set the global event emitter for observability.
+
+    Args:
+        emitter: Event emitter instance (AgentEventEmitter)
+    """
+    global _event_emitter
+    _event_emitter = emitter
+    logger.info(f"Event emitter configured: {emitter.__class__.__name__}")
+
+
+def get_event_emitter() -> Optional[Any]:
+    """Get the global event emitter."""
+    return _event_emitter
+
+
+async def _emit_event(
+    event_type: str,
+    agent_id: str,
+    instance_id: str,
+    message: str,
+    task_id: str | None = None,
+    correlation_id: str | None = None,
+    react_step: str | None = None,
+    react_iteration: int = 0,
+    tool_name: str | None = None,
+    tool_args: dict | None = None,
+    tool_result: dict | None = None,
+    duration_ms: int = 0,
+    error: str | None = None,
+    llm_model: str | None = None,
+) -> None:
+    """Emit an agent processing event.
+
+    This is a helper function that wraps the global event emitter.
+
+    Args:
+        event_type: AgentEventType value
+        agent_id: Agent identifier
+        instance_id: Agent instance identifier
+        message: Human-readable message
+        task_id: Optional task identifier for tracing
+        correlation_id: Optional correlation ID for request tracking
+        react_step: Current ReAct step (think/act/observe/finish)
+        react_iteration: Current iteration count
+        tool_name: Tool being executed (if applicable)
+        tool_args: Tool arguments (if applicable)
+        tool_result: Tool result (if applicable)
+        duration_ms: Duration of this step in milliseconds
+        error: Error message if failed
+    """
+    emitter = get_event_emitter()
+    if emitter is None:
+        return
+
+    try:
+        from src.bus.models import AgentEventData, AgentEventType
+
+        # Convert string to enum if needed
+        if isinstance(event_type, str):
+            try:
+                event_type_enum = AgentEventType(event_type)
+            except ValueError:
+                # Use string directly if not a valid enum
+                event_type_enum = event_type
+
+        data = AgentEventData(
+            agent_id=agent_id,
+            instance_id=instance_id,
+            task_id=task_id,
+            correlation_id=correlation_id,
+            event_message=message,
+            react_step=react_step,
+            react_iteration=react_iteration,
+            tool_name=tool_name,
+            tool_args=tool_args,
+            tool_result=tool_result,
+            llm_model=llm_model,
+            duration_ms=duration_ms,
+            error=error,
+        )
+
+        await emitter.emit(event_type_enum, data)
+    except Exception as e:
+        logger.warning(f"Failed to emit event {event_type}: {e}")
 
 
 # =============================================================================
@@ -137,6 +227,7 @@ def get_tools_for_llm() -> list[dict[str, Any]]:
 async def node_think(state: AgentState) -> AgentState:
     """Think node: LLM decides what to do (call tool or respond directly)."""
     from .graph.nodes import DebugConfig
+    from src.bus.models import AgentEventType
 
     client = get_llm_client()
     agent_info = state.get("agent_info") or {}
@@ -144,15 +235,36 @@ async def node_think(state: AgentState) -> AgentState:
     iterations = state.get("iterations", 0)
     messages = state.get("messages", [])
 
+    # Get agent identifiers
+    agent_id = agent_info.get("agent_id", AGENT_ID)
+    instance_id = f"{agent_id}-unknown"  # Will be set by spawner
+
     if DebugConfig.REACT_VERBOSE:
         logger.info(f"[REACT] ═══════════════════════════════════════")
         logger.info(f"[REACT] ITERATION {iterations}")
         logger.info(f"[REACT] ═══════════════════════════════════════")
 
+    # Emit think start event
+    await _emit_event(
+        event_type=AgentEventType.REACT_THINK_START,
+        agent_id=agent_id,
+        instance_id=instance_id,
+        message="正在思考...",
+        react_step="think",
+        react_iteration=iterations,
+    )
+
     if client is None:
         logger.error("[THINK] LLM client not available")
         state["error"] = "LLM client not initialized"
         state["react_step"] = "finish"
+        await _emit_event(
+            event_type=AgentEventType.TASK_FAILED,
+            agent_id=agent_id,
+            instance_id=instance_id,
+            message="LLM 客户端未初始化",
+            error="LLM client not initialized",
+        )
         return state
 
     # Get system prompt and tools
@@ -223,6 +335,17 @@ async def node_think(state: AgentState) -> AgentState:
         content = assistant_message.get("content", "")
         tool_calls = assistant_message.get("tool_calls", [])
 
+        # Emit LLM request end event
+        await _emit_event(
+            event_type=AgentEventType.REACT_THINK_END,
+            agent_id=agent_id,
+            instance_id=instance_id,
+            message="思考完成" if not tool_calls else f"决定调用 {len(tool_calls)} 个工具",
+            react_step="think",
+            react_iteration=iterations,
+            llm_model=getattr(client, 'model', None),
+        )
+
         if DebugConfig.REACT_VERBOSE:
             logger.info(f"[REACT] [THINK] LLM response: has_tool_calls={bool(tool_calls)}, content_len={len(content) if content else 0}")
 
@@ -247,7 +370,24 @@ async def node_think(state: AgentState) -> AgentState:
             for tc in tool_calls:
                 func = tc.get("function", {})
                 tc_id = tc.get("id", "MISSING_ID")
-                logger.info(f"[REACT] [THINK] → Will call: {func.get('name')}, id={tc_id}")
+                tool_name = func.get("name", "?")
+                logger.info(f"[REACT] [THINK] → Will call: {tool_name}, id={tc_id}")
+                # Emit tool call start event
+                tool_args = {}
+                try:
+                    tool_args = json.loads(func.get("arguments", "{}")) if isinstance(func.get("arguments"), str) else func.get("arguments", {})
+                except json.JSONDecodeError:
+                    pass
+                await _emit_event(
+                    event_type=AgentEventType.TOOL_CALL_START,
+                    agent_id=agent_id,
+                    instance_id=instance_id,
+                    message=f"准备调用工具: {tool_name}",
+                    react_step="act",
+                    react_iteration=iterations,
+                    tool_name=tool_name,
+                    tool_args=tool_args,
+                )
         else:
             # Direct response
             state["result"] = {
@@ -257,6 +397,14 @@ async def node_think(state: AgentState) -> AgentState:
             }
             state["llm_generated"] = True
             state["react_step"] = "finish"
+            # Emit task completed event for direct responses
+            await _emit_event(
+                event_type=AgentEventType.TASK_COMPLETED,
+                agent_id=agent_id,
+                instance_id=instance_id,
+                message="任务完成（直接回复）",
+                react_step="finish",
+            )
             # Still update messages for history
             state["messages"] = messages + [assistant_message]
             if DebugConfig.REACT_VERBOSE:
@@ -273,6 +421,13 @@ async def node_think(state: AgentState) -> AgentState:
 async def node_act(state: AgentState) -> AgentState:
     """Act node: Execute tools requested by LLM."""
     from .graph.nodes import DebugConfig
+    from src.bus.models import AgentEventType
+
+    # Get agent identifiers
+    agent_info = state.get("agent_info") or {}
+    agent_id = agent_info.get("agent_id", AGENT_ID)
+    instance_id = f"{agent_id}-unknown"
+    iterations = state.get("iterations", 0)
 
     # DEBUG: Check incoming messages
     existing_messages = state.get("messages", [])
@@ -280,6 +435,16 @@ async def node_act(state: AgentState) -> AgentState:
     if existing_messages:
         logger.info(f"[REACT] [ACT] Last message role: {existing_messages[-1].get('role')}")
         logger.info(f"[REACT] [ACT] Last message has_tool_calls: {'tool_calls' in existing_messages[-1]}")
+
+    # Emit act start event
+    await _emit_event(
+        event_type=AgentEventType.REACT_ACT_START,
+        agent_id=agent_id,
+        instance_id=instance_id,
+        message="开始执行工具...",
+        react_step="act",
+        react_iteration=iterations,
+    )
 
     tool_calls = state.get("tool_calls", [])
 
@@ -304,6 +469,27 @@ async def node_act(state: AgentState) -> AgentState:
                 logger.info(f"[REACT] [ACT] Tool {i+1}: {tool_name}")
                 logger.info(f"[REACT] [ACT]   Args: {arguments_str[:200]}...")
 
+            # Parse arguments for event
+            tool_args = {}
+            try:
+                tool_args = json.loads(arguments_str) if isinstance(arguments_str, str) else arguments_str
+            except json.JSONDecodeError:
+                pass
+
+            # Emit tool call start event
+            await _emit_event(
+                event_type=AgentEventType.TOOL_CALL_START,
+                agent_id=agent_id,
+                instance_id=instance_id,
+                message=f"正在调用工具: {tool_name}",
+                react_step="act",
+                react_iteration=iterations,
+                tool_name=tool_name,
+                tool_args=tool_args,
+            )
+
+            tool_start_time = time.time()
+
             # Get tool
             tool = registry.get(tool_name)
             if not tool:
@@ -311,7 +497,7 @@ async def node_act(state: AgentState) -> AgentState:
             else:
                 # Parse arguments
                 try:
-                    arguments = json.loads(arguments_str) if isinstance(arguments_str, str) else arguments_str
+                    arguments = tool_args
                 except json.JSONDecodeError:
                     result = {"success": False, "error": f"Invalid JSON: {arguments_str}", "tool_name": tool_name}
                 else:
@@ -322,6 +508,22 @@ async def node_act(state: AgentState) -> AgentState:
                     except Exception as e:
                         result = {"success": False, "error": str(e), "tool_name": tool_name}
 
+            # Calculate duration
+            duration_ms = int((time.time() - tool_start_time) * 1000)
+
+            # Emit tool call end event
+            await _emit_event(
+                event_type=AgentEventType.TOOL_CALL_END,
+                agent_id=agent_id,
+                instance_id=instance_id,
+                message=f"工具 {tool_name} 执行完成",
+                react_step="act",
+                react_iteration=iterations,
+                tool_name=tool_name,
+                tool_result=result,
+                duration_ms=duration_ms,
+            )
+
             results.append(result)
 
             if DebugConfig.REACT_VERBOSE:
@@ -329,6 +531,16 @@ async def node_act(state: AgentState) -> AgentState:
                 logger.info(f"[REACT] [ACT]   Result: success={success}")
                 if success and "chart" in result:
                     logger.info(f"[REACT] [ACT]   Chart preview:\n{result.get('chart', '')[:200]}...")
+
+        # Emit act end event
+        await _emit_event(
+            event_type=AgentEventType.REACT_ACT_END,
+            agent_id=agent_id,
+            instance_id=instance_id,
+            message=f"已完成 {len(tool_calls)} 个工具调用",
+            react_step="act",
+            react_iteration=iterations,
+        )
 
         # Add tool results as messages
         # IMPORTANT: DeepSeek requires tool_call_id to match the assistant's tool_calls
@@ -381,12 +593,28 @@ async def node_act(state: AgentState) -> AgentState:
 async def node_observe(state: AgentState) -> AgentState:
     """Observe node: Process results and decide next step."""
     from .graph.nodes import DebugConfig
+    from src.bus.models import AgentEventType
+
+    # Get agent identifiers
+    agent_info = state.get("agent_info") or {}
+    agent_id = agent_info.get("agent_id", AGENT_ID)
+    instance_id = f"{agent_id}-unknown"
 
     iterations = state.get("iterations", 0) + 1
     max_iterations = state.get("max_iterations", 10)
 
     state["iterations"] = iterations
     state["react_step"] = "think"
+
+    # Emit observe end event
+    await _emit_event(
+        event_type=AgentEventType.REACT_OBSERVE_END,
+        agent_id=agent_id,
+        instance_id=instance_id,
+        message=f"已收到工具结果，继续思考...",
+        react_step="observe",
+        react_iteration=iterations - 1,  # Report previous iteration
+    )
 
     if DebugConfig.REACT_VERBOSE:
         tool_results = state.get("tool_results", [])
@@ -398,6 +626,13 @@ async def node_observe(state: AgentState) -> AgentState:
         logger.warning(f"[REACT] [OBSERVE] Max iterations ({max_iterations}) reached")
         state["react_step"] = "finish"
         state["error"] = f"Maximum iterations ({max_iterations}) reached"
+        await _emit_event(
+            event_type=AgentEventType.TASK_FAILED,
+            agent_id=agent_id,
+            instance_id=instance_id,
+            message=f"达到最大迭代次数 ({max_iterations})",
+            error=f"Maximum iterations ({max_iterations}) reached",
+        )
         return state
 
     if DebugConfig.REACT_VERBOSE:
@@ -409,6 +644,13 @@ async def node_observe(state: AgentState) -> AgentState:
 async def node_finish(state: AgentState) -> AgentState:
     """Finish node: Generate final response."""
     from .graph.nodes import DebugConfig
+    from src.bus.models import AgentEventType
+
+    # Get agent identifiers
+    agent_info = state.get("agent_info") or {}
+    agent_id = agent_info.get("agent_id", AGENT_ID)
+    instance_id = f"{agent_id}-unknown"
+    iterations = state.get("iterations", 0)
 
     # Calculate duration
     start_time = state.get("start_time", time.time())
@@ -419,6 +661,16 @@ async def node_finish(state: AgentState) -> AgentState:
         state["result"]["duration_ms"] = duration_ms
         if DebugConfig.REACT_VERBOSE:
             logger.info(f"[REACT] [FINISH] Direct response, duration={duration_ms}ms")
+        # Emit task completed event
+        await _emit_event(
+            event_type=AgentEventType.TASK_COMPLETED,
+            agent_id=agent_id,
+            instance_id=instance_id,
+            message="任务完成",
+            react_step="finish",
+            react_iteration=iterations,
+            duration_ms=duration_ms,
+        )
         return state
 
     # Summarize tool results
@@ -450,15 +702,39 @@ async def node_finish(state: AgentState) -> AgentState:
 
         if DebugConfig.REACT_VERBOSE:
             logger.info(f"[REACT] [FINISH] Summarized {len(tool_results)} tool results, duration={duration_ms}ms")
+
+        # Emit task completed event
+        await _emit_event(
+            event_type=AgentEventType.TASK_COMPLETED,
+            agent_id=agent_id,
+            instance_id=instance_id,
+            message=f"任务完成，共执行 {len(tool_results)} 个工具",
+            react_step="finish",
+            react_iteration=iterations,
+            duration_ms=duration_ms,
+        )
     else:
+        error_msg = state.get("error", "No result generated")
         state["result"] = {
             "success": False,
-            "error": state.get("error", "No result generated"),
+            "error": error_msg,
             "duration_ms": duration_ms,
         }
 
         if DebugConfig.REACT_VERBOSE:
             logger.info(f"[REACT] [FINISH] No results, error={state.get('error')}")
+
+        # Emit task failed event
+        await _emit_event(
+            event_type=AgentEventType.TASK_FAILED,
+            agent_id=agent_id,
+            instance_id=instance_id,
+            message=f"任务失败: {error_msg}",
+            react_step="finish",
+            react_iteration=iterations,
+            duration_ms=duration_ms,
+            error=error_msg,
+        )
 
     return state
 
@@ -576,7 +852,31 @@ async def handle_task_request(
     Returns:
         Task response dictionary
     """
+    from src.bus.models import AgentEventType
+
     start_time = time.time()
+    
+    # Get agent identifiers for events
+    agent_id = (agent_info or {}).get("agent_id", AGENT_ID)
+    instance_id = f"{agent_id}-unknown"  # Will be set by spawner
+
+    # Emit task received event
+    await _emit_event(
+        event_type=AgentEventType.TASK_RECEIVED,
+        agent_id=agent_id,
+        instance_id=instance_id,
+        message="收到任务请求",
+        task_id=task_name,
+    )
+
+    # Emit task started event
+    await _emit_event(
+        event_type=AgentEventType.TASK_STARTED,
+        agent_id=agent_id,
+        instance_id=instance_id,
+        message="开始处理任务...",
+        task_id=task_name,
+    )
 
     initial_state: AgentState = {
         "task_name": task_name,
@@ -608,6 +908,15 @@ async def handle_task_request(
 
     except Exception as e:
         logger.exception(f"[HANDLER] Task failed: {task_name}")
+        # Emit task failed event
+        await _emit_event(
+            event_type=AgentEventType.TASK_FAILED,
+            agent_id=agent_id,
+            instance_id=instance_id,
+            message=f"任务执行异常: {str(e)}",
+            task_id=task_name,
+            error=str(e),
+        )
         raise
 
 

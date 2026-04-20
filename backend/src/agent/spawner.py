@@ -198,11 +198,25 @@ class LocalAgentSpawner(AgentSpawner):
     def set_bus(self, bus: Any) -> None:
         """Set the message bus instance."""
         self._bus = bus
+        
         # Also set bus reference in dispatch_task_tool
         global _set_dispatch_bus
         if _set_dispatch_bus is not None:
             _set_dispatch_bus(bus)
             logger.info("Set bus reference in dispatch_task_tool")
+        
+        # Also configure the event emitter for observability
+        try:
+            from src.bus.models import agent_event_emitter
+            agent_event_emitter.set_bus(bus)
+            logger.info("Set bus reference in agent_event_emitter")
+            
+            # Also wire up the runner's event emitter reference
+            from src.agent.runner import set_event_emitter
+            set_event_emitter(agent_event_emitter)
+            logger.info("Configured runner's event emitter reference")
+        except Exception as e:
+            logger.warning(f"Failed to configure agent_event_emitter: {e}")
     
     def set_llm_registry(self, registry: Any) -> None:
         """Set the LLM registry.
