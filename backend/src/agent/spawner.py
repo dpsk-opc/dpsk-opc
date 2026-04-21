@@ -751,19 +751,26 @@ class LocalAgentSpawner(AgentSpawner):
                     trace_id=getattr(message, 'trace_id', ''),
                 )
 
-        # Subscribe to bus using instance_id (not agent_id)
-        target = Target(type=TargetType.AGENT, value=instance_id)
-        logger.info(f"[_REGISTER] About to subscribe {instance_id} to bus")
-        try:
-            await self._bus.subscribe(target, bus_handler)
-            logger.info(f"[_REGISTER] Successfully subscribed instance {instance_id} to bus")
-        except Exception as e:
-            logger.error(f"[_REGISTER] Failed to subscribe instance {instance_id} to bus: {e}")
-            # Clean up the handler reference if subscription fails
-            self._instance_handlers.pop(instance_id, None)
-            raise
+        # Subscribe to bus using both instance_id AND agent_id
+        # This allows both instance-specific routing (keep_fit-abc123) 
+        # and type-based routing (keep_fit) to work
+        agent_def = handle.agent_def  # Get agent_def from handle
+        targets_to_subscribe = [
+            (instance_id, f"instance {instance_id}"),
+            (agent_def.agent_id, f"agent type {agent_def.agent_id}"),
+        ]
         
-        logger.info(f"[_REGISTER] Registration complete for instance {instance_id}")
+        for target_value, desc in targets_to_subscribe:
+            target = Target(type=TargetType.AGENT, value=target_value)
+            logger.info(f"[_REGISTER] About to subscribe {desc} to bus")
+            try:
+                await self._bus.subscribe(target, bus_handler)
+                logger.info(f"[_REGISTER] Successfully subscribed {desc} to bus")
+            except Exception as e:
+                logger.error(f"[_REGISTER] Failed to subscribe {desc} to bus: {e}")
+                raise
+        
+        logger.info(f"[_REGISTER] Registration complete for instance {instance_id} (with agent_id alias)")
     
     async def _unregister_from_bus(self, instance_id: str) -> None:
         """Unregister an agent instance from the message bus.
@@ -782,12 +789,25 @@ class LocalAgentSpawner(AgentSpawner):
             logger.warning(f"[_UNREGISTER] No handler found for instance {instance_id}")
             return
         
-        # Unsubscribe from bus using instance_id
-        target = Target(type=TargetType.AGENT, value=instance_id)
-        try:
-            await self._bus.unsubscribe(target, bus_handler)
-            logger.info(f"[_UNREGISTER] Successfully unsubscribed instance {instance_id} from bus")
-        except Exception as e:
-            logger.warning(f"[_UNREGISTER] Failed to unsubscribe instance {instance_id}: {e}")
+        # Get agent_id for unregistering the alias
+        agent_id = None
+        instance = self._instances.get(instance_id)
+        if instance:
+            agent_id = instance.agent_id
+        
+        # Unsubscribe from bus using both instance_id AND agent_id
+        targets_to_unsubscribe = [
+            (instance_id, f"instance {instance_id}"),
+        ]
+        if agent_id:
+            targets_to_unsubscribe.append((agent_id, f"agent type {agent_id}"))
+        
+        for target_value, desc in targets_to_unsubscribe:
+            target = Target(type=TargetType.AGENT, value=target_value)
+            try:
+                await self._bus.unsubscribe(target, bus_handler)
+                logger.info(f"[_UNREGISTER] Successfully unsubscribed {desc} from bus")
+            except Exception as e:
+                logger.warning(f"[_UNREGISTER] Failed to unsubscribe {desc}: {e}")
         
         logger.info(f"[_UNREGISTER] Unregistration complete for instance {instance_id}")

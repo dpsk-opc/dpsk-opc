@@ -101,16 +101,10 @@ class AgentManager:
         # Load agents from directory
         self.registry.load_from_dir(self.agents_root)
 
-        # Auto-spawn Secretary Agent
-        secretary = self.registry.get("秘书")
-        if secretary:
-            try:
-                await self.spawn_agent("秘书")
-                logger.info("Secretary Agent spawned successfully")
-            except Exception as e:
-                logger.error(f"Failed to spawn Secretary Agent: {e}")
-        else:
-            logger.warning("No Secretary Agent found")
+        # NOTE: Do NOT auto-spawn agents at startup.
+        # Each request will spawn the agent instance as needed.
+        # If you need persistent agents, set max_instances > 1 in agent definition
+        # and implement a different lifecycle management strategy.
 
         self._initialized = True
         logger.info(f"AgentManager initialized with {self.registry.count()} definitions")

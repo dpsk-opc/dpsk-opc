@@ -54,13 +54,13 @@ class DispatchTaskTool(BaseTool):
             ToolParameter(
                 name="timeout",
                 param_type="number",
-                description="等待结果的超时时间（秒），默认 60 秒",
+                description="等待结果的超时时间（秒），默认 600 秒（10分钟）",
                 required=False,
-                default=60.0,
+                default=600.0,
             ),
         ]
 
-    async def execute(self, to_agent: str, task: str, timeout: float = 60.0, **kwargs: Any) -> dict[str, Any]:
+    async def execute(self, to_agent: str, task: str, timeout: float = 600.0, **kwargs: Any) -> dict[str, Any]:
         """Dispatch a task to a specific agent via Message Bus."""
         if not to_agent:
             return {

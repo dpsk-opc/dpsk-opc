@@ -1,3 +1,6 @@
 [submodule "security"]
 	path = security
 	url = git@github.com:dpsk-opc/opc-security-kernel.git
+[submodule "cat"]
+	path = cat
+	url = git@github.com:dpsk-opc/opc-cat.git

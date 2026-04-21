@@ -1,0 +1,8 @@
+[plugin]
+name = "admin"
+version = "0.1.0"
+description = "Agent administration and management for DPSK-OPC"
+author = "dpsk-team"
+
+# Entry point: module:class
+entry = "src.plugins.builtin.admin:AdminPlugin"

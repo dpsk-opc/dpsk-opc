@@ -3,10 +3,17 @@
 This module provides the main application entry point.
 """
 
-import asyncio
-from contextlib import asynccontextmanager
+import sys
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict, List, Optional
+
+# Ensure backend directory is in sys.path for non-installed development
+_backend_dir = Path(__file__).parent.parent
+if str(_backend_dir) not in sys.path:
+    sys.path.insert(0, str(_backend_dir))
+
+import asyncio
+from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 
@@ -30,6 +37,9 @@ from src.utils.logging import configure_logging, get_logger
 
 # Import Chat API router
 from src.api.chat import router as chat_router
+
+# Import Plugin system
+from src.plugins import PluginManager
 
 # Initialize logger
 logger = get_logger(__name__)
@@ -184,6 +194,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.include_router(chat_router)
     logger.info("Chat API registered with OPC-Client integration")
     
+    # Initialize Plugin Manager and discover plugins
+    plugins_base = Path(__file__).parent / "plugins"
+    builtin_dir = plugins_base / "builtin"
+    installed_dir = plugins_base / "installed"
+    
+    plugin_manager = PluginManager(
+        builtin_dir=builtin_dir,
+        installed_dir=installed_dir,
+    )
+    await plugin_manager.discover_and_load()
+    app.state.plugin_manager = plugin_manager
+    
+    # Register plugin API routers
+    plugin_router = plugin_manager.get_api_router()
+    if plugin_router:
+        app.include_router(plugin_router)
+        logger.info(f"Plugin API registered: {list(plugin_manager.enabled_plugins)}")
+    
     yield
     
     # Shutdown
@@ -241,6 +269,24 @@ async def readiness_check() -> dict:
 async def liveness_check() -> dict:
     """Liveness check endpoint."""
     return {"status": "alive"}
+
+
+# === Plugin Management ===
+
+@app.get("/plugins")
+async def list_plugins() -> dict:
+    """List all available plugins and their status."""
+    plugin_manager = getattr(app.state, "plugin_manager", None)
+
+    if not plugin_manager:
+        return {"plugins": [], "count": 0, "message": "Plugin system not initialized"}
+
+    plugins = plugin_manager.list_plugins()
+    return {
+        "plugins": plugins,
+        "count": len(plugins),
+        "enabled": list(plugin_manager.enabled_plugins),
+    }
 
 
 # === Metrics Endpoint ===
@@ -621,6 +667,7 @@ def main() -> None:
     configure_logging(level=config.log.level, format=config.log.format)
     
     # Run with uvicorn in reload mode for development
+
     uvicorn.run(
         "src.main:app",
         host=config.server.host,

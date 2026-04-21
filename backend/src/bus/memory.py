@@ -163,7 +163,8 @@ class InMemoryMessageBus(MessageBus):
             # Wait for response
             try:
                 logger.debug(f"[BUS] Waiting for response: {message.id}")
-                response = await asyncio.wait_for(future, timeout=timeout)
+                # response = await asyncio.wait_for(future, timeout=timeout)
+                response = await asyncio.wait_for(future, timeout=600)
                 logger.info(
                     f"[BUS] Received response from {target.value}",
                     extra={"message_id": message.id, "success": response.success},

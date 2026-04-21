@@ -304,6 +304,10 @@ async def node_think(state: AgentState) -> AgentState:
     system_content = _build_system_prompt(system_prompt, tools)
     chat_messages = [{"role": "system", "content": system_content}] + messages
 
+    # Calculate approximate prompt length
+    total_chars = sum(len(str(m.get("content", ""))) + len(str(m.get("tool_calls", ""))) for m in chat_messages)
+    logger.info(f"[REACT] [THINK] iter={iterations}, prompt approx_chars={total_chars}, messages={len(chat_messages)}, tools={len(tools) if tools else 0}")
+
     # Call LLM
     try:
         # Check if we have tool messages in history (second call onwards)
@@ -334,6 +338,14 @@ async def node_think(state: AgentState) -> AgentState:
         assistant_message = response.get("message", {})
         content = assistant_message.get("content", "")
         tool_calls = assistant_message.get("tool_calls", [])
+
+        # DEBUG: Log LLM response details
+        logger.info(f"[REACT] [THINK] LLM response: tool_calls count={len(tool_calls) if tool_calls else 0}, content_len={len(content) if content else 0}")
+        if tool_calls:
+            for i, tc in enumerate(tool_calls):
+                logger.info(f"[REACT] [THINK]   tool_call[{i}]: {tc.get('function', {}).get('name', '?')}")
+        elif content:
+            logger.info(f"[REACT] [THINK]   content (no tool_calls): {content[:200]}...")
 
         # Emit LLM request end event
         await _emit_event(

@@ -93,6 +93,7 @@ class LocalAgentInvoker:
                 )
 
         # Get agent handle
+        handle = None
         try:
             handle = await self._get_agent_handle(agent_id, trace_id)
         except Exception as e:
@@ -107,7 +108,7 @@ class LocalAgentInvoker:
                 duration_ms=int((time.time() - start_time) * 1000),
             )
 
-        # Execute task with timeout
+        # Execute task with timeout (ensure handle is always released)
         try:
             result_data = await asyncio.wait_for(
                 self._execute_task(handle, task, context, trace_id),
@@ -160,6 +161,16 @@ class LocalAgentInvoker:
                 error=str(e),
                 duration_ms=int((time.time() - start_time) * 1000),
             )
+
+        finally:
+            # Always release the agent handle to decrement instance count
+            if handle is not None:
+                try:
+                    instance_id = handle.instance.instance_id
+                    await self.agent_manager.destroy_instance(instance_id, force=False)
+                    logger.debug(f"Released agent handle for {agent_id}, instance: {instance_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to release agent handle for {agent_id}: {e}")
 
     async def _validate_security(
         self,
