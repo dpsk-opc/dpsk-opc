@@ -3,6 +3,7 @@
 This module provides the main application entry point.
 """
 
+import os
 import sys
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict, List, Optional
@@ -49,6 +50,12 @@ logger = get_logger(__name__)
 backend_dir = Path(__file__).parent.parent
 env_file = backend_dir / ".env"
 load_dotenv(env_file)
+
+# Configure logging EARLY, before any module imports that might use logging
+# This ensures all loggers are properly configured
+# Note: configure_logging is already imported at line 37
+configure_logging(level=os.environ.get("LOG_LEVEL", "INFO"), 
+                  format=os.environ.get("LOG_FORMAT", "text"))
 
 
 @asynccontextmanager

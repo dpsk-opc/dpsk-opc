@@ -5,6 +5,7 @@ This module provides structured logging with OpenTelemetry tracing support.
 
 import json
 import logging
+import os
 import sys
 import uuid
 from contextlib import contextmanager
@@ -16,6 +17,9 @@ import structlog
 # Context variable for trace ID propagation
 _trace_id_var: ContextVar[str | None] = ContextVar("trace_id", default=None)
 _component_var: ContextVar[str | None] = ContextVar("component", default=None)
+
+# Flag to track if logging has been configured
+_logging_configured = False
 
 
 def get_trace_id() -> str | None:
@@ -136,10 +140,16 @@ def _console_renderer_simple(
 def configure_logging(level: str = "INFO", format: str = "json") -> None:
     """Configure structured logging.
     
+    This configures BOTH structlog (for src.utils.logging.get_logger)
+    AND standard logging (for logging.getLogger) to ensure all modules
+    output logs consistently based on LOG_LEVEL configuration.
+    
     Args:
         level: Log level (DEBUG, INFO, WARNING, ERROR)
         format: Log format ('json' or 'text')
     """
+    global _logging_configured
+    
     # Convert level string to logging level
     numeric_level = getattr(logging, level.upper(), logging.INFO)
     
@@ -181,7 +191,7 @@ def configure_logging(level: str = "INFO", format: str = "json") -> None:
             cache_logger_on_first_use=True,
         )
     
-    # Configure root logging
+    # Configure root logging for standard library loggers
     root_logger = logging.getLogger()
     root_logger.setLevel(numeric_level)
     
@@ -189,21 +199,35 @@ def configure_logging(level: str = "INFO", format: str = "json") -> None:
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
     
-    # Add new handler based on format
+    # Create handler with proper formatter based on format
     handler = logging.StreamHandler(sys.stdout)
     handler.setLevel(numeric_level)
     
     if format == "json":
-        # Use ProcessorFormatter with proper rendering for JSON output
-        handler.setFormatter(structlog.stdlib.ProcessorFormatter(
-            processor=structlog.processors.JSONRenderer(serializer=_json_serializer),
+        # JSON formatter for production
+        handler.setFormatter(logging.Formatter(
+            '{"time":"%(asctime)s","level":"%(levelname)s","logger":"%(name)s","message":"%(message)s"}'
         ))
     else:
-        handler.setFormatter(structlog.stdlib.ProcessorFormatter(
-            processor=_console_renderer,
+        # Human-readable formatter for development
+        handler.setFormatter(logging.Formatter(
+            '%(asctime)s [%(levelname)-8s] [%(name)s] %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
         ))
     
     root_logger.addHandler(handler)
+    
+    # IMPORTANT: Also set level on the main 'src' logger so all sub-loggers inherit it
+    # This ensures all modules using logging.getLogger(__name__) respect LOG_LEVEL
+    src_logger = logging.getLogger("src")
+    src_logger.setLevel(numeric_level)
+    
+    # Propagate to all sub-loggers under 'src'
+    # This is crucial for agent, bus, llm, etc. modules to output logs
+    src_logger.propagate = True
+    
+    # Mark as configured
+    _logging_configured = True
 
 
 def reset_logging() -> None:
@@ -227,6 +251,10 @@ def reset_logging() -> None:
 def get_logger(name: str, **kwargs: Any) -> structlog.stdlib.BoundLogger:
     """Get a structured logger instance.
     
+    If logging hasn't been configured yet (configure_logging not called),
+    this will auto-configure with default settings from environment variables
+    or sensible defaults (INFO level, text format).
+    
     Args:
         name: Logger name
         **kwargs: Additional fields to bind to all log messages
@@ -234,6 +262,15 @@ def get_logger(name: str, **kwargs: Any) -> structlog.stdlib.BoundLogger:
     Returns:
         Structured logger instance
     """
+    global _logging_configured
+    
+    # Auto-configure if not already configured
+    if not _logging_configured:
+        # Read from environment variables or use defaults
+        level = os.environ.get("LOG_LEVEL", "INFO")
+        format_type = os.environ.get("LOG_FORMAT", "text")
+        configure_logging(level=level, format=format_type)
+    
     logger = structlog.get_logger(name)
     
     # Bind initial context if provided

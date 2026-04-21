@@ -373,12 +373,25 @@ async def node_think(state: AgentState) -> AgentState:
             # LLM wants to call tools
             state["tool_calls"] = tool_calls
             state["react_step"] = "act"
-            # Ensure assistant_message has tool_calls field
-            # This is critical for message sequence validation in node_act
-            if "tool_calls" not in assistant_message:
-                assistant_message["tool_calls"] = tool_calls
+            
+            # Build assistant message with tool_calls explicitly included
+            # This is critical because assistant_message from LLM response
+            # may not have tool_calls field in the dict structure
+            assistant_msg_with_tools = {
+                "role": "assistant",
+                "content": content or "",
+                "tool_calls": [
+                    {
+                        "id": tc.get("id", f"call_{i}"),
+                        "type": tc.get("type", "function"),
+                        "function": tc.get("function", {}),
+                    }
+                    for i, tc in enumerate(tool_calls)
+                ],
+            }
+            
             # Update messages: append assistant response with tool_calls
-            state["messages"] = messages + [assistant_message]
+            state["messages"] = messages + [assistant_msg_with_tools]
             for tc in tool_calls:
                 func = tc.get("function", {})
                 tc_id = tc.get("id", "MISSING_ID")
@@ -488,6 +501,7 @@ async def node_act(state: AgentState) -> AgentState:
             except json.JSONDecodeError:
                 pass
 
+            logger.info(f"准备调用工具:{tool_name}")
             # Emit tool call start event
             await _emit_event(
                 event_type=AgentEventType.TOOL_CALL_START,
@@ -536,6 +550,8 @@ async def node_act(state: AgentState) -> AgentState:
                 duration_ms=duration_ms,
             )
 
+            logger.info(f"工具 {tool_name} 执行完成! react_step:act")
+
             results.append(result)
 
             if DebugConfig.REACT_VERBOSE:
@@ -553,6 +569,8 @@ async def node_act(state: AgentState) -> AgentState:
             react_step="act",
             react_iteration=iterations,
         )
+
+        logger.info("已完成 {len(tool_calls)} 个工具调用")
 
         # Add tool results as messages
         # IMPORTANT: DeepSeek requires tool_call_id to match the assistant's tool_calls

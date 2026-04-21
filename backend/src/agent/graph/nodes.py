@@ -30,8 +30,8 @@ class DebugConfig:
     Can be set programmatically or via environment variables.
     """
 
-    # Enable verbose ReAct logging
-    REACT_VERBOSE: bool = os.environ.get("REACT_VERBOSE", "false").lower() == "true"
+    # Enable verbose ReAct logging (default: True for development)
+    REACT_VERBOSE: bool = os.environ.get("REACT_VERBOSE", "true").lower() == "true"
 
     # Enable LangGraph debug mode
     LANGGRAPH_DEBUG: bool = os.environ.get("LANGGRAPH_DEBUG", "false").lower() == "true"
