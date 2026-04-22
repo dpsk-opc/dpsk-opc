@@ -50,6 +50,7 @@ class AgentState(TypedDict, total=False):
     react_step: str  # "think", "act", "observe", "finish"
     iterations: int
     max_iterations: int
+    should_continue: bool
 
     # Execution metadata
     llm_generated: bool
@@ -207,13 +208,21 @@ def _register_builtin_tools() -> None:
         logger.error(f"[INIT] Traceback:\n{traceback.format_exc()}")
 
 
-def get_tools_for_llm() -> list[dict[str, Any]]:
-    """Get all registered tools in OpenAI format for LLM."""
+def get_tools_for_llm(skills: list[str] | None = None) -> list[dict[str, Any]]:
+    """Get registered tools in OpenAI format for LLM, filtered by agent skills.
+
+    Args:
+        skills: Optional list of skill identifiers for the agent.
+               Only tools with matching skills (or no skills) will be returned.
+
+    Returns:
+        List of tools in OpenAI format, filtered by skills.
+    """
     try:
         from .tools.registry import registry
-        tools = registry.get_tools_for_llm()
+        tools = registry.get_tools_for_llm(skills=skills)
         tool_names = [t.get("function", {}).get("name") for t in tools]
-        logger.info(f"[TOOLS] Found {len(tools)} tools: {tool_names}")
+        logger.info(f"[TOOLS] Found {len(tools)} tools for skills={skills}: {tool_names}")
         return tools
     except Exception as e:
         logger.error(f"[TOOLS] Failed to get tools: {e}")
@@ -267,9 +276,13 @@ async def node_think(state: AgentState) -> AgentState:
         )
         return state
 
-    # Get system prompt and tools
+    # Get system prompt and tools (filtered by agent's skills)
     system_prompt = agent_info.get("description", "") or ""
-    tools = get_tools_for_llm()
+    agent_skills = agent_info.get("skills", [])
+    tools = get_tools_for_llm(skills=agent_skills if agent_skills else None)
+
+    # Debug: Log system prompt length to verify it's loaded
+    logger.info(f"[REACT] [THINK] system_prompt length: {len(system_prompt)} chars, agent_skills: {agent_skills}")
 
     # Build messages for LLM
     # In first iteration, create user message from task_data
@@ -310,14 +323,11 @@ async def node_think(state: AgentState) -> AgentState:
 
     # Call LLM
     try:
-        # Check if we have tool messages in history (second call onwards)
-        has_tool_messages = any(msg.get("role") == "tool" for msg in chat_messages)
+        # Always pass tools parameter - LLM needs to see tool definitions
+        # in every request to correctly generate parameters
+        should_pass_tools = bool(tools)
 
-        # If we already have tool results, don't pass tools parameter
-        # LLM should respond to the tool results
-        should_pass_tools = bool(tools) and not has_tool_messages
-
-        logger.info(f"[REACT] [THINK] iter={iterations}, {len(chat_messages)} messages, tools={len(tools)}, has_tool_msgs={has_tool_messages}, passing_tools={should_pass_tools}")
+        logger.info(f"[REACT] [THINK] iter={iterations}, {len(chat_messages)} messages, tools={len(tools)}, passing_tools={should_pass_tools}")
 
         # Log full message sequence with details
         for i, msg in enumerate(chat_messages):
@@ -494,12 +504,17 @@ async def node_act(state: AgentState) -> AgentState:
                 logger.info(f"[REACT] [ACT] Tool {i+1}: {tool_name}")
                 logger.info(f"[REACT] [ACT]   Args: {arguments_str[:200]}...")
 
+            # Log raw arguments string for debugging
+            logger.info(f"[REACT] [ACT] RAW arguments_str: {arguments_str}")
+
             # Parse arguments for event
             tool_args = {}
             try:
                 tool_args = json.loads(arguments_str) if isinstance(arguments_str, str) else arguments_str
-            except json.JSONDecodeError:
-                pass
+                logger.info(f"[REACT] [ACT] PARSED tool_args: {tool_args}")
+            except json.JSONDecodeError as e:
+                logger.error(f"[REACT] [ACT] Failed to parse arguments: {e}")
+                tool_args = {}
 
             logger.info(f"准备调用工具:{tool_name}")
             # Emit tool call start event
@@ -655,6 +670,7 @@ async def node_observe(state: AgentState) -> AgentState:
     if iterations >= max_iterations:
         logger.warning(f"[REACT] [OBSERVE] Max iterations ({max_iterations}) reached")
         state["react_step"] = "finish"
+        state["should_continue"] = False
         state["error"] = f"Maximum iterations ({max_iterations}) reached"
         await _emit_event(
             event_type=AgentEventType.TASK_FAILED,
@@ -664,6 +680,9 @@ async def node_observe(state: AgentState) -> AgentState:
             error=f"Maximum iterations ({max_iterations}) reached",
         )
         return state
+
+    # Continue the ReAct loop
+    state["should_continue"] = True
 
     if DebugConfig.REACT_VERBOSE:
         logger.info(f"[REACT] [OBSERVE] → Continuing to think (iter {iterations}/{max_iterations})")
@@ -779,6 +798,7 @@ def _build_system_prompt(base_prompt: str, tools: list[dict[str, Any]]) -> str:
         name = func.get("name", "unknown")
         desc = func.get("description", "No description")
         params = func.get("parameters", {}).get("properties", {})
+        required_params = func.get("parameters", {}).get("required", [])
 
         prompt_parts.append(f"\n## {name}")
         prompt_parts.append(f"Description: {desc}")
@@ -788,11 +808,17 @@ def _build_system_prompt(base_prompt: str, tools: list[dict[str, Any]]) -> str:
             for param_name, param_info in params.items():
                 param_type = param_info.get("type", "any")
                 param_desc = param_info.get("description", "")
-                prompt_parts.append(f"  - {param_name} ({param_type}): {param_desc}")
+                required_marker = " [REQUIRED]" if param_name in required_params else ""
+                prompt_parts.append(f"  - {param_name} ({param_type}): {param_desc}{required_marker}")
 
     prompt_parts.append("\n## Instructions")
     prompt_parts.append("- Use tools when needed to help the user")
     prompt_parts.append("- If no tool is needed, respond directly")
+    prompt_parts.append("- When calling a tool, you MUST provide ALL required parameters with VALID values")
+    prompt_parts.append("- NEVER call a tool with empty arguments {} - this will cause errors")
+    prompt_parts.append("- If you don't know the required parameter values, ask the user instead of guessing")
+    prompt_parts.append("- Call ONE tool at a time, then wait for the result before deciding next action")
+    prompt_parts.append("- Be concise and helpful in your responses")
 
     return "\n".join(prompt_parts)
 

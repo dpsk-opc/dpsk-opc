@@ -6,7 +6,10 @@ and OpenAI-compatible APIs (e.g., Azure OpenAI, local models).
 
 from __future__ import annotations
 
+import json
 import logging
+import re
+import uuid
 from typing import Any, AsyncIterator, Optional
 
 try:
@@ -275,9 +278,20 @@ class OpenAIClient(LLMClient):
 
             # Wrap response
             wrapped = OpenAIChatResponse(response)
+            message = wrapped.message
+
+            # Post-process: Some models (like DeepSeek) output function_calls in content
+            # instead of using the standard tool_calls field. Try to parse and extract.
+            if not message.get("tool_calls") and message.get("content"):
+                parsed_tc = self._parse_inline_function_calls(message.get("content", ""))
+                if parsed_tc:
+                    logger.info(f"[OPENAI] Parsed {len(parsed_tc)} function calls from content")
+                    message["tool_calls"] = parsed_tc
+                    # Remove the function_calls block from content
+                    message["content"] = self._remove_inline_function_calls(message.get("content", ""))
 
             return {
-                "message": wrapped.message,
+                "message": message,
                 "model": response.model,
                 "usage": {
                     "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
@@ -293,6 +307,98 @@ class OpenAIClient(LLMClient):
                 "error": str(e),
                 "message": {"role": "assistant", "content": f"Error: {str(e)}"},
             }
+
+    def _parse_inline_function_calls(self, content: str) -> list[dict[str, Any]]:
+        """Parse inline function calls from content.
+
+        Some models output function calls in a special format within the content
+        instead of using the standard tool_calls field. This method parses those.
+
+        Args:
+            content: The message content string
+
+        Returns:
+            List of parsed tool calls, or empty list if none found.
+        """
+        tool_calls = []
+
+        # Pattern for DSML format: <｜DSML｜invoke name="xxx">
+        # with arguments between <｜DSML｜invoke_arg name="xxx">...</｜DSML｜invoke_arg>
+        invoke_pattern = r'<｜DSML｜invoke name="([^"]+)"[^>]*>(.*?)(?=<｜DSML｜invoke|$)'
+        # Use [\s\S]*? instead of [^<]* to match content across multiple lines
+        arg_pattern = r'<｜DSML｜invoke_arg name="([^"]+)"[^>]*>([\s\S]*?)</｜DSML｜invoke_arg>'
+
+        matches = re.finditer(invoke_pattern, content, re.DOTALL)
+        for idx, match in enumerate(matches):
+            tool_name = match.group(1).strip()
+            invoke_content = match.group(2)
+            logger.info(f"[OPENAI] Matched invoke '{tool_name}', content length: {len(invoke_content)}")
+            logger.info(f"[OPENAI] invoke_content preview: {invoke_content[:200]}...")
+
+            # Parse arguments from the invoke block
+            args: dict[str, Any] = {}
+            arg_matches = re.finditer(arg_pattern, invoke_content, re.DOTALL)
+            for arg_match in arg_matches:
+                arg_name = arg_match.group(1).strip()
+                arg_value = arg_match.group(2).strip()
+                logger.info(f"[OPENAI] Matched arg: {arg_name} = '{arg_value[:50]}...' (len={len(arg_value)})")
+                try:
+                    # Try to parse as JSON
+                    args[arg_name] = json.loads(arg_value)
+                except (json.JSONDecodeError, ValueError):
+                    # Use as string if not valid JSON
+                    args[arg_name] = arg_value
+
+            logger.info(f"[OPENAI] Final args for {tool_name}: {args}")
+            tool_call = {
+                "id": f"call_{uuid.uuid4().hex[:8]}",
+                "type": "function",
+                "function": {
+                    "name": tool_name,
+                    "arguments": json.dumps(args, ensure_ascii=False),
+                },
+            }
+            tool_calls.append(tool_call)
+
+        if tool_calls:
+            logger.info(f"[OPENAI] Parsed {len(tool_calls)} inline function calls: {[tc['function']['name'] for tc in tool_calls]}")
+        else:
+            # Check if content contains function_calls markers
+            has_markers = '<｜DSML｜invoke' in content
+            logger.warning(f"[OPENAI] No function calls parsed! has_DSML_markers={has_markers}")
+            if has_markers:
+                # Find the relevant section
+                idx = content.find('<｜DSML｜invoke')
+                logger.warning(f"[OPENAI] Content around first marker: ...{content[max(0,idx-20):idx+150]}...")
+
+        return tool_calls
+
+    def _remove_inline_function_calls(self, content: str) -> str:
+        """Remove inline function calls from content.
+
+        After extracting function calls, remove the blocks from the content
+        so they don't appear in the final response.
+
+        Args:
+            content: The message content string
+
+        Returns:
+            Content with function call blocks removed.
+        """
+        # Remove DSML function call blocks while keeping surrounding text
+        # Pattern to match the entire function_calls block
+        pattern = r'\s*<｜DSML｜function_calls[^>]*>.*?<｜DSML｜function_calls>\s*'
+
+        # Also handle individual invoke blocks
+        pattern2 = r'\s*<｜DSML｜invoke[^>]*>.*?</｜DSML｜invoke>\s*'
+
+        cleaned = re.sub(pattern, '\n', content, flags=re.DOTALL)
+        cleaned = re.sub(pattern2, '\n', cleaned, flags=re.DOTALL)
+
+        # Clean up multiple newlines
+        cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
+
+        return cleaned.strip()
     
     async def stream_complete(
         self,

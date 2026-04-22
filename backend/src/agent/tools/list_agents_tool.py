@@ -23,6 +23,11 @@ class ListAgentsTool(BaseTool):
         return "列出所有可用的 Agent 及其能力介绍。当秘书需要了解有哪些专业 Agent 可以协作时使用此工具。"
 
     @property
+    def skills(self) -> list[str]:
+        """Skills this tool belongs to."""
+        return ["agent_discovery"]
+
+    @property
     def parameters(self) -> list[ToolParameter]:
         return [
             ToolParameter(

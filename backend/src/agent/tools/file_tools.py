@@ -47,6 +47,11 @@ class ListDirTool(BaseTool):
         return "列出目录内容和文件信息。当用户需要查看某个目录下有哪些文件或子目录时使用。"
 
     @property
+    def skills(self) -> list[str]:
+        """Skills this tool belongs to."""
+        return ["file_operations"]
+
+    @property
     def parameters(self) -> list[ToolParameter]:
         return [
             ToolParameter(
@@ -126,6 +131,11 @@ class SearchFileTool(BaseTool):
         return "按文件名模式搜索文件（如 *.py, test_*.py）。当用户需要查找特定类型的文件或文件名符合某个模式的文件时使用。"
 
     @property
+    def skills(self) -> list[str]:
+        """Skills this tool belongs to."""
+        return ["file_operations"]
+
+    @property
     def parameters(self) -> list[ToolParameter]:
         return [
             ToolParameter(
@@ -192,6 +202,11 @@ class SearchContentTool(BaseTool):
     @property
     def description(self) -> str:
         return "使用正则表达式搜索文件内容。当用户需要查找代码中包含特定文本、函数名、类名、变量名等内容时使用。"
+
+    @property
+    def skills(self) -> list[str]:
+        """Skills this tool belongs to."""
+        return ["file_operations"]
 
     @property
     def parameters(self) -> list[ToolParameter]:
@@ -321,6 +336,11 @@ class ReadFileTool(BaseTool):
         return "读取文件内容。当用户需要查看文件内容、代码、配置等时使用。支持指定行范围。"
 
     @property
+    def skills(self) -> list[str]:
+        """Skills this tool belongs to."""
+        return ["file_operations"]
+
+    @property
     def parameters(self) -> list[ToolParameter]:
         return [
             ToolParameter(
@@ -391,6 +411,11 @@ class ReadLintsTool(BaseTool):
         return "读取 IDE/编辑器的诊断信息（lint 错误、警告、提示）。当用户需要查看代码问题、语法错误、类型错误等诊断信息时使用。"
 
     @property
+    def skills(self) -> list[str]:
+        """Skills this tool belongs to."""
+        return ["file_operations"]
+
+    @property
     def parameters(self) -> list[ToolParameter]:
         return [
             ToolParameter(
@@ -429,6 +454,11 @@ class ReplaceInFileTool(BaseTool):
     @property
     def description(self) -> str:
         return "替换文件中的文本内容。当用户需要修改代码、修改文件中的特定内容时使用。注意：old_str 必须精确匹配文件中的内容。"
+
+    @property
+    def skills(self) -> list[str]:
+        """Skills this tool belongs to."""
+        return ["file_operations"]
 
     @property
     def parameters(self) -> list[ToolParameter]:
@@ -502,6 +532,11 @@ class WriteToFileTool(BaseTool):
         return "创建新文件或覆盖已有文件内容。当用户需要创建新文件、写入代码、写入配置等时使用。"
 
     @property
+    def skills(self) -> list[str]:
+        """Skills this tool belongs to."""
+        return ["file_operations"]
+
+    @property
     def parameters(self) -> list[ToolParameter]:
         return [
             ToolParameter(
@@ -566,6 +601,11 @@ class DeleteFileTool(BaseTool):
         return "删除文件。当用户明确要求删除某个文件时使用。注意：此操作不可逆！"
 
     @property
+    def skills(self) -> list[str]:
+        """Skills this tool belongs to."""
+        return ["file_operations"]
+
+    @property
     def parameters(self) -> list[ToolParameter]:
         return [
             ToolParameter(
@@ -619,6 +659,11 @@ class ExecuteCommandTool(BaseTool):
     @property
     def description(self) -> str:
         return "执行 shell 命令。当用户需要运行 git、安装依赖、执行脚本、运行测试等操作时使用。"
+
+    @property
+    def skills(self) -> list[str]:
+        """Skills this tool belongs to."""
+        return ["file_operations"]
 
     @property
     def parameters(self) -> list[ToolParameter]:

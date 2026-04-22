@@ -144,27 +144,43 @@ class InMemoryMessageBus(MessageBus):
             },
         )
 
+        # Check if agent has handlers before creating future
+        has_handlers = target.value in self._agent_handlers and len(self._agent_handlers[target.value]) > 0
+
+        if not has_handlers:
+            # No handlers registered, return error immediately
+            registered_agents = list(self._agent_handlers.keys())
+            logger.warning(
+                f"[BUS] No handlers for agent: '{target.value}'. Registered agents: {registered_agents}"
+            )
+            return TaskResponse(
+                source=target.value,
+                target=message.target,
+                correlation_id=message.id,
+                success=False,
+                error=f"No handler registered for agent: '{target.value}'. Available agents: {registered_agents}",
+            )
+
         # Create future for response
         future: asyncio.Future[TaskResponse] = asyncio.get_event_loop().create_future()
-        
+
         # Store pending request
         pending = PendingRequest(
             request=message,
             future=future,
         )
-        
+
         async with self._lock:
             self._pending_requests[message.id] = pending
 
         try:
             # Deliver the message
             await self._deliver_to_agent(target.value, message)
-            
+
             # Wait for response
             try:
                 logger.debug(f"[BUS] Waiting for response: {message.id}")
-                # response = await asyncio.wait_for(future, timeout=timeout)
-                response = await asyncio.wait_for(future, timeout=600)
+                response = await asyncio.wait_for(future, timeout=timeout)
                 logger.info(
                     f"[BUS] Received response from {target.value}",
                     extra={"message_id": message.id, "success": response.success},
@@ -321,7 +337,11 @@ class InMemoryMessageBus(MessageBus):
         async with self._lock:
             if target.type == TargetType.AGENT:
                 self._agent_handlers[target.value].append(handler)
-                logger.debug(f"Subscribed handler to agent: {target.value}")
+                registered_agents = list(self._agent_handlers.keys())
+                logger.debug(
+                    f"[BUS] Subscribed handler to agent: '{target.value}' (length={len(target.value)}). "
+                    f"All registered agents now: {registered_agents}"
+                )
             elif target.type == TargetType.TOPIC:
                 self._topic_handlers[target.value].append(handler)
                 logger.debug(f"Subscribed handler to topic: {target.value}")
@@ -381,9 +401,10 @@ class InMemoryMessageBus(MessageBus):
     async def _deliver_to_agent(self, agent_id: str, message: Message) -> None:
         """Deliver a message to an agent."""
         handlers = self._agent_handlers.get(agent_id, [])
-        
+
         if not handlers:
-            logger.warning(f"[BUS] No handlers for agent: {agent_id}")
+            # This case is already handled in request(), this is just a safety net
+            logger.debug(f"[BUS] _deliver_to_agent called but no handlers found for: '{agent_id}'")
             return
 
         logger.info(

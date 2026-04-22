@@ -87,15 +87,35 @@ class ToolRegistry:
         """
         return list(self._tools.values())
 
-    def get_tools_for_llm(self) -> list[dict[str, Any]]:
-        """Get all tools in OpenAI function calling format.
+    def get_tools_for_llm(self, skills: list[str] | None = None) -> list[dict[str, Any]]:
+        """Get tools in OpenAI function calling format, optionally filtered by skills.
 
-        This format is used to pass tools to the LLM for tool selection.
+        If skills is provided, only tools with at least one matching skill
+        (or no skills defined, meaning available to all) will be returned.
+
+        Args:
+            skills: Optional list of skill identifiers to filter by.
+                   If None, returns all tools.
 
         Returns:
-            List of tools in OpenAI format.
+            List of tools in OpenAI format, filtered by skills.
         """
-        return [tool.to_openai_format() for tool in self._tools.values()]
+        if not skills:
+            # No skills specified, return all tools
+            return [tool.to_openai_format() for tool in self._tools.values()]
+
+        # Filter tools by matching skills
+        filtered_tools = []
+        for tool in self._tools.values():
+            tool_skills = tool.skills
+            # Tool is available if:
+            # 1. It has no skills defined (available to all), OR
+            # 2. It has at least one skill matching the agent's skills
+            if not tool_skills or any(skill in tool_skills for skill in skills):
+                filtered_tools.append(tool)
+
+        logger.debug(f"[TOOLS] Filtered {len(filtered_tools)}/{len(self._tools)} tools for skills: {skills}")
+        return [tool.to_openai_format() for tool in filtered_tools]
 
     def list_tool_names(self) -> list[str]:
         """List all registered tool names.

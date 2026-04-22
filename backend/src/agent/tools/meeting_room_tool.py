@@ -38,6 +38,11 @@ class MeetingRoomTool(BaseTool):
         return "会议室预定工具。用于查询可用会议室、预定会议室、取消预定等操作。"
 
     @property
+    def skills(self) -> list[str]:
+        """Skills this tool belongs to."""
+        return ["office_admin"]
+
+    @property
     def parameters(self) -> list[ToolParameter]:
         return [
             ToolParameter(

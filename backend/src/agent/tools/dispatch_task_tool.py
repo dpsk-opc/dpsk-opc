@@ -18,11 +18,20 @@ logger = logging.getLogger(__name__)
 # Global bus reference (set during initialization)
 _bus = None
 
+# Global agent manager reference (set during initialization)
+_agent_manager = None
+
 
 def set_bus(bus: Any) -> None:
     """Set the global bus reference for dispatching tasks."""
     global _bus
     _bus = bus
+
+
+def set_agent_manager(agent_manager: Any) -> None:
+    """Set the global agent manager reference for on-demand agent spawning."""
+    global _agent_manager
+    _agent_manager = agent_manager
 
 
 class DispatchTaskTool(BaseTool):
@@ -35,6 +44,11 @@ class DispatchTaskTool(BaseTool):
     @property
     def description(self) -> str:
         return "分发任务给指定的 Agent。当秘书需要协调其他专业 Agent 完成具体工作时使用此工具。消息会通过 Message Bus 异步传递。"
+
+    @property
+    def skills(self) -> list[str]:
+        """Skills this tool belongs to."""
+        return ["task_dispatch", "coordination"]
 
     @property
     def parameters(self) -> list[ToolParameter]:
@@ -84,17 +98,6 @@ class DispatchTaskTool(BaseTool):
             bus = _bus
 
             if bus is None:
-                # Try to get bus from spawner
-                try:
-                    from src.main import agent_manager
-                    if hasattr(agent_manager, 'spawner'):
-                        spawner = agent_manager.spawner
-                        if hasattr(spawner, '_bus'):
-                            bus = spawner._bus
-                except (ImportError, AttributeError):
-                    pass
-
-            if bus is None:
                 return {
                     "success": False,
                     "error": "Message Bus not available. Cannot dispatch task.",
@@ -104,21 +107,68 @@ class DispatchTaskTool(BaseTool):
             # Import bus models
             from src.bus.models import Target, TargetType, TaskRequest, MessageType
 
+            # Debug: log detailed info about target agent
+            logger.info(f"[DISPATCH] to_agent='{to_agent}' (type={type(to_agent).__name__}, length={len(to_agent) if to_agent else 0})")
+            logger.info(f"[DISPATCH] to_agent repr: {repr(to_agent)}")
+
+            # Check if target agent is registered in bus, if not, spawn it on-demand
+            registered_agents = list(getattr(bus, '_agent_handlers', {}).keys())
+            logger.info(f"[DISPATCH] Currently registered agents in bus: {registered_agents}")
+
+            if to_agent not in registered_agents:
+                logger.info(f"[DISPATCH] Agent '{to_agent}' not registered, attempting to spawn on-demand...")
+                # Use agent_manager to spawn the agent
+                agent_manager = _agent_manager
+                if agent_manager is None:
+                    logger.error("[DISPATCH] Agent manager not initialized")
+                    return {
+                        "success": False,
+                        "error": f"Agent '{to_agent}' is not running and agent manager is not available. Cannot dispatch task.",
+                        "result": None,
+                    }
+
+                logger.info(f"[DISPATCH] Spawning agent '{to_agent}' on-demand via agent_manager...")
+                try:
+                    await agent_manager.spawn_agent(to_agent)
+                    logger.info(f"[DISPATCH] Successfully spawned agent '{to_agent}'")
+                    # Give the agent a moment to register
+                    await asyncio.sleep(0.5)
+                except ValueError as e:
+                    logger.error(f"[DISPATCH] Agent definition not found for '{to_agent}': {e}")
+                    return {
+                        "success": False,
+                        "error": f"Agent definition for '{to_agent}' not found: {str(e)}",
+                        "result": None,
+                    }
+                except Exception as e:
+                    logger.error(f"[DISPATCH] Failed to spawn agent '{to_agent}': {e}")
+                    return {
+                        "success": False,
+                        "error": f"Failed to spawn agent '{to_agent}': {str(e)}",
+                        "result": None,
+                    }
+            else:
+                logger.info(f"[DISPATCH] Agent '{to_agent}' is already registered")
+
             # Create target
             target = Target(type=TargetType.AGENT, value=to_agent)
+            logger.info(f"[DISPATCH] Target created: type={target.type}, value='{target.value}'")
 
             # Create task request
+            # Note: source is the calling agent, target is the destination agent
             task_request = TaskRequest(
+                msg_type=MessageType.TASK_REQUEST,
+                source="secretary",  # The caller agent (this could be dynamic)
+                target=target,
                 task_name="dispatch",
                 task_data={
                     "prompt": task,
                     "task_type": "dispatched",
-                    "source": "secretary",  # The caller (secretary agent)
                 },
             )
 
             # Send request via bus and wait for response
-            logger.info(f"[DISPATCH] Sending request to bus for agent: {to_agent}")
+            logger.info(f"[DISPATCH] Sending request to bus for agent: '{to_agent}'")
             response = await bus.request(target, task_request, timeout=timeout)
 
             logger.info(f"[DISPATCH] Received response from {to_agent}")

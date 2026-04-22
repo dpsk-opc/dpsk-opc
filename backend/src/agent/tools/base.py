@@ -85,6 +85,20 @@ class BaseTool(ABC):
         """
         return []
 
+    @property
+    def skills(self) -> list[str]:
+        """Skills/capabilities this tool belongs to.
+
+        This is used to determine which agents can use this tool.
+        Each agent has a list of skills in its definition, and only tools
+        with matching skills will be provided to that agent's LLM.
+
+        Returns:
+            List of skill identifiers (e.g., ["task_planning", "agent_discovery"]).
+            Empty list means the tool is available to all agents.
+        """
+        return []
+
     @abstractmethod
     async def execute(self, **kwargs: Any) -> dict[str, Any]:
         """Execute the tool with given arguments.

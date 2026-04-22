@@ -129,6 +129,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         llm_registry=llm_registry,
         default_llm_client=default_llm_client,
     )
+    
     agent_manager = AgentManager(
         registry, 
         spawner, 
@@ -138,6 +139,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         default_llm_client=default_llm_client,
     )
     
+    # Inject agent_manager into dispatch_task_tool for on-demand agent spawning
+    from src.agent.tools.dispatch_task_tool import set_agent_manager
+    set_agent_manager(agent_manager)
+    
     await agent_manager.initialize()
     app.state.agent_manager = agent_manager
     app.state.agent_registry = registry
@@ -146,7 +151,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Initialize OPC-Client
     opc_config = OPCConfig(
         max_execution_time_secs=300,
-        default_task_timeout_secs=60,
+        default_task_timeout_secs=300,
         failure_strategy="stop_on_failure",
         max_parallel_tasks=10,
         enable_progress_streaming=True,

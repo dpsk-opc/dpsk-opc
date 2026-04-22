@@ -36,6 +36,11 @@ class ScanOrgChartTool(BaseTool):
         return "扫描 agents 目录并生成公司组织架构图。当用户询问公司部门结构、Agent 分布、组织架构时请使用此工具。"
 
     @property
+    def skills(self) -> list[str]:
+        """Skills this tool belongs to."""
+        return ["agent_discovery"]
+
+    @property
     def parameters(self) -> list[ToolParameter]:
         """Tool parameters."""
         return [

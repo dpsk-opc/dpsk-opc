@@ -67,6 +67,10 @@ class DebugConfig:
 # Convenience alias
 _REACT_VERBOSE = True  # Will be checked via DebugConfig.REACT_VERBOSE
 
+# Tool call limits to prevent runaway loops
+MAX_TOOL_CALLS_PER_ITERATION = 10  # Max tool calls in a single LLM response
+MAX_REPEATED_TOOL_NAME = 3  # Max times the same tool can be called consecutively
+
 
 def _log_state(state: AgentState, node_name: str) -> None:
     """Log current state for debugging.
@@ -144,6 +148,70 @@ async def node_think(state: AgentState) -> AgentState:
         if content:
             logger.info(f"[REACT] [THINK] LLM text response: {content[:200]}...")
         logger.info(f"[REACT] [THINK] Tool calls requested: {len(tool_calls)}")
+
+    # =========================================================================
+    # PROTECTION: Detect abnormal number of tool calls (runaway loop)
+    # =========================================================================
+    if len(tool_calls) > MAX_TOOL_CALLS_PER_ITERATION:
+        logger.warning(
+            f"[REACT] [THINK] ABORT: Got {len(tool_calls)} tool calls, "
+            f"max allowed is {MAX_TOOL_CALLS_PER_ITERATION}. "
+            f"This appears to be a runaway loop."
+        )
+        # Log sample of tool calls for debugging
+        sample_names = [tc.get("function", {}).get("name") for tc in tool_calls[:5]]
+        logger.warning(f"[REACT] [THINK]   First 5 tool names: {sample_names}")
+        for i, tc in enumerate(tool_calls[:3]):
+            func = tc.get("function", {})
+            args = func.get("arguments", "{}")
+            logger.warning(f"[REACT] [THINK]   tc[{i}]: name={func.get('name')}, args={args}")
+
+        # Add failure message and finish
+        error_msg = (
+            f"ERROR: LLM generated {len(tool_calls)} tool calls in one response (max: {MAX_TOOL_CALLS_PER_ITERATION}). "
+            f"This appears to be a runaway loop. Stopping execution."
+        )
+        new_messages = messages + [assistant_message]
+        state["messages"] = new_messages
+        state["tool_calls"] = []
+        state["react_step"] = "finish"
+        state["response"] = {
+            "success": False,
+            "error": error_msg,
+            "type": "error",
+            "tool_calls_count": len(tool_calls),
+        }
+        state["should_continue"] = False
+        return state
+
+    # Check for repeated tool names (potential loop)
+    tool_name_counts: dict[str, int] = {}
+    empty_args_calls = []
+    for i, tc in enumerate(tool_calls):
+        func = tc.get("function", {})
+        tool_name = func.get("name", "unknown")
+        tool_name_counts[tool_name] = tool_name_counts.get(tool_name, 0) + 1
+
+        args = func.get("arguments", "{}")
+        try:
+            parsed_args = json.loads(args) if isinstance(args, str) else args
+            if not parsed_args or len(parsed_args) == 0:
+                empty_args_calls.append((i, tool_name))
+        except json.JSONDecodeError:
+            empty_args_calls.append((i, tool_name))
+
+    # Log warning if same tool called multiple times or with empty args
+    for tool_name, count in tool_name_counts.items():
+        if count > MAX_REPEATED_TOOL_NAME:
+            logger.warning(
+                f"[REACT] [THINK] WARNING: Tool '{tool_name}' called {count} times. "
+                f"This may indicate a loop."
+            )
+
+    if empty_args_calls:
+        logger.warning(
+            f"[REACT] [THINK] WARNING: {len(empty_args_calls)} tool calls have empty arguments"
+        )
 
     # Add assistant message to history (do this before updating tool_calls)
     new_messages = messages + [assistant_message]
@@ -383,6 +451,7 @@ def _build_system_prompt(tools: list[dict[str, Any]]) -> str:
         name = func.get("name", "unknown")
         desc = func.get("description", "No description")
         params = func.get("parameters", {}).get("properties", {})
+        required_params = func.get("parameters", {}).get("required", [])
 
         prompt_parts.append(f"\n## {name}")
         prompt_parts.append(f"Description: {desc}")
@@ -392,12 +461,16 @@ def _build_system_prompt(tools: list[dict[str, Any]]) -> str:
             for param_name, param_info in params.items():
                 param_type = param_info.get("type", "any")
                 param_desc = param_info.get("description", "")
-                prompt_parts.append(f"  - {param_name} ({param_type}): {param_desc}")
+                required_marker = " [REQUIRED]" if param_name in required_params else ""
+                prompt_parts.append(f"  - {param_name} ({param_type}): {param_desc}{required_marker}")
 
     prompt_parts.append("\n## Instructions")
     prompt_parts.append("- Use tools when needed to help the user")
     prompt_parts.append("- If no tool is needed, respond directly")
-    prompt_parts.append("- When calling a tool, provide the complete arguments")
+    prompt_parts.append("- When calling a tool, you MUST provide ALL required parameters with VALID values")
+    prompt_parts.append("- NEVER call a tool with empty arguments {} - this will cause errors")
+    prompt_parts.append("- If you don't know the required parameter values, ask the user instead of guessing")
+    prompt_parts.append("- Call ONE tool at a time, then wait for the result before deciding next action")
     prompt_parts.append("- Be concise and helpful in your responses")
 
     return "\n".join(prompt_parts)

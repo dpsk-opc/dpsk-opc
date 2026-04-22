@@ -566,6 +566,9 @@ class LocalAgentSpawner(AgentSpawner):
             "description": agent_def.description,  # System prompt
             "model": agent_def.model,
             "model_config": agent_def.model_config,
+            "skills": agent_def.skills,
+            "capabilities": agent_def.capabilities,
+            "file_path": agent_def.file_path
         }
         
         async def handle_task(task_name: str, task_data: dict[str, Any]) -> dict[str, Any]:
@@ -752,14 +755,16 @@ class LocalAgentSpawner(AgentSpawner):
                 )
 
         # Subscribe to bus using both instance_id AND agent_id
-        # This allows both instance-specific routing (keep_fit-abc123) 
+        # This allows both instance-specific routing (keep_fit-abc123)
         # and type-based routing (keep_fit) to work
         agent_def = handle.agent_def  # Get agent_def from handle
         targets_to_subscribe = [
-            (instance_id, f"instance {instance_id}"),
-            (agent_def.agent_id, f"agent type {agent_def.agent_id}"),
+            (instance_id, f"instance '{instance_id}' (length={len(instance_id)})"),
+            (agent_def.agent_id, f"agent type '{agent_def.agent_id}' (length={len(agent_def.agent_id)})"),
         ]
-        
+
+        logger.info(f"[_REGISTER] Agent registration: instance_id='{instance_id}', agent_id='{agent_def.agent_id}'")
+
         for target_value, desc in targets_to_subscribe:
             target = Target(type=TargetType.AGENT, value=target_value)
             logger.info(f"[_REGISTER] About to subscribe {desc} to bus")
@@ -769,7 +774,7 @@ class LocalAgentSpawner(AgentSpawner):
             except Exception as e:
                 logger.error(f"[_REGISTER] Failed to subscribe {desc} to bus: {e}")
                 raise
-        
+
         logger.info(f"[_REGISTER] Registration complete for instance {instance_id} (with agent_id alias)")
     
     async def _unregister_from_bus(self, instance_id: str) -> None:
