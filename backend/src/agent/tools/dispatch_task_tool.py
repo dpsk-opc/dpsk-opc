@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+import uuid
 from typing import Any
 
 from .base import BaseTool, ToolParameter
@@ -21,6 +23,9 @@ _bus = None
 # Global agent manager reference (set during initialization)
 _agent_manager = None
 
+# Global event emitter reference (set during initialization)
+_event_emitter = None
+
 
 def set_bus(bus: Any) -> None:
     """Set the global bus reference for dispatching tasks."""
@@ -32,6 +37,66 @@ def set_agent_manager(agent_manager: Any) -> None:
     """Set the global agent manager reference for on-demand agent spawning."""
     global _agent_manager
     _agent_manager = agent_manager
+
+
+def set_event_emitter(emitter: Any) -> None:
+    """Set the global event emitter for dispatch events."""
+    global _event_emitter
+    _event_emitter = emitter
+
+
+async def _emit_dispatch_event(
+    to_agent: str,
+    task_id: str,
+    task: str,
+    success: bool = True,
+    error: str | None = None,
+) -> None:
+    """Emit a dispatched event to notify about task dispatching.
+    
+    Args:
+        to_agent: Target agent ID
+        task_id: Task identifier
+        task: Task description
+        success: Whether dispatch succeeded
+        error: Error message if failed
+    """
+    global _event_emitter
+    if _event_emitter is None:
+        return
+    
+    try:
+        from src.bus.models import AgentEventType, AgentEventData
+        
+        event_type = AgentEventType.DISPATCHED if success else AgentEventType.TASK_FAILED
+        
+        # Generate more humanized dispatch message
+        task_preview = task[:30] + "..." if len(task) > 30 else task
+        if success:
+            event_message = f"📤 正在联系 {to_agent}，转达任务：{task_preview}"
+        else:
+            event_message = f"💥 任务分发失败: {error or 'Unknown error'}"
+        
+        data = AgentEventData(
+            agent_id="secretary",
+            instance_id="secretary-unknown",
+            task_id=task_id,
+            event_message=event_message,
+            react_step="act",
+            tool_name="dispatch_task",
+            tool_args={"to_agent": to_agent, "task": task},
+            error=error,
+            extra={
+                "target_agent": to_agent,
+                "task_id": task_id,
+                "success": success,
+                "task_preview": task_preview,
+            },
+        )
+        
+        await _event_emitter.emit(event_type, data)
+    except Exception as e:
+        logger.warning(f"Failed to emit dispatch event: {e}")
 
 
 class DispatchTaskTool(BaseTool):
@@ -76,6 +141,8 @@ class DispatchTaskTool(BaseTool):
 
     async def execute(self, to_agent: str, task: str, timeout: float = 600.0, **kwargs: Any) -> dict[str, Any]:
         """Dispatch a task to a specific agent via Message Bus."""
+        import time
+        
         if not to_agent:
             return {
                 "success": False,
@@ -93,6 +160,9 @@ class DispatchTaskTool(BaseTool):
         logger.info(f"[DISPATCH] Dispatching task to agent: {to_agent}")
         logger.info(f"[DISPATCH] Task: {task[:100]}...")
 
+        # Generate task ID for tracking
+        task_id = str(uuid.uuid4())
+        
         try:
             # Get bus instance
             bus = _bus
@@ -150,6 +220,14 @@ class DispatchTaskTool(BaseTool):
             else:
                 logger.info(f"[DISPATCH] Agent '{to_agent}' is already registered")
 
+            # Emit dispatched event BEFORE sending the request
+            await _emit_dispatch_event(
+                to_agent=to_agent,
+                task_id=task_id,
+                task=task,
+                success=True,
+            )
+
             # Create target
             target = Target(type=TargetType.AGENT, value=to_agent)
             logger.info(f"[DISPATCH] Target created: type={target.type}, value='{target.value}'")
@@ -169,13 +247,40 @@ class DispatchTaskTool(BaseTool):
 
             # Send request via bus and wait for response
             logger.info(f"[DISPATCH] Sending request to bus for agent: '{to_agent}'")
+            dispatch_start = time.time()
             response = await bus.request(target, task_request, timeout=timeout)
+            dispatch_duration_ms = int((time.time() - dispatch_start) * 1000)
 
-            logger.info(f"[DISPATCH] Received response from {to_agent}")
+            logger.info(f"[DISPATCH] Received response from {to_agent}, duration={dispatch_duration_ms}ms")
 
             # Extract result from response
             result_data = response.result.get("data") if response.result else None
             error = response.result.get("error") if response.result else None
+
+            # Emit sub-task result event with humanized message
+            from src.bus.models import AgentEventType, AgentEventData
+            if response.success:
+                result_preview = str(result_data)[:50] + "..." if len(str(result_data)) > 50 else str(result_data)
+                event_message = f"🤝 {to_agent}：任务已完成，结果：{result_preview}"
+            else:
+                event_message = f"😔 {to_agent}：任务执行失败 - {error or '未知错误'}"
+            
+            # Use global event emitter
+            if _event_emitter is not None:
+                event_data = AgentEventData(
+                    agent_id="secretary",
+                    instance_id="secretary-unknown",
+                    task_id=task_id,
+                    event_message=event_message,
+                    extra={
+                        "target_agent": to_agent,
+                        "success": response.success,
+                        "result_data": result_data,
+                        "error": error,
+                        "duration_ms": dispatch_duration_ms,
+                    },
+                )
+                await _event_emitter.emit(AgentEventType.SUB_TASK_RESULT, event_data)
 
             if response.success:
                 return {
@@ -183,6 +288,7 @@ class DispatchTaskTool(BaseTool):
                     "agent_id": to_agent,
                     "task": task,
                     "result": result_data,
+                    "duration_ms": dispatch_duration_ms,
                 }
             else:
                 return {
@@ -191,10 +297,19 @@ class DispatchTaskTool(BaseTool):
                     "task": task,
                     "error": error or "Task execution failed",
                     "result": result_data,
+                    "duration_ms": dispatch_duration_ms,
                 }
 
         except asyncio.TimeoutError:
             logger.error(f"[DISPATCH] Task dispatch timeout for agent: {to_agent}")
+            # Emit failure event
+            await _emit_dispatch_event(
+                to_agent=to_agent,
+                task_id=task_id,
+                task=task,
+                success=False,
+                error=f"Task execution timeout for agent: {to_agent}",
+            )
             return {
                 "success": False,
                 "error": f"Task execution timeout for agent: {to_agent} (timeout={timeout}s)",
@@ -202,6 +317,14 @@ class DispatchTaskTool(BaseTool):
             }
         except Exception as e:
             logger.exception(f"[DISPATCH] Failed to dispatch task to {to_agent}: {e}")
+            # Emit failure event
+            await _emit_dispatch_event(
+                to_agent=to_agent,
+                task_id=task_id,
+                task=task,
+                success=False,
+                error=str(e),
+            )
             return {
                 "success": False,
                 "error": f"Failed to dispatch task: {str(e)}",

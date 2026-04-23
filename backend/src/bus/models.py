@@ -248,6 +248,7 @@ class AgentEventType(str, Enum):
     TASK_STARTED = "agent:task_started"        # Agent started processing
     TASK_COMPLETED = "agent:task_completed"     # Agent completed successfully
     TASK_FAILED = "agent:task_failed"           # Agent failed with error
+    TASK_CANCELLED = "agent:task_cancelled"    # Task cancelled by user
 
     # ReAct loop events
     REACT_THINK_START = "agent:react:think_start"   # Starting LLM thinking
@@ -263,6 +264,10 @@ class AgentEventType(str, Enum):
     # LLM-level events
     LLM_REQUEST_START = "agent:llm:request_start"  # LLM API request started
     LLM_REQUEST_END = "agent:llm:request_end"      # LLM API request finished
+
+    # Agent间通信事件
+    DISPATCHED = "agent:dispatched"            # Task dispatched to sub-agent
+    SUB_TASK_RESULT = "agent:sub_task_result"  # Result from sub-agent task
 
 
 @dataclass
@@ -285,6 +290,7 @@ class AgentEventData:
     tool_args: Optional[dict[str, Any]] = None                # Tool arguments
     tool_result: Optional[dict[str, Any]] = None               # Tool result (success/failure)
     llm_model: Optional[str] = None                             # LLM model used
+    llm_thinking: Optional[str] = None                          # LLM reasoning/thinking content
     token_usage: Optional[dict[str, int]] = None              # Token usage stats
     duration_ms: int = 0                                       # Duration of this step
     error: Optional[str] = None                                # Error message if failed
@@ -317,6 +323,8 @@ class AgentEventData:
             result["tool_result"] = self.tool_result
         if self.llm_model:
             result["llm_model"] = self.llm_model
+        if self.llm_thinking:
+            result["llm_thinking"] = self.llm_thinking
         if self.token_usage:
             result["token_usage"] = self.token_usage
         if self.duration_ms > 0:

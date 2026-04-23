@@ -140,8 +140,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     
     # Inject agent_manager into dispatch_task_tool for on-demand agent spawning
-    from src.agent.tools.dispatch_task_tool import set_agent_manager
+    from src.agent.tools.dispatch_task_tool import set_agent_manager, set_event_emitter
     set_agent_manager(agent_manager)
+    
+    # Initialize event emitter and connect to message bus
+    from src.bus.models import agent_event_emitter
+    agent_event_emitter.set_bus(app.state.bus)
+    set_event_emitter(agent_event_emitter)
     
     await agent_manager.initialize()
     app.state.agent_manager = agent_manager

@@ -109,6 +109,7 @@ async def _emit_event(
     duration_ms: int = 0,
     error: str | None = None,
     llm_model: str | None = None,
+    llm_thinking: str | None = None,
 ) -> None:
     """Emit an agent processing event.
 
@@ -156,6 +157,7 @@ async def _emit_event(
             tool_args=tool_args,
             tool_result=tool_result,
             llm_model=llm_model,
+            llm_thinking=llm_thinking,
             duration_ms=duration_ms,
             error=error,
         )
@@ -258,7 +260,7 @@ async def node_think(state: AgentState) -> AgentState:
         event_type=AgentEventType.REACT_THINK_START,
         agent_id=agent_id,
         instance_id=instance_id,
-        message="正在思考...",
+        message=f"[{iterations}] 收到任务，开始思考解决方案" if iterations == 0 else f"[{iterations}] 继续思考...",
         react_step="think",
         react_iteration=iterations,
     )
@@ -358,14 +360,26 @@ async def node_think(state: AgentState) -> AgentState:
             logger.info(f"[REACT] [THINK]   content (no tool_calls): {content[:200]}...")
 
         # Emit LLM request end event
+        if tool_calls:
+            # Show tool names in the message
+            tool_names = [tc.get('function', {}).get('name', '?') for tc in tool_calls]
+            message = f"🎯 决定调用 {len(tool_calls)} 个工具: {', '.join(tool_names)}"
+        elif content:
+            # Show content preview
+            preview = content[:100] + "..." if len(content) > 100 else content
+            message = f"💭 思考完成: {preview}"
+        else:
+            message = "思考完成"
+        
         await _emit_event(
             event_type=AgentEventType.REACT_THINK_END,
             agent_id=agent_id,
             instance_id=instance_id,
-            message="思考完成" if not tool_calls else f"决定调用 {len(tool_calls)} 个工具",
+            message=message,
             react_step="think",
             react_iteration=iterations,
             llm_model=getattr(client, 'model', None),
+            llm_thinking=content if content else None,  # Send full LLM thinking content to frontend
         )
 
         if DebugConfig.REACT_VERBOSE:
@@ -413,11 +427,14 @@ async def node_think(state: AgentState) -> AgentState:
                     tool_args = json.loads(func.get("arguments", "{}")) if isinstance(func.get("arguments"), str) else func.get("arguments", {})
                 except json.JSONDecodeError:
                     pass
+                # Show key args in message for clarity
+                key_args = {k: str(v)[:50] for k, v in tool_args.items() if v}
+                args_preview = ", ".join([f"{k}={v}" for k, v in list(key_args.items())[:3]])
                 await _emit_event(
                     event_type=AgentEventType.TOOL_CALL_START,
                     agent_id=agent_id,
                     instance_id=instance_id,
-                    message=f"准备调用工具: {tool_name}",
+                    message=f"🔧 执行 {tool_name}({args_preview})" if args_preview else f"🔧 执行 {tool_name}",
                     react_step="act",
                     react_iteration=iterations,
                     tool_name=tool_name,
@@ -432,12 +449,15 @@ async def node_think(state: AgentState) -> AgentState:
             }
             state["llm_generated"] = True
             state["react_step"] = "finish"
+            # Show the direct response content preview
+            response_content = assistant_message.get("content", "") if isinstance(assistant_message, dict) else str(assistant_message) if assistant_message else ""
+            content_preview = response_content[:80] + "..." if len(response_content) > 80 else response_content
             # Emit task completed event for direct responses
             await _emit_event(
                 event_type=AgentEventType.TASK_COMPLETED,
                 agent_id=agent_id,
                 instance_id=instance_id,
-                message="任务完成（直接回复）",
+                message=f"✅ 直接回复: {content_preview}" if content_preview else "✅ 任务完成",
                 react_step="finish",
             )
             # Still update messages for history
@@ -553,11 +573,24 @@ async def node_act(state: AgentState) -> AgentState:
             duration_ms = int((time.time() - tool_start_time) * 1000)
 
             # Emit tool call end event
+            if result.get("success"):
+                # Show result preview
+                result_data = result.get("result") or result.get("data") or result
+                if isinstance(result_data, dict):
+                    result_preview = str(result_data)[:100]
+                elif isinstance(result_data, str):
+                    result_preview = result_data[:100]
+                else:
+                    result_preview = str(result_data)[:100]
+                message = f"✅ {tool_name} 完成: {result_preview}..."
+            else:
+                message = f"❌ {tool_name} 失败: {result.get('error', 'Unknown error')}"
+            
             await _emit_event(
                 event_type=AgentEventType.TOOL_CALL_END,
                 agent_id=agent_id,
                 instance_id=instance_id,
-                message=f"工具 {tool_name} 执行完成",
+                message=message,
                 react_step="act",
                 react_iteration=iterations,
                 tool_name=tool_name,
@@ -652,11 +685,13 @@ async def node_observe(state: AgentState) -> AgentState:
     state["react_step"] = "think"
 
     # Emit observe end event
+    tool_results = state.get("tool_results", [])
+    tool_count = len(tool_results)
     await _emit_event(
         event_type=AgentEventType.REACT_OBSERVE_END,
         agent_id=agent_id,
         instance_id=instance_id,
-        message=f"已收到工具结果，继续思考...",
+        message=f"📋 收到 {tool_count} 个工具结果，继续分析...",
         react_step="observe",
         react_iteration=iterations - 1,  # Report previous iteration
     )
@@ -710,12 +745,15 @@ async def node_finish(state: AgentState) -> AgentState:
         state["result"]["duration_ms"] = duration_ms
         if DebugConfig.REACT_VERBOSE:
             logger.info(f"[REACT] [FINISH] Direct response, duration={duration_ms}ms")
+        # Show result content preview
+        result_content = state["result"].get("content", "")
+        content_preview = result_content[:80] + "..." if len(result_content) > 80 else result_content
         # Emit task completed event
         await _emit_event(
             event_type=AgentEventType.TASK_COMPLETED,
             agent_id=agent_id,
             instance_id=instance_id,
-            message="任务完成",
+            message=f"✅ 任务完成 (耗时 {duration_ms}ms)",
             react_step="finish",
             react_iteration=iterations,
             duration_ms=duration_ms,
@@ -757,7 +795,7 @@ async def node_finish(state: AgentState) -> AgentState:
             event_type=AgentEventType.TASK_COMPLETED,
             agent_id=agent_id,
             instance_id=instance_id,
-            message=f"任务完成，共执行 {len(tool_results)} 个工具",
+            message=f"✅ 任务完成 (执行了 {len(tool_results)} 个工具，耗时 {duration_ms}ms)",
             react_step="finish",
             react_iteration=iterations,
             duration_ms=duration_ms,
@@ -778,7 +816,7 @@ async def node_finish(state: AgentState) -> AgentState:
             event_type=AgentEventType.TASK_FAILED,
             agent_id=agent_id,
             instance_id=instance_id,
-            message=f"任务失败: {error_msg}",
+            message=f"❌ 任务失败: {error_msg[:50]}",
             react_step="finish",
             react_iteration=iterations,
             duration_ms=duration_ms,
@@ -917,11 +955,18 @@ async def handle_task_request(
     instance_id = f"{agent_id}-unknown"  # Will be set by spawner
 
     # Emit task received event
+    task_preview = ""
+    if isinstance(task_data, dict):
+        task_preview = task_data.get("prompt") or task_data.get("instruction") or task_data.get("input", "") or str(task_data)
+    else:
+        task_preview = str(task_data)
+    task_preview = task_preview[:50] + "..." if len(task_preview) > 50 else task_preview
+    
     await _emit_event(
         event_type=AgentEventType.TASK_RECEIVED,
         agent_id=agent_id,
         instance_id=instance_id,
-        message="收到任务请求",
+        message=f"📥 收到任务: {task_preview}",
         task_id=task_name,
     )
 
@@ -930,7 +975,7 @@ async def handle_task_request(
         event_type=AgentEventType.TASK_STARTED,
         agent_id=agent_id,
         instance_id=instance_id,
-        message="开始处理任务...",
+        message=f"🚀 开始处理...",
         task_id=task_name,
     )
 

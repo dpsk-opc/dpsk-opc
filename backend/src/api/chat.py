@@ -173,5 +173,6 @@ async def chat_stream(
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",  # Disable nginx buffering
+            "Content-Encoding": "identity",  # Disable gzip compression for SSE streaming
         },
     )

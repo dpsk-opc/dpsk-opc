@@ -9,8 +9,12 @@ This module provides the core chat service functionality including:
 import asyncio
 import logging
 import time
+from contextvars import ContextVar
 from datetime import datetime
 from typing import AsyncGenerator, Dict, Optional, List, Any
+
+# Context variable to track current request's correlation_id
+_current_correlation_id: ContextVar[Optional[str]] = ContextVar('current_correlation_id', default=None)
 
 from src.models.chat import (
     ChatMessage,
@@ -166,6 +170,7 @@ class ChatService:
         self._message_bus = message_bus
         self._event_queue: Optional[asyncio.Queue[Any]] = None
         self._event_task: Optional[asyncio.Task[Any]] = None
+        self._subscribed: bool = False  # Track subscription state to avoid duplicates
         
         if self._fallback_mode:
             logger.warning(
@@ -184,75 +189,80 @@ class ChatService:
             bus: Message bus instance
         """
         self._message_bus = bus
+        self._event_queue: asyncio.Queue[Any] = asyncio.Queue()  # Create queue once
+        self._subscribed = True  # Mark as subscribed once
+        
+        # Create event handler once
+        from src.bus.models import Target, TargetType, Event as BusEvent
+        
+        async def event_handler(message: BusEvent) -> None:
+            """Handle incoming agent events."""
+            event_correlation_id = getattr(message, 'correlation_id', None) or message.payload.get('correlation_id')
+            
+            # Filter by correlation_id if current request has one set
+            current_corr_id = _current_correlation_id.get()
+            if current_corr_id and event_correlation_id and event_correlation_id != current_corr_id:
+                return  # Skip events from other requests
+            
+            # Extract event data
+            event_type = getattr(message, 'event_type', None) or message.payload.get('event_type', '')
+            event_data = getattr(message, 'event_data', None) or message.payload.get('event_data', {})
+            
+            # Put event in queue for processing
+            if self._event_queue:
+                await self._event_queue.put({
+                    'event_type': event_type,
+                    'event_data': event_data,
+                    'correlation_id': event_correlation_id,
+                })
+        
+        # Subscribe only once when bus is first set
+        async def do_subscribe() -> None:
+            target = Target(type=TargetType.TOPIC, value="agent.events")
+            await bus.subscribe(target, event_handler)
+            logger.info("ChatService: subscribed to agent.events topic (once)")
+        
+        # Schedule subscription (will run when event loop is available)
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.create_task(do_subscribe())
+            else:
+                loop.run_until_complete(do_subscribe())
+        except Exception as e:
+            logger.warning(f"Failed to subscribe to agent.events: {e}")
+        
         logger.info("ChatService: message bus configured for event subscriptions")
     
     async def _subscribe_to_agent_events(self, correlation_id: str) -> None:
         """Subscribe to agent events for observability.
         
+        Note: Since we now subscribe once in set_message_bus, this method
+        just sets the correlation_id in context variable for filtering.
+        
         Args:
             correlation_id: Correlation ID to filter events
         """
-        if self._message_bus is None:
-            logger.debug("No message bus configured, skipping event subscription")
-            return
-        
-        try:
-            from src.bus.models import Target, TargetType, Event as BusEvent
-            
-            self._event_queue = asyncio.Queue()
-            
-            async def event_handler(message: BusEvent) -> None:
-                """Handle incoming agent events."""
-                # Filter by correlation_id if provided
-                if correlation_id and message.correlation_id != correlation_id:
-                    return
-                
-                # Extract event data
-                event_type = getattr(message, 'event_type', None) or message.payload.get('event_type', '')
-                event_data = getattr(message, 'event_data', None) or message.payload.get('event_data', {})
-                
-                # Put event in queue for processing
-                await self._event_queue.put({
-                    'event_type': event_type,
-                    'event_data': event_data,
-                    'correlation_id': message.correlation_id,
-                })
-                logger.debug(f"Agent event received: {event_type}")
-            
-            # Subscribe to agent events topic
-            target = Target(type=TargetType.TOPIC, value="agent.events")
-            await self._message_bus.subscribe(target, event_handler)
-            logger.info(f"Subscribed to agent.events topic for correlation_id={correlation_id}")
-            
-        except Exception as e:
-            logger.warning(f"Failed to subscribe to agent events: {e}")
+        # Set correlation_id in context variable for event filtering
+        _current_correlation_id.set(correlation_id)
+        logger.debug(f"Using correlation_id={correlation_id} for event filtering")
     
     async def _unsubscribe_from_agent_events(self) -> None:
-        """Unsubscribe from agent events."""
-        if self._message_bus is None or self._event_queue is None:
-            return
+        """Unsubscribe from agent events.
         
-        try:
-            from src.bus.models import Target, TargetType
-            
-            # Cancel event task
-            if self._event_task and not self._event_task.done():
-                self._event_task.cancel()
-                try:
-                    await self._event_task
-                except asyncio.CancelledError:
-                    pass
-            
-            # Note: Full unsubscription would require keeping the handler reference
-            # For now, we just stop processing
-            self._event_queue = None
-            logger.info("Unsubscribed from agent events")
-            
-        except Exception as e:
-            logger.warning(f"Failed to unsubscribe from agent events: {e}")
+        Note: Since we now subscribe once in set_message_bus, we only
+        clear the correlation_id in context variable here.
+        """
+        # Clear correlation_id in context variable
+        _current_correlation_id.set(None)
+        logger.debug("Cleared correlation_id for event filtering")
     
-    async def _event_listener(self) -> None:
-        """Listen for agent events and forward to SSE."""
+    async def _event_listener(self) -> AsyncGenerator[SSEResponse, None]:
+        """Listen for agent events and forward to SSE.
+        
+        Yields:
+            SSEResponse events from agent execution
+        """
         if self._event_queue is None:
             return
         
@@ -265,23 +275,31 @@ class ChatService:
                     event_type = event.get('event_type', '')
                     event_data = event.get('event_data', {})
                     
+                    # Extract react_iteration for data
+                    data = dict(event_data)
+                    # Remove top-level fields that are already in the outer object
+                    for key in ['agent_id', 'message', 'react_step', 'tool_name']:
+                        data.pop(key, None)
+                    
                     yield SSEResponse.agent_event(
                         event_type=event_type,
                         message=event_data.get('message', ''),
                         agent_id=event_data.get('agent_id'),
                         react_step=event_data.get('react_step'),
                         tool_name=event_data.get('tool_name'),
-                        event_data=event_data,
+                        data=data if data else None,
                     )
                     
                 except asyncio.TimeoutError:
                     # Check if queue is closed
-                    if self._event_queue is None or self._event_queue.empty() and False:
+                    if self._event_queue is None:
                         break
                     continue
                     
         except asyncio.CancelledError:
             logger.debug("Event listener cancelled")
+        except Exception as e:
+            logger.error(f"Event listener error: {e}")
         except Exception as e:
             logger.error(f"Event listener error: {e}")
     
@@ -327,6 +345,13 @@ class ChatService:
         This method integrates with OPC-Client for task orchestration
         and supports agent event subscriptions for observability.
         
+        The SSE event flow:
+        1. agent_info - Agent basic info
+        2. log - System log messages
+        3. agent_event - Agent processing events (task_received, tool:call_start, etc.)
+        4. message - Final response content (streaming)
+        5. done - Completion signal
+        
         Args:
             message: User's message content
             session_id: Optional session ID for continuing conversation
@@ -355,11 +380,7 @@ class ChatService:
         
         # Generate correlation ID for event tracking
         correlation_id = str(uuid.uuid4())
-        
-        # Subscribe to agent events
-        await self._subscribe_to_agent_events(correlation_id)
-        
-        # Yield agent info event
+        # 1. Yield agent info event
         agent_info = await self.get_agent_info()
         yield SSEResponse.agent_info(
             agent_id=agent_info.agent_id,
@@ -368,17 +389,9 @@ class ChatService:
             session_id=session.session_id,
         )
         
-        # Log: received message
+        # 2. Log: received message
         preview = message[:20] + "..." if len(message) > 20 else message
         yield SSEResponse.log("INFO", f"收到用户消息: {preview}")
-        
-        # Emit agent event: task received
-        yield SSEResponse.agent_event(
-            event_type="session:message_received",
-            message=f"收到消息: {preview}",
-            agent_id=agent_info.agent_id,
-            event_data={"correlation_id": correlation_id},
-        )
         
         # Add user message to context
         await self.context_manager.add_message(
@@ -387,46 +400,94 @@ class ChatService:
             content=message,
         )
         
-        # Get context for logging
-        context = await self.context_manager.get_context(session.session_id)
-        yield SSEResponse.log("INFO", f"已加载 {len(context)} 条上下文")
+        # Subscribe to agent events BEFORE starting execution
+        await self._subscribe_to_agent_events(correlation_id)
         
-        # Create a task to listen for events while executing
-        event_task = None
-        full_response = ""
+        # Start event listener as an async iterator we can merge with execution
+        agent_event_queue: asyncio.Queue[SSEResponse] = asyncio.Queue()
+        
+        async def collect_and_forward_events() -> None:
+            """Collect events from queue and put them in the agent_event_queue."""
+            try:
+                async for event in self._event_listener():
+                    await agent_event_queue.put(event)
+                    logger.debug(f"Collected agent event: {event.to_sse_data()}")
+            except asyncio.CancelledError:
+                logger.debug("Event collector cancelled")
+            except Exception as e:
+                logger.error(f"Event collector error: {e}")
+        
+        execution_task: Optional[asyncio.Task[str]] = None
         
         try:
-            # Start event listener as a background task
-            if self._message_bus is not None:
-                event_task = asyncio.create_task(self._listen_for_events())
-            
             if self.opc_client and not self._fallback_mode:
                 # Use OPC-Client for task orchestration
                 yield SSEResponse.log("INFO", "通过 OPC-Client 执行请求...")
-                full_response = await self._execute_via_opc(
-                    message, 
-                    session.session_id,
+                
+                # Start event collector
+                collector_task = asyncio.create_task(collect_and_forward_events())
+                
+                # Start agent execution
+                execution_task = asyncio.create_task(
+                    self._execute_via_opc(message, session.session_id)
                 )
             else:
                 # Fallback: use agent manager directly
                 yield SSEResponse.log("INFO", "通过 Agent 直接执行请求...")
-                full_response = await self._execute_via_agent(
-                    message,
-                    session.session_id,
+                
+                # Start event collector
+                collector_task = asyncio.create_task(collect_and_forward_events())
+                
+                # Start agent execution
+                execution_task = asyncio.create_task(
+                    self._execute_via_agent(message, session.session_id)
                 )
+            
+            # Real-time streaming: yield events as they come, while waiting for execution
+            full_response = ""
+            execution_done = False
+            
+            while not execution_done:
+                # Check if execution is done first
+                if execution_task.done():
+                    execution_done = True
+                    try:
+                        full_response = execution_task.result()
+                    except Exception as e:
+                        full_response = f"执行失败: {str(e)}"
+                    continue
+                
+                # Check for agent events
+                try:
+                    event = await asyncio.wait_for(agent_event_queue.get(), timeout=0.05)
+                    yield event
+                except asyncio.TimeoutError:
+                    # No event yet, continue waiting
+                    continue
+            
+            # Drain remaining events from queue
+            while not agent_event_queue.empty():
+                try:
+                    event = agent_event_queue.get_nowait()
+                    yield event
+                except asyncio.QueueEmpty:
+                    break
+            
+            # Cancel event collector
+            collector_task.cancel()
+            try:
+                await collector_task
+            except asyncio.CancelledError:
+                pass
             
             # Log completion
             duration_ms = int((time.time() - start_time) * 1000)
             yield SSEResponse.log("INFO", f"回复生成完成，耗时 {duration_ms}ms")
             
             # Stream the response character by character for better UX
-            first_chunk = True
-            for char in full_response:
-                if first_chunk:
-                    yield SSEResponse.log("INFO", "模型响应首字节")
-                    first_chunk = False
-                yield SSEResponse.message(content=char, is_final=False)
-                await asyncio.sleep(0.01)  # Small delay for streaming effect
+            if full_response:
+                for char in full_response:
+                    yield SSEResponse.message(content=char, is_final=False)
             
             # Add assistant message to context
             await self.context_manager.add_message(
@@ -440,40 +501,30 @@ class ChatService:
             yield SSEResponse.log("ERROR", f"处理失败: {str(e)}")
             full_response = f"抱歉，处理您的请求时出现了错误：{str(e)}"
             
+            # Cancel tasks
+            if execution_task and not execution_task.done():
+                execution_task.cancel()
+            if 'collector_task' in locals():
+                collector_task.cancel()
+            
             # Stream error response
             for char in full_response:
                 yield SSEResponse.message(content=char, is_final=False)
         
         finally:
-            # Cleanup: cancel event listener
-            if event_task and not event_task.done():
-                event_task.cancel()
-                try:
-                    await event_task
-                except asyncio.CancelledError:
-                    pass
+            # Cleanup
             await self._unsubscribe_from_agent_events()
         
-        # Send final message event
+        # 4. Send final message event
         yield SSEResponse.message(content="", is_final=True)
         
-        # Send done event
+        # 5. Send done event
         yield SSEResponse.done()
         
         logger.info(
             f"Message processed: session={session.session_id}, "
             f"duration={int((time.time() - start_time) * 1000)}ms"
         )
-    
-    async def _listen_for_events(self) -> None:
-        """Background task to listen for agent events and yield SSE responses."""
-        try:
-            async for event in self._event_listener():
-                # This will be yielded back to the caller
-                # Since we're in a background task, we just log it
-                logger.debug(f"Background event: {event.to_sse_data()}")
-        except asyncio.CancelledError:
-            logger.debug("Event listener cancelled")
     
     async def _execute_via_opc(
         self,
