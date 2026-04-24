@@ -250,11 +250,6 @@ async def node_think(state: AgentState) -> AgentState:
     agent_id = agent_info.get("agent_id", AGENT_ID)
     instance_id = f"{agent_id}-unknown"  # Will be set by spawner
 
-    if DebugConfig.REACT_VERBOSE:
-        logger.info(f"[REACT] ═══════════════════════════════════════")
-        logger.info(f"[REACT] ITERATION {iterations}")
-        logger.info(f"[REACT] ═══════════════════════════════════════")
-
     # Emit think start event
     await _emit_event(
         event_type=AgentEventType.REACT_THINK_START,
@@ -283,8 +278,19 @@ async def node_think(state: AgentState) -> AgentState:
     agent_skills = agent_info.get("skills", [])
     tools = get_tools_for_llm(skills=agent_skills if agent_skills else None)
 
+    # Get workspace context for injection into prompt
+    workspace_root = None
+    try:
+        from .workspace.context import get_current_context
+        ctx = get_current_context()
+        if ctx:
+            workspace_root = str(ctx.workspace_root)
+            logger.debug(f"[REACT] [THINK] Workspace context: {workspace_root}")
+    except Exception:
+        logger.error("[REACT] [THINK] Failed to get workspace context")
+
     # Debug: Log system prompt length to verify it's loaded
-    logger.info(f"[REACT] [THINK] system_prompt length: {len(system_prompt)} chars, agent_skills: {agent_skills}")
+    logger.debug(f"[REACT] [THINK] system_prompt length: {len(system_prompt)} chars, agent_skills: {agent_skills}")
 
     # Build messages for LLM
     # In first iteration, create user message from task_data
@@ -299,29 +305,18 @@ async def node_think(state: AgentState) -> AgentState:
         messages = [
             {"role": "user", "content": user_prompt},
         ]
-        logger.info(f"[REACT] [THINK] iter=0, created new messages from task_data")
+        logger.debug(f"[REACT] [THINK] iter=0, created new messages from task_data")
     else:
         messages = state.get("messages", [])
-        logger.info(f"[REACT] [THINK] iter={iterations}, using existing messages: {len(messages)}")
+        logger.debug(f"[REACT] [THINK] iter={iterations}, using existing messages: {len(messages)}")
 
-    # Log messages before sending to LLM
-    for i, msg in enumerate(messages):
-        role = msg.get("role", "?")
-        has_tc = "tool_calls" in msg
-        has_tcid = "tool_call_id" in msg
-        tc_names = []
-        if "tool_calls" in msg:
-            for tc in msg.get("tool_calls", []):
-                tc_names.append(tc.get("function", {}).get("name", "?"))
-        logger.info(f"[REACT] [THINK]   msg[{i}]: role={role}, has_tool_calls={has_tc}, tool_names={tc_names}")
-
-    # Build system prompt with tools
-    system_content = _build_system_prompt(system_prompt, tools)
+    # Build system prompt with tools and workspace info
+    system_content = _build_system_prompt(system_prompt, tools, workspace_root)
     chat_messages = [{"role": "system", "content": system_content}] + messages
 
     # Calculate approximate prompt length
     total_chars = sum(len(str(m.get("content", ""))) + len(str(m.get("tool_calls", ""))) for m in chat_messages)
-    logger.info(f"[REACT] [THINK] iter={iterations}, prompt approx_chars={total_chars}, messages={len(chat_messages)}, tools={len(tools) if tools else 0}")
+    logger.debug(f"[REACT] [THINK] iter={iterations}, prompt approx_chars={total_chars}, messages={len(chat_messages)}, tools={len(tools) if tools else 0}")
 
     # Call LLM
     try:
@@ -329,35 +324,13 @@ async def node_think(state: AgentState) -> AgentState:
         # in every request to correctly generate parameters
         should_pass_tools = bool(tools)
 
-        logger.info(f"[REACT] [THINK] iter={iterations}, {len(chat_messages)} messages, tools={len(tools)}, passing_tools={should_pass_tools}")
-
-        # Log full message sequence with details
-        for i, msg in enumerate(chat_messages):
-            role = msg.get("role", "?")
-            has_tc = "tool_calls" in msg
-            has_tcid = "tool_call_id" in msg
-            tc_id = msg.get("tool_call_id", "N/A")
-            content_preview = str(msg.get("content", ""))[:30]
-            # Get tool_call id if present
-            tc_ids = []
-            if "tool_calls" in msg:
-                for tc in msg.get("tool_calls", []):
-                    tc_ids.append(tc.get("id", "?"))
-            logger.info(f"[REACT] [THINK]   [{i}] role={role}, has_tool_calls={has_tc}, has_tool_id={has_tcid}, tool_call_ids={tc_ids}, content={content_preview}...")
+        logger.debug(f"[REACT] [THINK] iter={iterations}, {len(chat_messages)} messages, tools={len(tools)}, passing_tools={should_pass_tools}")
 
         response = await client.chat(messages=chat_messages, tools=tools if should_pass_tools else None)
 
         assistant_message = response.get("message", {})
         content = assistant_message.get("content", "")
         tool_calls = assistant_message.get("tool_calls", [])
-
-        # DEBUG: Log LLM response details
-        logger.info(f"[REACT] [THINK] LLM response: tool_calls count={len(tool_calls) if tool_calls else 0}, content_len={len(content) if content else 0}")
-        if tool_calls:
-            for i, tc in enumerate(tool_calls):
-                logger.info(f"[REACT] [THINK]   tool_call[{i}]: {tc.get('function', {}).get('name', '?')}")
-        elif content:
-            logger.info(f"[REACT] [THINK]   content (no tool_calls): {content[:200]}...")
 
         # Emit LLM request end event
         if tool_calls:
@@ -381,17 +354,6 @@ async def node_think(state: AgentState) -> AgentState:
             llm_model=getattr(client, 'model', None),
             llm_thinking=content if content else None,  # Send full LLM thinking content to frontend
         )
-
-        if DebugConfig.REACT_VERBOSE:
-            logger.info(f"[REACT] [THINK] LLM response: has_tool_calls={bool(tool_calls)}, content_len={len(content) if content else 0}")
-
-        if DebugConfig.REACT_VERBOSE:
-            logger.info(f"[REACT] [THINK] LLM response: has_tool_calls={bool(tool_calls)}, content_len={len(content) if content else 0}")
-
-        if DebugConfig.REACT_VERBOSE:
-            if content:
-                logger.info(f"[REACT] [THINK] LLM text: {content[:100]}...")
-            logger.info(f"[REACT] [THINK] Tool calls: {len(tool_calls)}")
 
         if tool_calls:
             # LLM wants to call tools
@@ -462,8 +424,8 @@ async def node_think(state: AgentState) -> AgentState:
             )
             # Still update messages for history
             state["messages"] = messages + [assistant_message]
-            if DebugConfig.REACT_VERBOSE:
-                logger.info("[REACT] [THINK] → Direct response (finish)")
+            # if DebugConfig.REACT_VERBOSE:
+            #     logger.info("[REACT] [THINK] → Direct response (finish)")
 
     except Exception as e:
         logger.exception(f"[THINK] LLM call failed: {e}")
@@ -486,10 +448,10 @@ async def node_act(state: AgentState) -> AgentState:
 
     # DEBUG: Check incoming messages
     existing_messages = state.get("messages", [])
-    logger.info(f"[REACT] [ACT] Entering node_act, messages count: {len(existing_messages)}")
-    if existing_messages:
-        logger.info(f"[REACT] [ACT] Last message role: {existing_messages[-1].get('role')}")
-        logger.info(f"[REACT] [ACT] Last message has_tool_calls: {'tool_calls' in existing_messages[-1]}")
+    logger.debug(f"[REACT] [ACT] Entering node_act, messages:{existing_messages}")
+    # if existing_messages:
+    #     logger.info(f"[REACT] [ACT] Last message role: {existing_messages[-1].get('role')}")
+    #     logger.info(f"[REACT] [ACT] Last message has_tool_calls: {'tool_calls' in existing_messages[-1]}")
 
     # Emit act start event
     await _emit_event(
@@ -508,21 +470,20 @@ async def node_act(state: AgentState) -> AgentState:
         state["react_step"] = "finish"
         return state
 
-    if DebugConfig.REACT_VERBOSE:
-        logger.info(f"[REACT] [ACT] Executing {len(tool_calls)} tool(s)")
-
     try:
         from .tools.registry import registry
 
         results = []
+        should_finish = False
         for i, tool_call in enumerate(tool_calls):
             func = tool_call.get("function", {})
             tool_name = func.get("name", "unknown")
             arguments_str = func.get("arguments", "{}")
 
-            if DebugConfig.REACT_VERBOSE:
-                logger.info(f"[REACT] [ACT] Tool {i+1}: {tool_name}")
-                logger.info(f"[REACT] [ACT]   Args: {arguments_str[:200]}...")
+
+            # if DebugConfig.REACT_VERBOSE:
+            #     logger.info(f"[REACT] [ACT] Tool {i+1}: {tool_name}")
+            #     logger.info(f"[REACT] [ACT]   Args: {arguments_str[:200]}...")
 
             # Log raw arguments string for debugging
             logger.info(f"[REACT] [ACT] RAW arguments_str: {arguments_str}")
@@ -534,7 +495,8 @@ async def node_act(state: AgentState) -> AgentState:
                 logger.info(f"[REACT] [ACT] PARSED tool_args: {tool_args}")
             except json.JSONDecodeError as e:
                 logger.error(f"[REACT] [ACT] Failed to parse arguments: {e}")
-                tool_args = {}
+                logger.error(f"[REACT] [ACT] Raw arguments (first 300 chars): {arguments_str[:300] if isinstance(arguments_str, str) else str(arguments_str)[:300]}")
+                tool_args = {}  # Fallback to empty dict
 
             logger.info(f"准备调用工具:{tool_name}")
             # Emit tool call start event
@@ -558,14 +520,22 @@ async def node_act(state: AgentState) -> AgentState:
             else:
                 # Parse arguments
                 try:
-                    arguments = tool_args
-                except json.JSONDecodeError:
-                    result = {"success": False, "error": f"Invalid JSON: {arguments_str}", "tool_name": tool_name}
+                    if isinstance(tool_args, str):
+                        arguments = json.loads(tool_args)
+                    else:
+                        arguments = tool_args
+                    logger.info(f"[REACT] [ACT] Tool Name:{tool_name},Tool arguments: {arguments}")
+                except json.JSONDecodeError as e:
+                    # Log truncated content for debugging
+                    truncated = tool_args[:500] if isinstance(tool_args, str) else str(tool_args)[:500]
+                    logger.error(f"[REACT] [ACT] JSON parse failed: {e}, content preview: {truncated}...")
+                    result = {"success": False, "error": f"Invalid JSON: {e}", "tool_name": tool_name}
                 else:
                     # Execute
                     try:
                         result = await tool.run(arguments)
                         result["tool_name"] = tool_name
+                        should_finish: bool = result.get("should_finish", False)
                     except Exception as e:
                         result = {"success": False, "error": str(e), "tool_name": tool_name}
 
@@ -602,12 +572,6 @@ async def node_act(state: AgentState) -> AgentState:
 
             results.append(result)
 
-            if DebugConfig.REACT_VERBOSE:
-                success = result.get("success", False)
-                logger.info(f"[REACT] [ACT]   Result: success={success}")
-                if success and "chart" in result:
-                    logger.info(f"[REACT] [ACT]   Chart preview:\n{result.get('chart', '')[:200]}...")
-
         # Emit act end event
         await _emit_event(
             event_type=AgentEventType.REACT_ACT_END,
@@ -640,25 +604,28 @@ async def node_act(state: AgentState) -> AgentState:
         if existing_messages:
             last_msg = existing_messages[-1]
             if last_msg.get("role") != "assistant" or "tool_calls" not in last_msg:
-                logger.error(f"[REACT] [ACT] ERROR: Last message before tool is not assistant with tool_calls!")
-                logger.error(f"[REACT] [ACT] Last message: role={last_msg.get('role')}, has_tool_calls={'tool_calls' in last_msg}")
-                # Don't append tool messages if sequence is invalid
-                state["error"] = "Invalid message sequence: tool message without preceding assistant tool_calls"
+                logger.warning(f"[REACT] [ACT] Last message before tool is not assistant with tool_calls! role={last_msg.get('role')}, has_tool_calls={'tool_calls' in last_msg},Last message:{last_msg}")
+                # state["error"] = "Invalid message sequence: tool message without preceding assistant tool_calls"
                 state["react_step"] = "finish"
+                state["messages"] = existing_messages
+                state["tool_results"] = results
+                state["should_continue"] = False
                 return state
 
+        next_step = "finish" if should_finish else "observe"
         state["messages"] = existing_messages + tool_result_messages
         state["tool_results"] = results
-        state["react_step"] = "observe"
+        state["react_step"] = next_step
+        state["should_continue"] = not should_finish
 
         logger.info(f"[REACT] [ACT] → Executed {len(results)} tool(s), messages count: {len(state['messages'])}")
 
-        # Log the message sequence after appending tool results
-        for i, msg in enumerate(state["messages"]):
-            role = msg.get("role", "?")
-            has_tc = "tool_calls" in msg
-            has_tcid = "tool_call_id" in msg
-            logger.info(f"[REACT] [ACT]   state.msg[{i}]: role={role}, has_tool_calls={has_tc}, has_tool_id={has_tcid}")
+        # # Log the message sequence after appending tool results
+        # for i, msg in enumerate(state["messages"]):
+        #     role = msg.get("role", "?")
+        #     has_tc = "tool_calls" in msg
+        #     has_tcid = "tool_call_id" in msg
+        #     logger.info(f"[REACT] [ACT]   state.msg[{i}]: role={role}, has_tool_calls={has_tc}, has_tool_id={has_tcid}")
 
     except Exception as e:
         logger.exception(f"[ACT] Tool execution failed: {e}")
@@ -681,12 +648,31 @@ async def node_observe(state: AgentState) -> AgentState:
     iterations = state.get("iterations", 0) + 1
     max_iterations = state.get("max_iterations", 10)
 
-    state["iterations"] = iterations
-    state["react_step"] = "think"
-
     # Emit observe end event
     tool_results = state.get("tool_results", [])
     tool_count = len(tool_results)
+
+    if tool_results:
+        last_tool_result = tool_results[-1]
+        should_finish = last_tool_result.get("should_finish", False)
+        if should_finish:
+            state["should_continue"] = False
+            state["react_step"] = "finish"
+            state["result"] = {
+                "success": True,
+                "content": last_tool_result.get("result"),
+                "type": "text",
+            }
+            return state
+
+    if not state["should_continue"]:
+        state["react_step"] = "finish"
+        return state
+
+    state["iterations"] = iterations
+    state["react_step"] = "think"
+
+    
     await _emit_event(
         event_type=AgentEventType.REACT_OBSERVE_END,
         agent_id=agent_id,
@@ -696,10 +682,10 @@ async def node_observe(state: AgentState) -> AgentState:
         react_iteration=iterations - 1,  # Report previous iteration
     )
 
-    if DebugConfig.REACT_VERBOSE:
-        tool_results = state.get("tool_results", [])
-        for i, result in enumerate(tool_results):
-            logger.info(f"[REACT] [OBSERVE] Tool {i+1}: success={result.get('success')}")
+    # if DebugConfig.REACT_VERBOSE:
+    #     tool_results = state.get("tool_results", [])
+    #     for i, result in enumerate(tool_results):
+    #         logger.info(f"[REACT] [OBSERVE] Tool {i+1}: success={result.get('success')}")
 
     # Check iteration limit
     if iterations >= max_iterations:
@@ -717,8 +703,11 @@ async def node_observe(state: AgentState) -> AgentState:
         return state
 
     # Continue the ReAct loop
+    # state["should_continue"] = 0 == tool_count
+    # if state and not state.get("should_continue"):        
+    #     return state
+    
     state["should_continue"] = True
-
     if DebugConfig.REACT_VERBOSE:
         logger.info(f"[REACT] [OBSERVE] → Continuing to think (iter {iterations}/{max_iterations})")
 
@@ -758,8 +747,10 @@ async def node_finish(state: AgentState) -> AgentState:
             react_iteration=iterations,
             duration_ms=duration_ms,
         )
+        state["should_continue"] = False
         return state
 
+    
     # Summarize tool results
     tool_results = state.get("tool_results", [])
 
@@ -786,9 +777,8 @@ async def node_finish(state: AgentState) -> AgentState:
             "tool_results": tool_results,
             "duration_ms": duration_ms,
         }
-
-        if DebugConfig.REACT_VERBOSE:
-            logger.info(f"[REACT] [FINISH] Summarized {len(tool_results)} tool results, duration={duration_ms}ms")
+        # if DebugConfig.REACT_VERBOSE:
+        #     logger.info(f"[REACT] [FINISH] Summarized {len(tool_results)} tool results, duration={duration_ms}ms")
 
         # Emit task completed event
         await _emit_event(
@@ -808,8 +798,8 @@ async def node_finish(state: AgentState) -> AgentState:
             "duration_ms": duration_ms,
         }
 
-        if DebugConfig.REACT_VERBOSE:
-            logger.info(f"[REACT] [FINISH] No results, error={state.get('error')}")
+        # if DebugConfig.REACT_VERBOSE:
+        #     logger.info(f"[REACT] [FINISH] No results, error={state.get('error')}")
 
         # Emit task failed event
         await _emit_event(
@@ -826,9 +816,25 @@ async def node_finish(state: AgentState) -> AgentState:
     return state
 
 
-def _build_system_prompt(base_prompt: str, tools: list[dict[str, Any]]) -> str:
-    """Build system prompt with tool descriptions."""
+def _build_system_prompt(base_prompt: str, tools: list[dict[str, Any]], workspace_root: str | None = None) -> str:
+    """Build system prompt with tool descriptions.
+    
+    Args:
+        base_prompt: Base system prompt from agent definition
+        tools: List of available tools
+        workspace_root: Optional workspace root path for file operations
+    """
     prompt_parts = [base_prompt] if base_prompt else []
+    
+    # Inject workspace information if available
+    if workspace_root:
+        prompt_parts.append("\n\n## 工作空间信息")
+        prompt_parts.append(f"你的工作空间根目录是: `{workspace_root}`")
+        prompt_parts.append("重要提示:")
+        prompt_parts.append("- 进行文件操作时，必须使用此工作空间目录或其子目录")
+        prompt_parts.append("- 绝对路径如 `/`、`/home/`、`/mnt/` 等不在工作空间内，会被拒绝")
+        prompt_parts.append("- 如果不确定路径，先使用 `list_dir` 工具查看工作空间内容")
+    
     prompt_parts.append("\n\nYou have access to the following tools:")
 
     for tool in tools:
@@ -849,17 +855,16 @@ def _build_system_prompt(base_prompt: str, tools: list[dict[str, Any]]) -> str:
                 required_marker = " [REQUIRED]" if param_name in required_params else ""
                 prompt_parts.append(f"  - {param_name} ({param_type}): {param_desc}{required_marker}")
 
-    prompt_parts.append("\n## Instructions")
-    prompt_parts.append("- Use tools when needed to help the user")
-    prompt_parts.append("- If no tool is needed, respond directly")
-    prompt_parts.append("- When calling a tool, you MUST provide ALL required parameters with VALID values")
-    prompt_parts.append("- NEVER call a tool with empty arguments {} - this will cause errors")
-    prompt_parts.append("- If you don't know the required parameter values, ask the user instead of guessing")
-    prompt_parts.append("- Call ONE tool at a time, then wait for the result before deciding next action")
-    prompt_parts.append("- Be concise and helpful in your responses")
+    # prompt_parts.append("\n## Instructions")
+    # prompt_parts.append("- Use tools when needed to help the user")
+    # prompt_parts.append("- If no tool is needed, respond directly")
+    # prompt_parts.append("- When calling a tool, you MUST provide ALL required parameters with VALID values")
+    # prompt_parts.append("- NEVER call a tool with empty arguments {} - this will cause errors")
+    # prompt_parts.append("- If you don't know the required parameter values, ask the user instead of guessing")
+    # prompt_parts.append("- Call ONE tool at a time, then wait for the result before deciding next action")
+    # prompt_parts.append("- Be concise and helpful in your responses")
 
     return "\n".join(prompt_parts)
-
 
 # =============================================================================
 # Build LangGraph
@@ -878,24 +883,39 @@ def build_agent_graph() -> Any:
         workflow.add_node("observe", node_observe)
         workflow.add_node("finish", node_finish)
 
-        # Entry point
+        # Entry point // react的起点
+        """
+        entry point 概念：
+        在 LangGraph 的状态机/工作流中，entry point 是整个图的起始节点。
+        你可以把它理解为一个流程的“入口”——就像函数调用的第一行代码，或者一个状态机的初始状态。
+        一个图只能有一个入口点，所有执行都从这里开始。
+        """
         workflow.set_entry_point("think")
 
         # ReAct loop edges
+
+        """
+        conditional_edges 概念：
+        在 LangGraph 的状态机/工作流中，conditional_edges 是一种特殊的边，它允许根据状态机的当前状态来决定下一步的走向。
+        在本例中，我们使用 conditional_edges 来实现 ReAct 的循环逻辑。
+        当工具调用完成时，我们会根据工具调用是否成功来决定下一步的走向。
+        如果工具调用成功，则继续执行 observe 节点；如果工具调用失败，则继续执行 finish 节点。
+        """
         workflow.add_conditional_edges(
             "think",
-            lambda s: "act" if s.get("tool_calls") else "finish",
+            lambda s: "act" if s.get("tool_calls") else "finish", # s = agent_state
             {
                 "act": "act",
                 "finish": "finish",
             }
         )
 
+        # act => observe
         workflow.add_edge("act", "observe")
 
         workflow.add_conditional_edges(
             "observe",
-            lambda s: "think" if not s.get("error") else "finish",
+            lambda s: "think" if s.get("should_continue", False) else "finish",
             {
                 "think": "think",
                 "finish": "finish",
@@ -905,7 +925,7 @@ def build_agent_graph() -> Any:
         workflow.add_edge("finish", END)
 
         compiled = workflow.compile()
-        logger.info("[GRAPH] Agent graph compiled (ReAct mode)")
+        logger.debug("[GRAPH] Agent graph compiled (ReAct mode)")
         return compiled
 
     except ImportError as e:
@@ -966,18 +986,18 @@ async def handle_task_request(
         event_type=AgentEventType.TASK_RECEIVED,
         agent_id=agent_id,
         instance_id=instance_id,
-        message=f"📥 收到任务: {task_preview}",
+        message=f"📥 [{agent_id}]收到任务: {task_preview}",
         task_id=task_name,
     )
 
-    # Emit task started event
-    await _emit_event(
-        event_type=AgentEventType.TASK_STARTED,
-        agent_id=agent_id,
-        instance_id=instance_id,
-        message=f"🚀 开始处理...",
-        task_id=task_name,
-    )
+    # # Emit task started event
+    # await _emit_event(
+    #     event_type=AgentEventType.TASK_STARTED,
+    #     agent_id=agent_id,
+    #     instance_id=instance_id,
+    #     message=f"🚀 开始处理...",
+    #     task_id=task_name,
+    # )
 
     initial_state: AgentState = {
         "task_name": task_name,
@@ -1001,11 +1021,31 @@ async def handle_task_request(
     if graph is None:
         raise RuntimeError("LangGraph not available")
 
+    # Set up workspace context for this agent
+    from .workspace.context import AgentContextManager
+    workspace_id = (agent_info or {}).get("workspace", agent_id)
+    workspace_root, permissions = _get_workspace_config(agent_id, workspace_id)
+
     try:
-        logger.info(f"[HANDLER] Executing task: {task_name}")
-        final_state = await graph.ainvoke(initial_state)
-        logger.info(f"[HANDLER] Task complete: {task_name}")
-        return final_state.get("result", {})
+        logger.info(f"[HANDLER] Executing task: {task_name} with workspace: {workspace_root}")
+        
+        # Execute within workspace context
+        async with AgentContextManager(
+            agent_id=agent_id,
+            workspace_id=workspace_id,
+            workspace_root=workspace_root,
+            permissions=permissions,
+        ):
+            final_state = await graph.ainvoke(initial_state)
+            
+        # Debug: log final_state keys
+        logger.info(f"[HANDLER] Task complete: {task_name}, state_keys={list(final_state.keys()) if final_state else None}, result={final_state.get('result') if final_state else None}")
+        
+        # Ensure result is always a dict
+        result = final_state.get("result") if final_state else None
+        if result is None:
+            result = {}
+        return result
 
     except Exception as e:
         logger.exception(f"[HANDLER] Task failed: {task_name}")
@@ -1019,6 +1059,57 @@ async def handle_task_request(
             error=str(e),
         )
         raise
+
+
+# =============================================================================
+# Workspace Context Management
+# =============================================================================
+
+def _get_workspace_config(agent_id: str, workspace_id: str) -> tuple[Path, int]:
+    """Get workspace configuration for an agent.
+    
+    Args:
+        agent_id: The agent identifier
+        workspace_id: The workspace identifier (from agent config)
+        
+    Returns:
+        Tuple of (workspace_root, permissions)
+    """
+    # Use unified config from .env
+    from src.config import get_config
+    config = get_config()
+    
+    ws_root = config.agent.workspace_root
+    perm_str = config.agent.workspace_permissions
+    
+    # Expand ~ to home directory
+    ws_root = os.path.expanduser(ws_root)
+    
+    # Build workspace root path for this agent
+    workspace_root = Path(ws_root) / workspace_id
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    
+    # Parse permissions
+    from .workspace.models import Permission
+    permissions = Permission.NONE
+    
+    # Try numeric first
+    try:
+        permissions = int(perm_str)
+        logger.info(f"[WORKSPACE] Configured for agent '{agent_id}': root={workspace_root}, perms={permissions}")
+        return workspace_root, permissions
+    except ValueError:
+        pass
+    
+    # Parse permission names (comma-separated)
+    # Note: Permission uses plain int constants, not IntEnum
+    for name in perm_str.split(","):
+        name = name.strip().upper()
+        if hasattr(Permission, name):
+            permissions |= getattr(Permission, name)
+    
+    logger.info(f"[WORKSPACE] Configured for agent '{agent_id}': root={workspace_root}, perms={permissions}")
+    return workspace_root, permissions
 
 
 # =============================================================================

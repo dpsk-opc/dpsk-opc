@@ -411,10 +411,12 @@ async def _execute_tool_call(tool_call: dict[str, Any]) -> dict[str, Any]:
     # Parse arguments
     try:
         arguments = json.loads(arguments_str) if isinstance(arguments_str, str) else arguments_str
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
+        logger.error(f"[TOOL] Failed to parse JSON arguments: {e}")
+        logger.error(f"[TOOL] Raw arguments (first 300 chars): {arguments_str[:300] if isinstance(arguments_str, str) else str(arguments_str)[:300]}")
         return {
             "success": False,
-            "error": f"Invalid JSON arguments: {arguments_str}",
+            "error": f"Invalid JSON arguments: {e}",
             "tool_name": tool_name,
         }
 

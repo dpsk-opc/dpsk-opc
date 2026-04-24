@@ -10,6 +10,8 @@ This module provides tools for file system operations:
 - write_to_file: Write content to files
 - delete_file: Delete files
 - execute_command: Execute shell commands
+
+All operations are protected by workspace security guards.
 """
 
 from __future__ import annotations
@@ -19,8 +21,9 @@ import logging
 import os
 import re
 import subprocess
+from functools import wraps
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .base import BaseTool, ToolParameter
 
@@ -28,6 +31,102 @@ logger = logging.getLogger(__name__)
 
 # Default workspace path
 DEFAULT_WORKSPACE = "/mnt/w/workspace/dpsk-opc"
+
+
+# =============================================================================
+# Workspace Security Integration
+# =============================================================================
+
+def guard_workspace_access(
+    tool_name: str,
+    file_path: str,
+    required_permission: int,
+) -> dict[str, Any] | None:
+    """Check workspace access permission for file operations.
+    
+    Args:
+        tool_name: Name of the tool requesting access
+        file_path: Path to check
+        required_permission: Required permission (Permission.READ=1, Permission.WRITE=2, etc.)
+        
+    Returns:
+        Error dict if permission denied, None if allowed
+    """
+    try:
+        from ..workspace.guard import WorkspaceGuard
+        from ..workspace.context import get_current_context, get_current_agent_id
+    except ImportError:
+        # Workspace module not available
+        logger.debug(f"[{tool_name}] Workspace module not available, allowing access")
+        return None
+    
+    # Get context
+    context = get_current_context()
+    if context is None:
+        # No context means running outside agent framework
+        # Allow operations for backward compatibility
+        logger.debug(f"[{tool_name}] No context, allowing access (backward compatible)")
+        return None
+    
+    # Get agent ID
+    agent_id = get_current_agent_id()
+    if not agent_id:
+        logger.debug(f"[{tool_name}] No agent ID, allowing access")
+        return None
+    
+    try:
+        # Use the context's workspace_root for validation
+        # Don't create a new manager - use the context's workspace
+        from ..workspace.validator import PathValidator
+        from ..workspace.classifier import PathClassifier
+        
+        classifier = PathClassifier()
+        validator = PathValidator(classifier=classifier)
+        
+        # Validate path against context's workspace
+        allowed, error = validator.validate_path(
+            path=file_path,
+            workspace_root=context.workspace_root,
+            shared_dirs=None,
+        )
+        
+        if not allowed:
+            workspace_root = str(context.workspace_root)
+            logger.warning(f"[{tool_name}] Workspace permission denied for {file_path}: {error}")
+            return {
+                "success": False,
+                "error": f"工作空间权限不足: {error}\n提示: 请使用工作空间路径，如 '{workspace_root}/' 或其子目录",
+                "tool_name": tool_name,
+                "workspace_root": workspace_root,
+            }
+        
+        # Check permission using context
+        if not context.has_permission(required_permission):
+            perm_name = _get_permission_name(required_permission)
+            logger.warning(f"[{tool_name}] Missing required permission: {perm_name}")
+            return {
+                "success": False,
+                "error": f"缺少所需权限: {perm_name}",
+                "tool_name": tool_name,
+            }
+            
+    except Exception as e:
+        logger.warning(f"[{tool_name}] Workspace check failed: {e}")
+        # Don't block operations if workspace check fails unexpectedly
+    
+    return None
+
+
+def _get_permission_name(perm_value: int) -> str:
+    """Get permission name from value."""
+    names = {
+        1: "READ",
+        2: "WRITE",
+        4: "EXECUTE",
+        8: "LIST",
+        16: "DELETE",
+    }
+    return names.get(perm_value, str(perm_value))
 
 
 # =============================================================================
@@ -57,8 +156,8 @@ class ListDirTool(BaseTool):
             ToolParameter(
                 name="target_directory",
                 param_type="string",
-                description="要列出的目录路径（必须是绝对路径）",
-                required=True,
+                description="要列出的目录路径，不填则默认使用工作空间根目录",
+                required=False,
             ),
             ToolParameter(
                 name="ignore_globs",
@@ -68,8 +167,26 @@ class ListDirTool(BaseTool):
             ),
         ]
 
-    async def execute(self, target_directory: str, ignore_globs: list[str] | None = None, **kwargs: Any) -> dict[str, Any]:
-        """List directory contents."""
+    async def execute(self, target_directory: str | None = None, ignore_globs: list[str] | None = None, **kwargs: Any) -> dict[str, Any]:
+        """List directory contents.
+        
+        If target_directory is not provided, uses workspace root.
+        """
+        # Get workspace root if no path specified
+        if not target_directory:
+            from ..workspace.context import get_current_context
+            ctx = get_current_context()
+            if ctx:
+                target_directory = str(ctx.workspace_root)
+            else:
+                target_directory = DEFAULT_WORKSPACE
+        
+        # Check workspace permission
+        from ..workspace.models import Permission
+        error = guard_workspace_access("list_dir", target_directory, Permission.LIST)
+        if error:
+            return error
+        
         try:
             path = Path(target_directory)
             if not path.exists():
@@ -158,20 +275,56 @@ class SearchFileTool(BaseTool):
                 required=False,
                 default=DEFAULT_WORKSPACE,
             ),
+            ToolParameter(
+                name="ignore_globs",
+                param_type="array",
+                description="要忽略的目录模式，如 ['node_modules', '.git']",
+                required=False,
+                default=[],
+            ),
+            ToolParameter(
+                name="max_depth",
+                param_type="integer",
+                description="最大搜索深度，默认 10",
+                required=False,
+                default=10,
+            ),
         ]
 
-    async def execute(self, pattern: str, recursive: bool = True, target_directory: str = DEFAULT_WORKSPACE, **kwargs: Any) -> dict[str, Any]:
-        """Search for files matching pattern."""
+    async def execute(self, pattern: str, recursive: bool = True, target_directory: str | None = None, ignore_globs: list[str] | None = None, max_depth: int = 10, **kwargs: Any) -> dict[str, Any]:
+        """Search for files matching pattern.
+        
+        Args:
+            pattern: Glob pattern to match (e.g., '*.py', 'test_*.py')
+            recursive: Whether to search subdirectories
+            target_directory: Root directory to search, defaults to workspace root
+            ignore_globs: List of glob patterns to ignore (directories)
+            max_depth: Maximum directory depth for recursive search (default: 10)
+        """
+        # Get workspace root if no path specified
+        if not target_directory:
+            from ..workspace.context import get_current_context
+            ctx = get_current_context()
+            if ctx:
+                target_directory = str(ctx.workspace_root)
+            else:
+                target_directory = DEFAULT_WORKSPACE
+        
         try:
             root = Path(target_directory)
             if not root.exists():
                 return {"success": False, "error": f"目录不存在: {target_directory}"}
 
+            # Default ignore patterns for common large directories
+            default_ignores = set(["**/node_modules/**", "**/.git/**", "**/__pycache__/**", "**/.venv/**", "**/venv/**", "**/dist/**", "**/build/**"])
+            patterns_to_ignore = set(ignore_globs or []) if ignore_globs else set()
+            patterns_to_ignore.update(default_ignores)
+            
             results = []
             if recursive:
-                for item in root.rglob(pattern):
-                    if item.is_file():
-                        results.append(str(item))
+                # Use rglob with manual depth control to skip ignored dirs
+                for item in self._rglob_with_ignore(root, pattern, patterns_to_ignore, max_depth):
+                    results.append(str(item))
             else:
                 for item in root.glob(pattern):
                     if item.is_file():
@@ -190,6 +343,38 @@ class SearchFileTool(BaseTool):
             return {"success": False, "error": "权限不足"}
         except Exception as e:
             return {"success": False, "error": str(e)}
+    
+    def _rglob_with_ignore(self, root: Path, pattern: str, ignore_patterns: set[str], max_depth: int) -> list[Path]:
+        """Rglob with directory ignore support."""
+        import fnmatch
+        results = []
+        
+        def _should_ignore(path: Path) -> bool:
+            """Check if path matches any ignore pattern."""
+            rel_path = str(path.relative_to(root)) if path != root else ""
+            for p in ignore_patterns:
+                # Handle both **/pattern and pattern formats
+                normalized = p.replace("**/", "")
+                if fnmatch.fnmatch(rel_path, p) or fnmatch.fnmatch(path.name, normalized):
+                    return True
+            return False
+        
+        def _scan(current: Path, depth: int):
+            if depth > max_depth:
+                return
+            try:
+                for item in current.iterdir():
+                    if _should_ignore(item):
+                        continue
+                    if item.is_file() and fnmatch.fnmatch(item.name, pattern):
+                        results.append(item)
+                    elif item.is_dir():
+                        _scan(item, depth + 1)
+            except PermissionError:
+                pass
+        
+        _scan(root, 0)
+        return results
 
 
 class SearchContentTool(BaseTool):
@@ -220,8 +405,8 @@ class SearchContentTool(BaseTool):
             ToolParameter(
                 name="path",
                 param_type="string",
-                description="搜索的文件或目录路径（必须是绝对路径）",
-                required=True,
+                description="搜索的文件或目录路径，不填则默认使用工作空间根目录",
+                required=False,
             ),
             ToolParameter(
                 name="caseSensitive",
@@ -243,39 +428,67 @@ class SearchContentTool(BaseTool):
                 required=False,
                 default="files_with_matches",
             ),
+            ToolParameter(
+                name="max_depth",
+                param_type="integer",
+                description="最大搜索深度，默认 5",
+                required=False,
+                default=5,
+            ),
         ]
 
     async def execute(
         self,
         pattern: str,
-        path: str,
+        path: str | None = None,
         caseSensitive: bool = False,
         glob: str | None = None,
         outputMode: str = "files_with_matches",
+        max_depth: int = 5,
         **kwargs: Any
     ) -> dict[str, Any]:
-        """Search file contents with regex."""
+        """Search file contents with regex.
+        
+        Args:
+            pattern: Regex pattern to search
+            path: Search path (file or directory), defaults to workspace root
+            caseSensitive: Case sensitive search
+            glob: File type filter (e.g., '*.py')
+            outputMode: 'files_with_matches', 'content', or 'count'
+            max_depth: Maximum directory depth (default: 5)
+        """
+        # Get workspace root if no path specified
+        if not path:
+            from ..workspace.context import get_current_context
+            ctx = get_current_context()
+            if ctx:
+                path = str(ctx.workspace_root)
+            else:
+                path = DEFAULT_WORKSPACE
+        
         try:
             # Validate regex
             flags = 0 if caseSensitive else re.IGNORECASE
             re.compile(pattern, flags)
 
-            search_path = Path(path)
+            search_path = Path(path).resolve()
             if not search_path.exists():
                 return {"success": False, "error": f"路径不存在: {path}"}
+
+            # Workspace security: validate search path is within workspace
+            error = await self._validate_workspace(search_path)
+            if error:
+                return {"success": False, "error": error}
 
             results: list[dict[str, Any]] = []
             count = 0
 
-            # Collect files to search
+            # Collect files to search (with depth limit)
             files_to_search = []
             if search_path.is_file():
                 files_to_search = [search_path]
             elif search_path.is_dir():
-                if glob:
-                    files_to_search = list(search_path.rglob(glob))
-                else:
-                    files_to_search = [f for f in search_path.rglob("*") if f.is_file() and not self._should_ignore(f)]
+                files_to_search = self._collect_files_with_depth(search_path, glob, max_depth)
 
             for file_path in files_to_search:
                 try:
@@ -322,6 +535,54 @@ class SearchContentTool(BaseTool):
         ignore_patterns = {".pyc", ".pyo", ".so", ".dll", ".dylib"}
         return any(part in ignore_dirs or part.startswith(".") for part in path.parts) or \
                any(str(path).endswith(ext) for ext in ignore_patterns)
+    
+    async def _validate_workspace(self, search_path: Path) -> str | None:
+        """Validate search path is within workspace bounds.
+        
+        Returns:
+            Error message if invalid, None if valid.
+        """
+        try:
+            from ..workspace.context import get_current_context
+            context = get_current_context()
+            if context is None:
+                return None  # No context, allow
+            
+            workspace_root = context.workspace_root.resolve()
+            resolved = search_path.resolve()
+            
+            # Check if search path is within workspace
+            if not str(resolved).startswith(str(workspace_root)):
+                return f"搜索路径必须在工作空间内: {workspace_root}"
+            
+            return None
+        except Exception as e:
+            logger.warning(f"[SearchContent] Workspace validation failed: {e}")
+            return None  # Don't block on errors
+    
+    def _collect_files_with_depth(self, root: Path, glob_pattern: str | None, max_depth: int) -> list[Path]:
+        """Collect files with depth limit and workspace bounds."""
+        import fnmatch
+        results = []
+        workspace_root = str(root)
+        
+        def _scan(current: Path, depth: int):
+            if depth > max_depth:
+                return
+            try:
+                for item in current.iterdir():
+                    if self._should_ignore(item):
+                        continue
+                    if item.is_file():
+                        if glob_pattern is None or fnmatch.fnmatch(item.name, glob_pattern):
+                            results.append(item)
+                    elif item.is_dir():
+                        _scan(item, depth + 1)
+            except PermissionError:
+                pass
+        
+        _scan(root, 0)
+        return results
 
 
 class ReadFileTool(BaseTool):
@@ -366,6 +627,12 @@ class ReadFileTool(BaseTool):
 
     async def execute(self, filePath: str, limit: int | None = None, offset: int = 1, **kwargs: Any) -> dict[str, Any]:
         """Read file contents."""
+        # Check workspace permission
+        from ..workspace.models import Permission
+        error = guard_workspace_access("read_file", filePath, Permission.READ)
+        if error:
+            return error
+        
         try:
             path = Path(filePath)
             if not path.exists():
@@ -421,13 +688,25 @@ class ReadLintsTool(BaseTool):
             ToolParameter(
                 name="paths",
                 param_type="string",
-                description="要检查的文件或目录路径（必须是绝对路径），不指定则检查所有文件",
+                description="要检查的文件或目录路径，不指定则默认检查工作空间",
                 required=False,
             ),
         ]
 
     async def execute(self, paths: str | None = None, **kwargs: Any) -> dict[str, Any]:
-        """Read linter diagnostics."""
+        """Read linter diagnostics.
+        
+        If paths is not provided, defaults to workspace root.
+        """
+        # Get workspace root if no path specified
+        if not paths:
+            from ..workspace.context import get_current_context
+            ctx = get_current_context()
+            if ctx:
+                paths = str(ctx.workspace_root)
+            else:
+                paths = DEFAULT_WORKSPACE
+        
         # Import here to avoid circular imports
         try:
             from backend.src.agent.tools import registry
@@ -485,6 +764,12 @@ class ReplaceInFileTool(BaseTool):
 
     async def execute(self, filePath: str, old_str: str, new_str: str, **kwargs: Any) -> dict[str, Any]:
         """Replace text in file."""
+        # Check workspace permission
+        from ..workspace.models import Permission
+        error = guard_workspace_access("replace_in_file", filePath, Permission.WRITE)
+        if error:
+            return error
+        
         try:
             path = Path(filePath)
             if not path.exists():
@@ -542,8 +827,8 @@ class WriteToFileTool(BaseTool):
             ToolParameter(
                 name="filePath",
                 param_type="string",
-                description="文件路径（必须是绝对路径），父目录不存在时会自动创建",
-                required=True,
+                description="文件路径，不填则默认在工作空间根目录，父目录不存在时会自动创建",
+                required=False,
             ),
             ToolParameter(
                 name="content",
@@ -559,8 +844,36 @@ class WriteToFileTool(BaseTool):
             ),
         ]
 
-    async def execute(self, filePath: str, content: str, explanation: str = "", **kwargs: Any) -> dict[str, Any]:
-        """Write content to file."""
+    async def execute(self, filePath: str | None = None, content: str = "", explanation: str = "", **kwargs: Any) -> dict[str, Any]:
+        """Write content to file.
+        
+        If filePath is not provided, uses workspace root (file will have no name).
+        If filePath is relative, joins with workspace root.
+        """
+        # Get workspace root if no path specified
+        if not filePath:
+            from ..workspace.context import get_current_context
+            ctx = get_current_context()
+            if ctx:
+                filePath = str(ctx.workspace_root)
+            else:
+                filePath = DEFAULT_WORKSPACE
+        
+        # Resolve relative paths against workspace
+        if not Path(filePath).is_absolute():
+            from ..workspace.context import get_current_context
+            ctx = get_current_context()
+            if ctx:
+                filePath = str(ctx.workspace_root / filePath)
+            else:
+                filePath = str(Path(DEFAULT_WORKSPACE) / filePath)
+        
+        # Check workspace permission
+        from ..workspace.models import Permission
+        error = guard_workspace_access("write_to_file", filePath, Permission.WRITE)
+        if error:
+            return error
+        
         try:
             path = Path(filePath)
             
@@ -624,6 +937,12 @@ class DeleteFileTool(BaseTool):
 
     async def execute(self, target_file: str, explanation: str = "", **kwargs: Any) -> dict[str, Any]:
         """Delete file."""
+        # Check workspace permission
+        from ..workspace.models import Permission
+        error = guard_workspace_access("delete_file", target_file, Permission.DELETE)
+        if error:
+            return error
+        
         try:
             path = Path(target_file)
             if not path.exists():

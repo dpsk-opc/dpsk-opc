@@ -195,6 +195,15 @@ class AgentConfig(BaseModel):
         ge=0,
         description="Maximum entries in experience pool"
     )
+    # Workspace configuration
+    workspace_root: str = Field(
+        default="/storage/ws",
+        description="Root directory for agent workspaces"
+    )
+    workspace_permissions: str = Field(
+        default="READ,WRITE,LIST",
+        description="Default agent permissions (comma-separated: READ,WRITE,LIST,DELETE,EXECUTE)"
+    )
 
 
 class Config(BaseModel):
@@ -363,6 +372,12 @@ def _apply_env_overrides(config: Config) -> Config:
         config.agent.agent_task_timeout_secs = int(agent_timeout)
     if max_instances := os.environ.get("MAX_INSTANCES_PER_AGENT"):
         config.agent.max_instances_per_agent = int(max_instances)
+    
+    # Workspace overrides
+    if workspace_root := os.environ.get("WORKSPACE_ROOT"):
+        config.agent.workspace_root = workspace_root
+    if workspace_perms := os.environ.get("AGENT_PERMISSIONS"):
+        config.agent.workspace_permissions = workspace_perms
     
     return config
 

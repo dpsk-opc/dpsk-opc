@@ -568,7 +568,8 @@ class LocalAgentSpawner(AgentSpawner):
             "model_config": agent_def.model_config,
             "skills": agent_def.skills,
             "capabilities": agent_def.capabilities,
-            "file_path": agent_def.file_path
+            "file_path": agent_def.file_path,
+            "workspace": agent_def.workspace or agent_def.agent_id,  # Include workspace for context
         }
         
         async def handle_task(task_name: str, task_data: dict[str, Any]) -> dict[str, Any]:

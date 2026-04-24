@@ -158,7 +158,6 @@ class DispatchTaskTool(BaseTool):
             }
 
         logger.info(f"[DISPATCH] Dispatching task to agent: {to_agent}")
-        logger.info(f"[DISPATCH] Task: {task[:100]}...")
 
         # Generate task ID for tracking
         task_id = str(uuid.uuid4())
@@ -254,7 +253,7 @@ class DispatchTaskTool(BaseTool):
             logger.info(f"[DISPATCH] Received response from {to_agent}, duration={dispatch_duration_ms}ms")
 
             # Extract result from response
-            result_data = response.result.get("data") if response.result else None
+            result_data = response.result.get("content") if response.result else None
             error = response.result.get("error") if response.result else None
 
             # Emit sub-task result event with humanized message
@@ -283,12 +282,15 @@ class DispatchTaskTool(BaseTool):
                 await _event_emitter.emit(AgentEventType.SUB_TASK_RESULT, event_data)
 
             if response.success:
+                # Ensure result is not None - if no data, use a completion indicator
+                task_result = result_data if result_data is not None else f"任务已在 {to_agent} 完成"
                 return {
                     "success": True,
                     "agent_id": to_agent,
                     "task": task,
-                    "result": result_data,
+                    "result": task_result,
                     "duration_ms": dispatch_duration_ms,
+                    "should_finish":True
                 }
             else:
                 return {
@@ -297,7 +299,7 @@ class DispatchTaskTool(BaseTool):
                     "task": task,
                     "error": error or "Task execution failed",
                     "result": result_data,
-                    "duration_ms": dispatch_duration_ms,
+                    "duration_ms": dispatch_duration_ms
                 }
 
         except asyncio.TimeoutError:
