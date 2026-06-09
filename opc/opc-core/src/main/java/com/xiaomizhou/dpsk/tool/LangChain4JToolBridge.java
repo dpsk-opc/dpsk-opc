@@ -1,0 +1,290 @@
+package com.xiaomizhou.dpsk.tool;
+
+import com.google.common.collect.Sets;
+import com.xiaomizhou.dpsk.tool.model.ToolCall;
+import com.xiaomizhou.dpsk.tool.model.ToolContext;
+import com.xiaomizhou.dpsk.tool.model.ToolExecutionResult;
+import com.xiaomizhou.dpsk.tool.model.ToolMetadata;
+import dev.langchain4j.agent.tool.ToolExecutionRequest;
+import dev.langchain4j.agent.tool.ToolSpecification;
+import dev.langchain4j.agent.tool.ToolSpecifications;
+import dev.langchain4j.service.tool.AiServiceTool;
+import dev.langchain4j.service.tool.ToolProvider;
+import dev.langchain4j.service.tool.ToolProviderRequest;
+import dev.langchain4j.service.tool.ToolProviderResult;
+import lombok.Builder;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.context.ApplicationContext;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+/**
+ * LangChain4j 工具桥接器 —— 将自定义工具体系与 LangChain4j 的 AiServices/AgenticServices 打通。
+ *
+ * <h3>设计目的</h3>
+ * <pre>
+ *   LC4j AiServices/AgenticServices
+ *          │
+ *          │  .toolProviders( new LangChain4jToolBridge(toolRegistry, interceptor, agentCode) )
+ *          ▼
+ *   LangChain4jToolBridge (implements ToolProvider)
+ *          │
+ *          │  provideTools()  → 从 ToolRegistry 读取 ToolMetadata → 转换为 ToolSpecification
+ *          │  execute()       → 委托给 ToolInvocationInterceptor（含权限检查/参数补全/审计）
+ *          ▼
+ *   ToolInvocationInterceptor → ToolExecutorRouter → LOCAL / MCP / SCRIPT
+ * </pre>
+ *
+ * <h3>使用示例</h3>
+ * <pre>{@code
+ *   // 在 AgenticServices 或 AiServices builder 中：
+ *   LangChain4jToolBridge bridge = LangChain4jToolBridge.builder()
+ *       .toolRegistry(toolRegistry)
+ *       .interceptor(toolInvocationInterceptor)
+ *       .agentCode("my-agent")
+ *       .build();
+ *
+ *   var agent = AgenticServices.agentBuilder(MyAgent.class)
+ *       .streamingChatModel(model)
+ *       .toolProviders(bridge)         // ← 替代 .tools(new DateTimeTools())
+ *       .maxSequentialToolsInvocations(10)
+ *       .build();
+ * }</pre>
+ *
+ * @author eason - vipzhsh@163.com
+ * @date 2026/6/1
+ */
+@Slf4j
+@Builder
+@RequiredArgsConstructor
+public class LangChain4JToolBridge implements ToolProvider {
+
+    /**
+     * 工具注册中心，提供所有已注册的工具元数据
+     */
+    private final ToolRegistry toolRegistry;
+
+    /**
+     * 工具调用拦截器，处理权限检查、参数补全、路由执行、审计
+     */
+    private final ToolInvocationInterceptor interceptor;
+
+
+    private final ApplicationContext applicationContext;
+
+    /**
+     * 当前 Agent 编码，用于按 Agent 过滤工具列表和标识调用来源
+     */
+    @Builder.Default
+    private final String agentCode = "";
+
+    /**
+     * 用户编码（可选，若未指定则从 ToolProviderRequest 中无法获取时使用此默认值）
+     */
+    @Builder.Default
+    private final String userCode = "";
+
+    /**
+     * 会话编码（可选，若未指定则从 ToolProviderRequest 中无法获取时使用此默认值）
+     */
+    @Builder.Default
+    private final String conversationCode = "";
+
+    // ==================== ToolProvider 接口实现 ====================
+
+    /**
+     * 向 LLM 提供当前 Agent 可用的工具列表。
+     * <p>
+     * 从 {@link ToolRegistry} 中过滤出该 Agent 可用（含公共工具）的工具，
+     * 并将 {@link ToolMetadata} 转换为 LangChain4j 的 {@link ToolSpecification}。
+     *
+     * @param request 工具提供请求（包含对话上下文、memoryId 等）
+     * @return 工具提供结果，包含 ToolSpecification 列表
+     */
+    @Override
+    public ToolProviderResult provideTools(ToolProviderRequest request) {
+        toolRegistry.ensureInitialized();
+
+        // 按 Agent 过滤：获取专属工具 + 公共工具
+        List<ToolMetadata> tools = toolRegistry.getToolsForAgent(agentCode);
+
+        if (tools.isEmpty()) {
+            log.debug("No tools available for agent '{}'", agentCode);
+            return ToolProviderResult.builder().build();
+        }
+
+        Set<String> cache = Sets.newHashSet();
+        ToolProviderResult.Builder builder = ToolProviderResult.builder();
+
+        for (ToolMetadata tool : tools) {
+
+
+            String sourceRef = tool.getSourceRef();
+            String beanName = sourceRef.split("\\.")[0];
+
+            if (cache.contains(beanName)) {
+                continue;
+            }
+
+            Object bean = applicationContext.getBean(beanName);
+            List<ToolSpecification> specs = ToolSpecifications.toolSpecificationsFrom(bean);
+
+            builder.addAll(specs.stream().map(spec -> {
+                return AiServiceTool.builder()
+                        .toolSpecification(spec)
+                        .toolExecutor(this::execute)
+                        .build();
+            }).collect(Collectors.toList()));
+
+            cache.add(beanName);
+        }
+
+        return builder.build();
+    }
+
+    @Override
+    public boolean isDynamic() {
+        return ToolProvider.super.isDynamic();
+    }
+
+    /**
+     * 执行工具调用 —— 由 LangChain4j 在 LLM 决定调用工具时触发。
+     * <p>
+     * 将 LC4j 的 {@link ToolExecutionRequest} 转换为内部的 {@link ToolCall}，
+     * 构建 {@link ToolContext}，然后委托给 {@link ToolInvocationInterceptor} 执行。
+     *
+     * @param request 工具执行请求（工具名、参数、id）
+     * @return 工具执行结果字符串
+     */
+    public String execute(ToolExecutionRequest request, Object memoryId) {
+        ToolCall toolCall = toToolCall(request);
+        ToolContext context = buildContext(request, memoryId);
+
+        log.info("LC4j tool bridge: executing tool='{}', agent='{}'",
+                request.name(), agentCode/*, memoryId*/);
+
+        ToolExecutionResult result = interceptor.execute(toolCall, context);
+
+        if (ToolExecutionResult.STATUS_PENDING.equals(result.getStatus())) {
+            log.warn("Tool '{}' returned PENDING status (requestId={}). " +
+                            "Current implementation does not support blocking for confirmation; " +
+                            "returning empty result to allow LLM to proceed.",
+                    request.name(), result.getPendingRequestId());
+            return "[Tool requires confirmation, requestId=" + result.getPendingRequestId() + "]";
+        }
+
+        if (ToolExecutionResult.STATUS_FAIL.equals(result.getStatus())) {
+            log.error("Tool '{}' execution failed: {}", request.name(), result.getErrorMessage());
+            return "Tool execution failed: " + result.getErrorMessage();
+        }
+
+        return result.getResult() != null ? result.getResult() : "";
+    }
+
+
+    /**
+     * 将 LC4j 的 {@link ToolExecutionRequest} 转换为内部的 {@link ToolCall}。
+     */
+    private ToolCall toToolCall(ToolExecutionRequest request) {
+        Map<String, Object> params = new HashMap<>();
+
+        // 尝试将 LC4j 的 arguments（通常是 JSON String）解析为 Map
+        String arguments = request.arguments();
+        if (arguments != null && !arguments.isBlank()) {
+            try {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> parsed = new com.fasterxml.jackson.databind.ObjectMapper()
+                        .readValue(arguments, Map.class);
+                params.putAll(parsed);
+            } catch (Exception e) {
+                log.warn("Failed to parse tool arguments JSON for '{}': {}. Using raw string.",
+                        request.name(), e.getMessage());
+                params.put("_rawArguments", arguments);
+            }
+        }
+
+        return ToolCall.builder()
+                .name(request.name())
+                .callId(request.id())
+                .parameters(params)
+                .build();
+    }
+
+    /**
+     * 构建工具执行上下文。
+     */
+    private ToolContext buildContext(ToolExecutionRequest request, Object memoryId) {
+        ToolContext.ToolContextBuilder builder = ToolContext.builder()
+                .agentCode(agentCode)
+                .userCode(userCode)
+                .conversationCode(conversationCode)
+                .traceId(generateTraceId(request));
+
+        // 如果 memoryId 可转为字符串，尝试解析会话编码
+        if (memoryId != null && StringUtils.isBlank(conversationCode)) {
+            String memIdStr = memoryId.toString();
+            builder.conversationCode(memIdStr);
+        }
+
+        return builder.build();
+    }
+
+    /**
+     * 生成 TraceId，优先使用 ToolExecutionRequest.id。
+     */
+    private String generateTraceId(ToolExecutionRequest request) {
+        if (request.id() != null && !request.id().isBlank()) {
+            return "tool_" + request.id().replace("-", "").substring(0, Math.min(16, request.id().length()));
+        }
+        return "tool_" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 16);
+    }
+
+    // ==================== 便捷工厂方法 ====================
+
+    /**
+     * 为指定 Agent 创建桥接器（快捷方法）。
+     *
+     * @param toolRegistry 工具注册中心
+     * @param interceptor  调用拦截器
+     * @param agentCode    Agent 编码
+     * @return 桥接器实例
+     */
+    public static LangChain4JToolBridge forAgent(ToolRegistry toolRegistry,
+                                                 ToolInvocationInterceptor interceptor,
+                                                 ApplicationContext applicationContext,
+                                                 String agentCode,
+                                                 String userCode,
+                                                 String conversationCode) {
+        return LangChain4JToolBridge.builder()
+                .toolRegistry(toolRegistry)
+                .interceptor(interceptor)
+                .applicationContext(applicationContext)
+                .agentCode(agentCode)
+                .userCode(userCode)
+                .conversationCode(conversationCode)
+                .build();
+    }
+
+    /**
+     * 创建公共工具桥接器（不限定 Agent，所有工具均可使用）。
+     *
+     * @param toolRegistry 工具注册中心
+     * @param interceptor  调用拦截器
+     * @return 桥接器实例
+     */
+    public static LangChain4JToolBridge forAll(ToolRegistry toolRegistry,
+                                               ToolInvocationInterceptor interceptor,ApplicationContext applicationContext) {
+        return LangChain4JToolBridge.builder()
+                .toolRegistry(toolRegistry)
+                .interceptor(interceptor)
+                .applicationContext(applicationContext)
+                .build();
+    }
+
+}
