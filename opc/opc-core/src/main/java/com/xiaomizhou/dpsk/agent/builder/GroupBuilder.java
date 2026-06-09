@@ -8,7 +8,6 @@ import com.xiaomizhou.dpsk.agent.event.AgentEvent;
 import com.xiaomizhou.dpsk.agent.event.AgentEventType;
 import com.xiaomizhou.dpsk.agent.factory.AgentComponentFactory;
 import dev.langchain4j.agentic.AgenticServices;
-import dev.langchain4j.agentic.UntypedAgent;
 import dev.langchain4j.agentic.observability.AgentListener;
 import dev.langchain4j.agentic.observability.AgentResponse;
 import dev.langchain4j.agentic.supervisor.SupervisorAgent;
@@ -19,8 +18,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.*;
-import java.util.function.BiConsumer;
-import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
