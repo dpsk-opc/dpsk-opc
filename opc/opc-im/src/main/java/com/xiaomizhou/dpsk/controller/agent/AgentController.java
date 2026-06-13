@@ -10,6 +10,7 @@ import com.xiaomizhou.dpsk.core.model.Results;
 import com.xiaomizhou.dpsk.core.model.request.Request;
 import com.xiaomizhou.dpsk.core.model.response.PageResponse;
 import com.xiaomizhou.dpsk.core.model.response.Response;
+import com.xiaomizhou.dpsk.utils.AuthContext;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -34,12 +35,14 @@ public class AgentController {
 
 
     /**
-     * 分页查询 Agent（基于数据库）
+     * 分页查询 Agent（仅查询当前登录用户的好友列表）
      */
     @PostMapping(value = "page")
     public Response<PageResponse<AgentDto>> page(@RequestBody AgentQueryParam param) {
 
-        IPage<AgentDto> page = agentComponent.queryPage(param);
+        // 获取当前登录用户，只能查询自己的好友
+        String ownerCode = AuthContext.getAgentCode();
+        IPage<AgentDto> page = agentComponent.queryPage(param, ownerCode);
 
         return Results.page(
                 page.getRecords(),
@@ -61,7 +64,7 @@ public class AgentController {
      */
     @PostMapping(value = "create")
     public Response<AgentDto> create(@Valid @RequestBody AgentCreateCmd cmd) {
-        return Results.ok(agentComponent.create(cmd));
+        return Results.ok(agentComponent.create(AuthContext.getAgentCode(), cmd));
     }
 
     /**

@@ -17,6 +17,8 @@ public interface MessageRepository {
 
     /**
      * 获取指定会话中某个 Agent 的最近 N 条消息（用于 L0 工作记忆）。
+     * <p>
+     * 过滤掉 status = 'IGNORE' 的消息，不计入上下文。
      *
      * @param conversationCode 会话编码
      * @param ownerCode        Agent 编码
@@ -30,6 +32,7 @@ public interface MessageRepository {
      * <p>
      * 群聊消息按 receiver_code = groupCode 且 conversation_type = 'GROUP' 查询。
      * 发送者为 agentCode 的消息标记为 AiMessage，其余标记为 UserMessage。
+     * 过滤掉 status = 'IGNORE' 的消息，不计入上下文。
      *
      * @param groupCode 群组编码
      * @param agentCode Agent 编码（用于区分自己发出的消息）
@@ -48,6 +51,7 @@ public interface MessageRepository {
 
     /**
      * 获取某条消息的前后上下文（用于 @引用）。
+     * 过滤掉 status = 'IGNORE' 的消息，不计入上下文。
      *
      * @param messageCode 目标消息编码
      * @param contextSize 前后各取条数

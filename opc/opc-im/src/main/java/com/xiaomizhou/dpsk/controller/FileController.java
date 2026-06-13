@@ -1,8 +1,13 @@
 package com.xiaomizhou.dpsk.controller;
 
-import com.xiaomizhou.dpsk.utils.SequenceUtils;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.xiaomizhou.dpsk.core.model.Results;
 import com.xiaomizhou.dpsk.core.model.response.Response;
+import com.xiaomizhou.dpsk.db.FileService;
+import com.xiaomizhou.dpsk.db.dto.FileRecordDto;
+import com.xiaomizhou.dpsk.db.model.FileRecord;
+import com.xiaomizhou.dpsk.utils.AuthContext;
+import com.xiaomizhou.dpsk.utils.SequenceUtils;
 import jakarta.annotation.PostConstruct;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -43,8 +48,10 @@ public class FileController {
     @Value("${spring.web.resources.static-locations}")
     private String uploadPath;
 
-    @Value("${com.xiaomizhou.dpsk.file.host:http://127.0.0.1:8080/}")
+    @Value("${com.xiaomizhou.dpsk.file.host:http://0.0.0.0:8080/}")
     private String host;
+
+    private final FileService fileService;
 
     private File uploadDir;
 
@@ -63,116 +70,29 @@ public class FileController {
      * @return 包含下载链接的响应
      */
     @PostMapping(value = "upload")
-    public Response<Map<String, String>> upload(@RequestParam("file") MultipartFile file) {
+    public Response<Map<String, Object>> upload(@RequestParam("file") MultipartFile file) {
         if (file == null || file.isEmpty()) {
             return Results.fail(400, "上传文件不能为空");
         }
 
-        try {
-            // 获取原始文件名
-            String originalFilename = StringUtils.cleanPath(file.getOriginalFilename());
-
-            // 检查文件名是否合法
-            if (originalFilename.contains("..")) {
-                return Results.fail(400, "文件名不合法");
-            }
-
-            // 生成唯一文件名：时间戳_UUID_原文件名
-            String timestamp = new SimpleDateFormat("yyyyMMddHHmmss").format(new Date());
-            String uuid = SequenceUtils.generator().next();
-            String extension = getFileExtension(originalFilename);
-            String newFilename = timestamp + "_" + uuid + extension;
-
-            // 按日期创建子目录
-            String datePath = new SimpleDateFormat("yyyy/MM/dd").format(new Date());
-            File dateDir = new File(uploadDir, datePath);
-            if (!dateDir.exists()) {
-                dateDir.mkdirs();
-            }
-            // 保存文件
-            File targetFile = new File(dateDir, newFilename);
-            file.transferTo(targetFile);
-
-            // 构建下载链接（相对于静态资源路径 /uploads/）
-            String downloadUrl = host + "uploads/" + datePath + "/" + newFilename;
-
-            // 返回结果
-            Map<String, String> result = new HashMap<>();
-            result.put("fileName", newFilename);
-            result.put("originalName", originalFilename);
-            result.put("downloadUrl", downloadUrl);
-            result.put("fileSize", String.valueOf(file.getSize()));
-            result.put("contentType", file.getContentType());
-
-            log.info("文件上传成功: {}, 大小: {} bytes", originalFilename, file.getSize());
-
-            return Results.ok(result);
-        } catch (IOException e) {
-            log.error("文件上传失败", e);
-            return Results.fail(500, "文件上传失败: " + e.getMessage());
-        }
-    }
-
-    /**
-     * 批量文件上传接口
-     *
-     * @param files 上传的文件数组
-     * @return 包含下载链接的响应
-     */
-    @PostMapping(value = "upload/batch")
-    public Response<Map<String, Object>> uploadBatch(@RequestParam("files") MultipartFile[] files) {
-        if (files == null || files.length == 0) {
-            return Results.fail(400, "上传文件不能为空");
+        FileRecord record = fileService.save(file, AuthContext.getAgentCode(), "OTHER", "");
+        if (record == null) {
+            return Results.fail(500, "文件上传失败");
         }
 
         Map<String, Object> result = new HashMap<>();
-        Map<String, String> successFiles = new HashMap<>();
-        Map<String, String> failedFiles = new HashMap<>();
+        result.put("code", record.getCode());
+        result.put("originalName", record.getOriginalName());
+        result.put("storedName", record.getStoredName());
+        result.put("fileSize", record.getFileSize());
+        result.put("contentType", record.getContentType());
+        result.put("accessUrl", fileService.getFileUrlByCode(record.getCode()));
+        result.put("downloadUrl", host + "uploads/" + record.getFilePath());
 
-        for (MultipartFile file : files) {
-            if (file == null || file.isEmpty()) {
-                continue;
-            }
-
-            String originalFilename = StringUtils.cleanPath(file.getOriginalFilename());
-
-            try {
-                if (originalFilename.contains("..")) {
-                    failedFiles.put(originalFilename, "文件名不合法");
-                    continue;
-                }
-
-                String timestamp = new SimpleDateFormat("yyyyMMddHHmmss").format(new Date());
-                String uuid = SequenceUtils.generator().next();
-                String extension = getFileExtension(originalFilename);
-                String newFilename = timestamp + "_" + uuid + extension;
-
-                String datePath = new SimpleDateFormat("yyyy/MM/dd").format(new Date());
-                File dateDir = new File(uploadDir, datePath);
-                if (!dateDir.exists()) {
-                    dateDir.mkdirs();
-                }
-
-                Path targetPath = Paths.get(dateDir.getAbsolutePath(), newFilename);
-                Files.copy(file.getInputStream(), targetPath, StandardCopyOption.REPLACE_EXISTING);
-
-                String downloadUrl = host + "uploads/" + datePath + "/" + newFilename;
-                successFiles.put(originalFilename, downloadUrl);
-
-                log.info("文件上传成功: {}, 大小: {} bytes", originalFilename, file.getSize());
-            } catch (IOException e) {
-                log.error("文件上传失败: {}", originalFilename, e);
-                failedFiles.put(originalFilename, e.getMessage());
-            }
-        }
-
-        result.put("successFiles", successFiles);
-        result.put("failedFiles", failedFiles);
-        result.put("successCount", successFiles.size());
-        result.put("failedCount", failedFiles.size());
-
+        log.info("文件上传成功: code={}, originalName={}, size={} bytes", record.getCode(), record.getOriginalName(), record.getFileSize());
         return Results.ok(result);
     }
+
 
     /**
      * 文件下载/访问接口
@@ -215,16 +135,125 @@ public class FileController {
     }
 
     /**
-     * 获取文件扩展名
+     * 文件保存接口（带数据库记录）
+     * 将文件写入磁盘，并在数据库中写入一条文件记录
+     *
+     * @param file         上传的文件
+     * @return 文件记录信息（含 code、访问链接等）
      */
-    private String getFileExtension(String filename) {
-        if (filename == null || filename.isEmpty()) {
-            return "";
+    @PostMapping(value = "save")
+    public Response<Map<String, Object>> save(@RequestParam("file") MultipartFile file) {
+        if (file == null || file.isEmpty()) {
+            return Results.fail(400, "上传文件不能为空");
         }
-        int dotIndex = filename.lastIndexOf('.');
-        if (dotIndex < 0) {
-            return "";
+
+        FileRecord record = fileService.save(file, AuthContext.getAgentCode(), "", "");
+        if (record == null) {
+            return Results.fail(500, "文件保存失败");
         }
-        return filename.substring(dotIndex);
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("code", record.getCode());
+        result.put("originalName", record.getOriginalName());
+        result.put("storedName", record.getStoredName());
+        result.put("fileSize", record.getFileSize());
+        result.put("contentType", record.getContentType());
+        result.put("accessUrl", fileService.getFileUrlByCode(record.getCode()));
+        result.put("downloadUrl", host + "uploads/" + record.getFilePath());
+
+        return Results.ok(result);
+    }
+
+    /**
+     * 根据文件编码获取文件信息
+     * 传入 code，返回文件的访问链接和元数据
+     *
+     * @param code 文件编码
+     * @return 文件信息（含访问链接）
+     */
+    @GetMapping(value = "info/{code}")
+    public Response<Map<String, Object>> info(@PathVariable String code) {
+        FileRecord record = fileService.getByCode(code);
+        if (record == null) {
+            return Results.fail(404, "文件不存在");
+        }
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("code", record.getCode());
+        result.put("originalName", record.getOriginalName());
+        result.put("storedName", record.getStoredName());
+        result.put("fileSize", record.getFileSize());
+        result.put("contentType", record.getContentType());
+        result.put("fileExtension", record.getFileExtension());
+        result.put("accessUrl", fileService.getFileUrlByCode(code));
+        result.put("downloadUrl", host + "uploads/" + record.getFilePath());
+        result.put("createTime", record.getCreateTime());
+
+        return Results.ok(result);
+    }
+
+    /**
+     * 根据文件编码直接访问/下载文件
+     * 传入 code，后端返回文件流
+     *
+     * @param code     文件编码
+     * @param request  HTTP请求
+     * @param response HTTP响应
+     * @return 文件资源
+     */
+    @GetMapping(value = "access/{code}")
+    public ResponseEntity<Resource> access(@PathVariable String code,
+                                           HttpServletRequest request,
+                                           HttpServletResponse response) {
+        FileRecord record = fileService.getByCode(code);
+        if (record == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        File file = fileService.getDiskFileByCode(code);
+        if (file == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        try {
+            Resource resource = new FileSystemResource(file);
+            String contentType = record.getContentType();
+            if (StringUtils.isEmpty(contentType)) {
+                contentType = Files.probeContentType(file.toPath());
+            }
+            if (contentType == null) {
+                contentType = "application/octet-stream";
+            }
+
+            return ResponseEntity.ok()
+                    .contentType(MediaType.parseMediaType(contentType))
+                    .header(HttpHeaders.CONTENT_DISPOSITION,
+                            "inline; filename=\"" + record.getOriginalName() + "\"")
+                    .body(resource);
+        } catch (IOException e) {
+            log.error("文件访问失败: code={}", code, e);
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    /**
+     * 根据会话编码分页查询该会话下所有分享过的文件
+     * JOIN 逻辑: t_file_record.ref_type = 1 AND t_file_record.ref_code = t_chat_message.code
+     *
+     * @param conversationCode 会话编码
+     * @param pageNo           页码（默认1）
+     * @param pageSize         每页大小（默认10）
+     * @return 分页的文件记录
+     */
+    @GetMapping(value = "list-by-conversation")
+    public Response<?> listByConversation(@RequestParam("conversationCode") String conversationCode,
+                                          @RequestParam(value = "pageNo", defaultValue = "1") int pageNo,
+                                          @RequestParam(value = "pageSize", defaultValue = "10") int pageSize) {
+        if (conversationCode == null || conversationCode.isBlank()) {
+            return Results.fail(400, "会话编码不能为空");
+        }
+
+        Page<FileRecordDto> page = fileService.pageFilesByConversationCode(conversationCode, pageNo, pageSize);
+        return Results.page(page.getRecords(), pageNo, pageSize, page.getTotal());
     }
 }

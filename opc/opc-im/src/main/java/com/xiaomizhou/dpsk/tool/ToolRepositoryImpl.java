@@ -1,15 +1,21 @@
 package com.xiaomizhou.dpsk.tool;
 
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.xiaomizhou.dpsk.db.AgentToolComponent;
 import com.xiaomizhou.dpsk.db.dao.ToolDao;
+import com.xiaomizhou.dpsk.db.dto.AgentToolRefVO;
 import com.xiaomizhou.dpsk.db.model.ToolDO;
 import com.xiaomizhou.dpsk.tool.model.ToolMetadata;
 import com.xiaomizhou.dpsk.tool.repository.ToolRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.collections.MapUtils;
 import org.springframework.stereotype.Component;
 
 import java.util.Date;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
@@ -25,6 +31,8 @@ import java.util.stream.Collectors;
 public class ToolRepositoryImpl implements ToolRepository {
 
     private final ToolDao toolDao;
+
+    private final AgentToolComponent agentToolComponent;
 
     @Override
     public List<ToolMetadata> findAllEnabled() {
@@ -61,10 +69,20 @@ public class ToolRepositoryImpl implements ToolRepository {
 
     @Override
     public List<ToolMetadata> findByOwnerAgent(String ownerAgentCode) {
-//        return toolDao.findByOwnerAgent(ownerAgentCode).stream()
-//                .map(this::toCoreModel)
-//                .collect(Collectors.toList());
-        return List.of();
+        Map<String, List<AgentToolRefVO>> tools = agentToolComponent.queryByAgentCodes(List.of(ownerAgentCode));
+
+        if(MapUtils.isEmpty(tools) || CollectionUtils.isEmpty(tools.get(ownerAgentCode))){
+            return List.of();
+        }
+
+        List<AgentToolRefVO> refs = tools.get(ownerAgentCode);
+
+        var toolCodes = refs.stream().map(AgentToolRefVO::getToolCode).collect(Collectors.toSet());
+
+        if (CollectionUtils.isEmpty(toolCodes)) {
+            return List.of();
+        }
+        return toolDao.lambdaQuery().in(ToolDO::getCode, toolCodes).list().stream().map(this::toCoreModel).collect(Collectors.toList());
     }
 
     @Override

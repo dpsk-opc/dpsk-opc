@@ -25,5 +25,10 @@ public enum AgentEventType {
     DONE,
 
     /** 执行异常 */
-    ERROR
+    ERROR,
+
+    /**
+     * 消息已读
+     */
+    MSG_READ
 }

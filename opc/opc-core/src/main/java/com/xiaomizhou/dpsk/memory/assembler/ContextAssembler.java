@@ -7,10 +7,8 @@ import com.xiaomizhou.dpsk.memory.manager.SummaryManager;
 import com.xiaomizhou.dpsk.memory.model.LongTermFact;
 import com.xiaomizhou.dpsk.memory.model.MemoryFragment;
 import com.xiaomizhou.dpsk.memory.repository.MessageRepository;
-import dev.langchain4j.data.message.AiMessage;
-import dev.langchain4j.data.message.ChatMessage;
-import dev.langchain4j.data.message.SystemMessage;
-import dev.langchain4j.data.message.UserMessage;
+import com.xiaomizhou.dpsk.utils.MemoryUtils;
+import dev.langchain4j.data.message.*;
 
 import java.util.List;
 import java.util.Objects;
@@ -183,7 +181,7 @@ public class ContextAssembler {
         if (message instanceof AiMessage) {
             return "AI: " + ((AiMessage) message).text();
         } else if (message instanceof UserMessage) {
-            return "用户: " + ((UserMessage) message).singleText();
+           return MemoryUtils.toSingleContent((UserMessage) message);
         } else if (message instanceof SystemMessage) {
             return "[System]: " + ((SystemMessage) message).text();
         }

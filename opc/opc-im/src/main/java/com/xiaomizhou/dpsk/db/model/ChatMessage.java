@@ -51,7 +51,14 @@ public class ChatMessage extends BaseModel {
     private String taskId;
 
     @TableField("parent_id")
-    private Long parentId;             // 引用的消息ID，0表示无引用
+    private Long parentId;      // 引用的消息ID，0表示无引用
+
+
+    /**
+     * 会话编码
+     */
+    @TableField("conversation_code")
+    private String conversationCode;
 
     /**
      * @提及的Agent ID列表，JSON数组字符串，如 "[101,102,103]"

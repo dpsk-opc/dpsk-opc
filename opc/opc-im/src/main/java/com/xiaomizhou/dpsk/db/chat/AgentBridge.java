@@ -2,7 +2,9 @@ package com.xiaomizhou.dpsk.db.chat;
 
 import com.xiaomizhou.dpsk.agent.*;
 import com.xiaomizhou.dpsk.agent.data.AgentDefProvider;
+import com.xiaomizhou.dpsk.agent.event.AgentEvent;
 import com.xiaomizhou.dpsk.constant.ConversationType;
+import com.xiaomizhou.dpsk.constant.MessageStatus;
 import com.xiaomizhou.dpsk.core.utils.WsUtils;
 import com.xiaomizhou.dpsk.core.ws.SenderInfo;
 import com.xiaomizhou.dpsk.core.ws.WsMessage;
@@ -135,6 +137,7 @@ public class AgentBridge {
         callback.setStreamCode(streamCode);
         callback.setSenderInfo(senderInfo);
 
+        callback.onEvent(AgentEvent.msgRead(agent.getCode(), msg.getCode()));
 
         PipelineResult result = orchestrator.execute(spec, callback);
 
@@ -189,6 +192,8 @@ public class AgentBridge {
                 chatMessageComponent, tokenUsageDao, agentDefProvider);
         callback.setStreamCode(streamCode);
         callback.setSenderInfo(new SenderInfo(userId, userId, ""));
+
+        callback.onEvent(AgentEvent.msgRead(userId, msg.getCode()));
 
         PipelineResult result = orchestrator.execute(spec, callback);
         log.info("Group chat completed: group={}, agentCount={}, success={}",

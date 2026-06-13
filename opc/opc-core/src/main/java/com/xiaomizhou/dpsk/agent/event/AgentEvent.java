@@ -51,4 +51,8 @@ public record AgentEvent(
     public static AgentEvent error(String agentCode, String message) {
         return new AgentEvent(AgentEventType.ERROR, agentCode, message, null, null, null, Collections.emptyMap());
     }
+
+    public static AgentEvent msgRead(String agentCode, String messageCode) {
+        return new AgentEvent(AgentEventType.MSG_READ, agentCode, messageCode, null, null, null, null);
+    }
 }

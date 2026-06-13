@@ -1,7 +1,10 @@
 package com.xiaomizhou.dpsk.db;
 
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.xiaomizhou.dpsk.constant.ConversationType;
+import com.xiaomizhou.dpsk.constant.FileRefType;
+import com.xiaomizhou.dpsk.constant.MessageStatus;
 import com.xiaomizhou.dpsk.utils.JsonUtils;
 import com.xiaomizhou.dpsk.db.dao.*;
 import com.xiaomizhou.dpsk.db.dto.ChatMsgDto;
@@ -12,13 +15,13 @@ import com.xiaomizhou.dpsk.utils.SequenceUtils;
 import dev.langchain4j.model.output.TokenUsage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.springframework.stereotype.Component;
 
-import java.util.Date;
-import java.util.Objects;
-import java.util.Optional;
+import java.util.*;
+import java.util.stream.Collectors;
 
 import static com.xiaomizhou.dpsk.utils.SequenceUtils.UUIDSequenceGenerator.CHAT_MESSAGE_PREFIX;
 import static com.xiaomizhou.dpsk.utils.SequenceUtils.UUIDSequenceGenerator.CONVERSATION_PREFIX;
@@ -33,10 +36,7 @@ import static com.xiaomizhou.dpsk.utils.SequenceUtils.UUIDSequenceGenerator.CONV
 @Component
 public class ChatMessageComponent {
 
-
-    private final AgentComponent agentComponent;
-
-    private final ChatGroupDao chatGroupDao;
+    private final FileService fileService;
 
     private final ConversationDao conversationDao;
 
@@ -85,6 +85,7 @@ public class ChatMessageComponent {
         return chatMessageDao.getOne(Wrappers.<ChatMessage>lambdaQuery().eq(ChatMessage::getCode, code));
     }
 
+
     /**
      * 新建聊天消息
      *
@@ -115,7 +116,7 @@ public class ChatMessageComponent {
         msg.setCode(msgCode);
         msg.setCreateTime(new Date());
         msg.setUpdateTime(new Date());
-        msg.setStatus("SENT");
+        msg.setStatus(MessageStatus.SENT);
         msg.setContentType(0);
 
         if (StringUtils.isNotBlank(dto.getParentMsgCode())) {
@@ -149,6 +150,16 @@ public class ChatMessageComponent {
 
             return model.getCode();
         });
+
+
+        // 更新消息编码
+        chatMessageDao.update(null, Wrappers.<ChatMessage>lambdaUpdate().set(ChatMessage::getConversationCode, conversationCode).eq(ChatMessage::getCode, msg.getCode()));
+
+        // 更新消息编码
+        List<String> fileCodes = dto.getFileCodes();
+        if (CollectionUtils.isNotEmpty(fileCodes)) {
+            fileService.updateRefCode(msgCode, FileRefType.CHAT_MESSAGE, fileCodes);
+        }
 
         if (Objects.isNull(token)) {
             return msgCode;
@@ -202,7 +213,7 @@ public class ChatMessageComponent {
         msg.setCode(msgCode);
         msg.setCreateTime(new Date());
         msg.setUpdateTime(new Date());
-        msg.setStatus("SENT");
+        msg.setStatus(MessageStatus.SENT);
         msg.setContentType(0);
 
         if (StringUtils.isNotBlank(dto.getParentMsgCode())) {
@@ -237,6 +248,16 @@ public class ChatMessageComponent {
             return model.getCode();
         });
 
+        // 更新消息编码
+        chatMessageDao.update(null, Wrappers.<ChatMessage>lambdaUpdate().set(ChatMessage::getConversationCode, conversationCode).eq(ChatMessage::getCode, msg.getCode()));
+
+
+        // 更新消息编码
+        List<String> fileCodes = dto.getFileCodes();
+        if (CollectionUtils.isNotEmpty(fileCodes)) {
+            fileService.updateRefCode(msgCode, FileRefType.CHAT_MESSAGE, fileCodes);
+        }
+
         if(Objects.isNull(token)) {
             return msgCode;
         }
@@ -257,5 +278,69 @@ public class ChatMessageComponent {
         tokenUsageDao.save(usage);
 
         return msgCode;
+    }
+
+    /**
+     * 将指定会话中所有消息标记为 IGNORE 状态，使其不再计入上下文。
+     *
+     * @param conversationCode 会话编码
+     * @param msgCodes
+     * @return 是否更新成功
+     */
+    public boolean ignore(String conversationCode, List<String> msgCodes) {
+        if (StringUtils.isAnyBlank(conversationCode) || CollectionUtils.isEmpty(msgCodes)) {
+            return false;
+        }
+
+        Conversation conversation = conversationDao.getOneByCode(conversationCode);
+        if (conversation == null) {
+            return false;
+        }
+
+
+        LambdaUpdateWrapper<ChatMessage> wrapper = Wrappers.<ChatMessage>lambdaUpdate()
+                .set(ChatMessage::getStatus, MessageStatus.IGNORED)
+                .set(ChatMessage::getUpdateTime, new Date())
+                .in(ChatMessage::getCode, msgCodes);
+
+        return chatMessageDao.update(wrapper);
+    }
+
+    /**
+     * 统计指定用户作为接收方、状态为 SENT 的消息数量（未读消息数），按 conversation_code 分组。
+     *
+     * @param agentCode 登录用户编码
+     * @return 按会话编码分组的未读消息数
+     */
+    public Map<String, Long> countSentMessagesByConversation(String agentCode) {
+        if (StringUtils.isBlank(agentCode)) {
+            return Collections.emptyMap();
+        }
+        List<ChatMessage> messages = chatMessageDao.list(Wrappers.<ChatMessage>lambdaQuery()
+                .select(ChatMessage::getConversationCode)
+                .eq(ChatMessage::getReceiverCode, agentCode)
+                .eq(ChatMessage::getStatus, MessageStatus.SENT));
+        return messages.stream()
+                .filter(m -> StringUtils.isNotBlank(m.getConversationCode()))
+                .collect(Collectors.groupingBy(ChatMessage::getConversationCode, Collectors.counting()));
+    }
+
+    /**
+     * 将消息状态更新为 DELIVERED（已送达）。
+     *
+     * @param msgCodes 消息编码
+     * @return 是否更新成功
+     */
+    public boolean delivered(List<String> msgCodes) {
+        if (CollectionUtils.isEmpty(msgCodes)) {
+            return false;
+        }
+
+        LambdaUpdateWrapper<ChatMessage> wrapper = Wrappers.<ChatMessage>lambdaUpdate()
+                .set(ChatMessage::getStatus, MessageStatus.DELIVERED)
+                .set(ChatMessage::getUpdateTime, new Date())
+                .in(ChatMessage::getCode, msgCodes);
+
+        return chatMessageDao.update(wrapper);
     }
 }

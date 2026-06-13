@@ -8,6 +8,7 @@ import com.xiaomizhou.dpsk.db.chat.ChatService;
 import com.xiaomizhou.dpsk.db.dao.ConversationDao;
 import com.xiaomizhou.dpsk.db.dto.ChatMsgDto;
 import com.xiaomizhou.dpsk.db.dto.ConversationDto;
+import com.xiaomizhou.dpsk.db.dto.UnreadCountDto;
 import com.xiaomizhou.dpsk.core.model.Results;
 import com.xiaomizhou.dpsk.core.model.request.Request;
 import com.xiaomizhou.dpsk.core.model.response.PageResponse;
@@ -16,6 +17,7 @@ import com.xiaomizhou.dpsk.core.exceptions.BusinessException;
 import com.xiaomizhou.dpsk.utils.AuthContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -23,7 +25,9 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Executors;
+import java.util.stream.Collectors;
 
 /**
  * @author eason - vipzhsh@163.com
@@ -50,7 +54,10 @@ public class ConversationController {
             param = new ConversationHttp();
         }
 
-        ImmutablePair<Long, List<ConversationDto>> conversations = conversationDao.page(request.pageNo(), request.pageSize(), param.getType(), param.getName());
+        // 获取当前登录用户的 owner_code，只查询自己的会话列表
+        String ownerCode = AuthContext.getAgentCode();
+
+        ImmutablePair<Long, List<ConversationDto>> conversations = conversationDao.page(request.pageNo(), request.pageSize(), param.getType(), param.getName(), ownerCode);
         return Results.page(conversations.right, request.pageNo(), request.pageSize(), conversations.left);
     }
 
@@ -68,6 +75,41 @@ public class ConversationController {
     public Response<Boolean> setTop(@RequestBody Request<ConversationHttp> request) {
         ConversationHttp param = request.getParam() != null ? request.getParam() : new ConversationHttp();
         return Results.ok(conversationDao.setTop(param.getConversationCode(), param.getTop()));
+    }
+
+    @PostMapping(value = "chat/ignore")
+    public Response<Boolean> ignoreChat(@RequestBody Request<ConversationHttp> request) {
+        ConversationHttp param = request.getParam();
+//        if (param == null || StringUtils.isBlank(param.getConversationCode())) {
+//            return Results.fail("会话编码不能为空");
+//        }
+
+        boolean result = chatMessageComponent.ignore(param.getConversationCode(), param.getIgnoreMsgCodes());
+        return Results.ok(result);
+    }
+
+    @PostMapping(value = "chat/read")
+    public Response<Boolean> delivered(@RequestBody Request<ConversationHttp> request) {
+        ConversationHttp param = request.getParam();
+//        if (param == null || StringUtils.isBlank(param.getConversationCode())) {
+//            return Results.fail("会话编码不能为空");
+//        }
+
+        boolean result = chatMessageComponent.delivered(param.getDeliveredMsgCodes());
+        return Results.ok(result);
+    }
+
+    /**
+     * 获取当前登录用户的未读消息数量（状态为 SENT 的消息），按 conversation_code 分组
+     */
+    @PostMapping(value = "chat/unreadCount")
+    public Response<List<UnreadCountDto>> unreadCount() {
+        String agentCode = AuthContext.getAgentCode();
+        Map<String, Long> countMap = chatMessageComponent.countSentMessagesByConversation(agentCode);
+        List<UnreadCountDto> list = countMap.entrySet().stream()
+                .map(e -> new UnreadCountDto(e.getKey(), e.getValue()))
+                .collect(Collectors.toList());
+        return Results.ok(list);
     }
 
     /**

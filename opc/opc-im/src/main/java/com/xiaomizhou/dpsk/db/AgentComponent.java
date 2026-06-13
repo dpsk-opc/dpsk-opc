@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.xiaomizhou.dpsk.db.dao.AgentAuthTokenDao;
 import com.xiaomizhou.dpsk.db.dao.AgentDao;
 import com.xiaomizhou.dpsk.db.dao.AgentToolRefDao;
+import com.xiaomizhou.dpsk.db.dao.ContactDao;
 import com.xiaomizhou.dpsk.db.dto.*;
 import com.xiaomizhou.dpsk.db.model.Agent;
 import com.xiaomizhou.dpsk.db.model.AgentAuthToken;
@@ -43,14 +44,26 @@ public class AgentComponent {
     private final AgentDao agentDao;
     private final AgentAuthTokenDao agentAuthTokenDao;
     private final PasswordEncoder passwordEncoder;
+    private final ContactDao contactDao;
 
     private final AgentToolComponent agentToolComponent;
 
     /**
-     * 分页查询
+     * 分页查询（仅查询好友列表中的 Agent）
      */
-    public IPage<AgentDto> queryPage(AgentQueryParam param) {
+    public IPage<AgentDto> queryPage(AgentQueryParam param, String ownerCode) {
         LambdaQueryWrapper<Agent> wrapper = new LambdaQueryWrapper<>();
+
+        // 根据当前登录用户过滤：只能查自己好友列表中的 Agent
+        List<String> friendCodes = contactDao.listFriendCodes(ownerCode);
+        if (CollectionUtils.isEmpty(friendCodes)) {
+            // 没有好友，返回空结果
+            IPage<AgentDto> emptyPage = new Page<>(param.getPageNo(), param.getPageSize());
+            emptyPage.setTotal(0);
+            return emptyPage;
+        }
+        wrapper.in(Agent::getCode, friendCodes);
+
         if (StringUtils.isNotBlank(param.getCode())) {
             wrapper.eq(Agent::getCode, param.getCode());
         }
@@ -147,7 +160,7 @@ public class AgentComponent {
      * 创建
      */
     @Transactional(rollbackFor = Exception.class)
-    public AgentDto create(AgentCreateCmd cmd) {
+    public AgentDto create(String loginUserCode,AgentCreateCmd cmd) {
         Agent agent = new Agent();
 
         agent.setCode(SequenceUtils.generator().next(AGENT_PREFIX));
@@ -170,8 +183,19 @@ public class AgentComponent {
         agent.setUpdateTime(new Date());
 
         agentDao.save(agent);
-        log.info("创建Agent成功, id={}", agent.getId());
 
+        List<String> tools = cmd.getTools();
+        if (CollectionUtils.isNotEmpty(tools)) {
+            AgentToolBindCmd bind = new AgentToolBindCmd();
+            bind.setAgentCode(agent.getCode());
+            bind.setToolCodes(tools);
+            agentToolComponent.bindTools(bind);
+        }
+
+        // 新增还有关系
+        contactDao.addFriendRelation(agent.getCode(), loginUserCode);
+
+        log.info("创建Agent成功, id={}", agent.getId());
         return convertToDto(agent);
     }
 
@@ -230,7 +254,7 @@ public class AgentComponent {
     }
 
     /**
-     * 删除（逻辑删除）
+     * 删除（逻辑删除），同时清理好友关系
      */
     @Transactional(rollbackFor = Exception.class)
     public void delete(String code) {
@@ -243,6 +267,11 @@ public class AgentComponent {
         model.setId(agent.getId());
         model.setUpdateTime(new Date());
         agentDao.removeById(model);
+
+        // 连带删除该 Agent 的好友关系（作为 owner 和作为 friend 的都要删）
+        contactDao.deleteByOwnerCode(code);
+        contactDao.deleteByFriendCode(code);
+        log.info("删除Agent成功, code={}, 已清理好友关系", code);
     }
 
     /**
@@ -329,6 +358,15 @@ public class AgentComponent {
 
         agentDao.save(agent);
         log.info("用户注册成功, email={}, code={}", cmd.getEmail(), agent.getCode());
+
+        // 新用户与所有已有用户建立双向好友关系
+        List<Agent> allUsers = agentDao.findByType("USER");
+        for (Agent existingUser : allUsers) {
+            if (!existingUser.getCode().equals(agent.getCode())) {
+                contactDao.addFriendRelation(agent.getCode(), existingUser.getCode());
+            }
+        }
+        log.info("新用户 {} 已与 {} 个已有用户建立好友关系", agent.getCode(), allUsers.size() - 1);
 
         // 生成 Token 并持久化
         String token = writeToken(agent.getId());

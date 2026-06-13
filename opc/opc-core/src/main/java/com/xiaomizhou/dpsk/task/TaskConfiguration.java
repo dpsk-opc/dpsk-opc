@@ -2,7 +2,6 @@ package com.xiaomizhou.dpsk.task;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.xiaomizhou.dpsk.task.consumer.TaskConsumerRegistry;
@@ -12,6 +11,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.annotation.Order;
 
 import javax.sql.DataSource;
 import java.util.concurrent.ExecutorService;
@@ -27,6 +27,7 @@ import java.util.concurrent.ExecutorService;
  */
 @Configuration
 @Slf4j
+@Order
 public class TaskConfiguration {
 
     @Bean

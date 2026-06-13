@@ -1,11 +1,13 @@
 package com.xiaomizhou.dpsk.db.chat;
 
+import com.xiaomizhou.dpsk.db.dto.FileRecordDto;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.util.Date;
+import java.util.List;
 
 /**
  * @author eason - vipzhsh@163.com
@@ -15,32 +17,6 @@ import java.util.Date;
 @Data
 @Builder
 public class ChatProtocol {
-
-    /**
-     * 创建一个完成的协议
-     *
-     * @param tokenUsage
-     * @param content
-     * @return
-     */
-    public static ChatProtocol finished(TokenUsage tokenUsage, User user, Content content) {
-        ChatProtocol protocol = finished(user);
-        protocol.setTokenUsage(tokenUsage);
-        protocol.setContent(content);
-        protocol.setCreateTime(new Date());
-        return protocol;
-    }
-
-    public static ChatProtocol finished(User user) {
-        return ChatProtocol.builder()
-                .user(user)
-                .finished(true)
-                .createTime(new Date())
-                .build();
-    }
-
-
-
 
     public boolean finished;
 
@@ -77,12 +53,9 @@ public class ChatProtocol {
 
         private String content;
 
-        public static Content thinking(String reasoning) {
-            Content content = new Content();
-            content.setContent(reasoning);
-            content.setEventType("thinking");
-            return content;
-        }
+        private String msgStatus;
+
+        private List<FileRecordDto> files;
     }
 
     @Data

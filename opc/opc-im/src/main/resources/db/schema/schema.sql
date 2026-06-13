@@ -163,6 +163,9 @@ CREATE TABLE IF NOT EXISTS t_chat_message (
     -- 关联任务系统
     task_id VARCHAR(100) NOT NULL DEFAULT '' COMMENT '关联的任务ID，用于追踪Agent任务',
 
+    -- 会话编码
+    conversation_code VARCHAR(100) NOT NULL DEFAULT '' COMMENT '会话编码，用于标识一个会话，如 conversation_001',
+
     -- 引用回复
     parent_id BIGINT NOT NULL DEFAULT 0 COMMENT '引用的消息ID，0表示无引用',
 
@@ -170,7 +173,7 @@ CREATE TABLE IF NOT EXISTS t_chat_message (
     mentioned_list TEXT NOT NULL DEFAULT '' COMMENT '@提及的Agent ID列表，JSON数组字符串，如 "[101,102,103]"，空为"[]"',
 
     -- 消息状态（可选，适合后续扩展）
-    status VARCHAR(20) NOT NULL DEFAULT 'SENT' COMMENT '消息状态: SENDING, SENT, DELIVERED, FAILED',
+    status VARCHAR(20) NOT NULL DEFAULT 'SENT' COMMENT '消息状态: SENDING, SENT, DELIVERED, IGNORE-不会计入上下文,FAILED',
 
     -- 通用字段
     create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间（消息时间戳）',
@@ -188,10 +191,33 @@ CREATE INDEX IF NOT EXISTS idx_task ON t_chat_message (task_id);
 CREATE INDEX IF NOT EXISTS idx_parent ON t_chat_message (parent_id);
 CREATE INDEX IF NOT EXISTS idx_status ON t_chat_message (status);
 CREATE INDEX IF NOT EXISTS idx_deleted ON t_chat_message (is_deleted);
+CREATE INDEX IF NOT EXISTS idx_conversation_code ON t_chat_message (conversation_code);
 CREATE UNIQUE INDEX IF NOT EXISTS udx_code ON t_chat_message (code);
 
 
 
+
+-- =============================================
+-- 表名: t_contact
+-- 描述: 好友关系表，维护用户之间的好友关系
+-- 说明: 双向关系各自存一条记录，A添加B为好友时，t_contact中存入(owner=A, friend=B)和(owner=B, friend=A)两条记录
+-- =============================================
+CREATE TABLE IF NOT EXISTS `t_contact` (
+    `id` BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键ID',
+    `code` VARCHAR(100) NOT NULL DEFAULT '' COMMENT '好友关系编码，唯一标识',
+    `owner_code` VARCHAR(100) NOT NULL DEFAULT '' COMMENT '所属用户 Agent Code',
+    `friend_code` VARCHAR(100) NOT NULL DEFAULT '' COMMENT '好友的 Agent Code',
+    `remark` VARCHAR(200) NOT NULL DEFAULT '' COMMENT '备注名',
+    `status` VARCHAR(20) NOT NULL DEFAULT 'ACTIVE' COMMENT '状态: ACTIVE(正常), BLOCKED(已拉黑)',
+    `create_time` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间',
+    `is_deleted` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0=未删除, 1=已删除',
+    CONSTRAINT uk_contact_code UNIQUE (`code`)
+) COMMENT '好友关系表';
+
+CREATE INDEX IF NOT EXISTS `idx_contact_owner` ON `t_contact` (`owner_code`, `status`, `is_deleted`);
+CREATE INDEX IF NOT EXISTS `idx_contact_friend` ON `t_contact` (`friend_code`, `status`, `is_deleted`);
+CREATE UNIQUE INDEX IF NOT EXISTS `udx_contact_owner_friend` ON `t_contact` (`owner_code`, `friend_code`);
 
 -- =============================================
 -- 表名: t_conversation
@@ -456,6 +482,33 @@ CREATE TABLE IF NOT EXISTS `t_task_execution_log` (
 -- 表名: scheduled_tasks
 -- 描述: db-scheduler 调度器所需的内部表（由 db-scheduler 自动管理）
 -- =============================================
+
+-- =============================================
+-- 表名: t_file_record
+-- 描述: 文件记录表，存储上传文件的元数据信息（不存 base64）
+-- =============================================
+CREATE TABLE IF NOT EXISTS `t_file_record` (
+    `id` BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键ID',
+    `code` VARCHAR(100) NOT NULL DEFAULT '' COMMENT '文件编码，唯一标识，用于外部访问',
+    `original_name` VARCHAR(500) NOT NULL DEFAULT '' COMMENT '原始文件名',
+    `stored_name` VARCHAR(500) NOT NULL DEFAULT '' COMMENT '存储文件名（时间戳_UUID_扩展名）',
+    `file_path` VARCHAR(500) NOT NULL DEFAULT '' COMMENT '文件在磁盘上的相对路径',
+    `file_extension` VARCHAR(50) NOT NULL DEFAULT '' COMMENT '文件扩展名（含点）',
+    `file_size` BIGINT NOT NULL DEFAULT 0 COMMENT '文件大小（字节）',
+    `content_type` VARCHAR(200) NOT NULL DEFAULT '' COMMENT 'MIME类型',
+    `uploader_code` VARCHAR(100) NOT NULL DEFAULT '' COMMENT '上传者 Agent Code',
+    `ref_code` VARCHAR(100) NOT NULL DEFAULT '' COMMENT '关联的业务编码',
+    `ref_type` TINYINT(4) NOT NULL DEFAULT 0 COMMENT '0-默认，1-聊天，2-会话',
+    `source_type` VARCHAR(50) NOT NULL DEFAULT 'OTHER' COMMENT '文件来源类型: CHAT, TASK, AVATAR, OTHER',
+    `create_time` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间',
+    `is_deleted` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0=未删除, 1=已删除',
+    CONSTRAINT uk_file_record_code UNIQUE (`code`)
+) COMMENT '文件记录表';
+
+CREATE INDEX IF NOT EXISTS `idx_file_record_uploader` ON `t_file_record` (`uploader_code`, `create_time` DESC);
+CREATE INDEX IF NOT EXISTS `idx_file_record_ref` ON `t_file_record` (`ref_code`);
+CREATE INDEX IF NOT EXISTS `idx_file_record_source_type` ON `t_file_record` (`source_type`);
 
 create table if not exists scheduled_tasks (
   task_name varchar(100) not null,

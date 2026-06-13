@@ -31,7 +31,9 @@ public class ToolRegistry {
     private final Map<String, ToolMetadata> toolsByCode = new ConcurrentHashMap<>();
 
     private final ToolRepository toolRepository;
+
     private final ToolExecutorRouter executorRouter;
+
 
     /** 是否已初始化 */
     private volatile boolean initialized = false;
@@ -113,11 +115,7 @@ public class ToolRegistry {
      */
     public List<ToolMetadata> getToolsForAgent(String ownerAgentCode) {
         ensureInitialized();
-        return toolsByName.values().stream()
-                .filter(t -> t.getOwnerAgentCode() == null 
-                        || t.getOwnerAgentCode().isEmpty() 
-                        || t.getOwnerAgentCode().equals(ownerAgentCode))
-                .collect(Collectors.toList());
+        return toolRepository.findByOwnerAgent(ownerAgentCode);
     }
 
     /**

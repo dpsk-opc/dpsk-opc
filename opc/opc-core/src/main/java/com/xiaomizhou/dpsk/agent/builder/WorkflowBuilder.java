@@ -20,6 +20,15 @@ public class WorkflowBuilder implements AgentBuilder {
 
     @Override
     public AgentPipeline build(AgentBuildSpec spec) {
+
+        // target code
+        String targetCode = spec.getTargetAgentCode();
+
+
+        var workflow = new Object();
+
+
+
         return callback -> {
             callback.onEvent(AgentEvent.error("workflow", "Workflow mode is not yet implemented"));
             callback.onComplete();

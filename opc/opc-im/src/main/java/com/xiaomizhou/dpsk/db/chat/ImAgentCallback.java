@@ -12,10 +12,7 @@ import com.xiaomizhou.dpsk.core.utils.WsUtils;
 import com.xiaomizhou.dpsk.core.ws.SenderInfo;
 import com.xiaomizhou.dpsk.core.ws.WsMessage;
 import com.xiaomizhou.dpsk.core.ws.WsMsgType;
-import com.xiaomizhou.dpsk.core.ws.payload.MessagePayload;
-import com.xiaomizhou.dpsk.core.ws.payload.StreamChunkPayload;
-import com.xiaomizhou.dpsk.core.ws.payload.StreamEndPayload;
-import com.xiaomizhou.dpsk.core.ws.payload.StreamStartPayload;
+import com.xiaomizhou.dpsk.core.ws.payload.*;
 import com.xiaomizhou.dpsk.db.ChatMessageComponent;
 import com.xiaomizhou.dpsk.db.dao.AgentDao;
 import com.xiaomizhou.dpsk.db.dao.TokenUsageDao;
@@ -24,7 +21,9 @@ import com.xiaomizhou.dpsk.db.dto.ChatMsgDto;
 import com.xiaomizhou.dpsk.utils.SequenceUtils;
 import dev.langchain4j.model.output.TokenUsage;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -110,6 +109,21 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
             case ERROR -> handleError(event);
             case TOOL_CALL -> log.debug("Tool call: agent={}, tool={}", event.agentCode(), event.toolName());
             case TOOL_RESULT -> log.debug("Tool result: agent={}, tool={}", event.agentCode(), event.toolName());
+            case MSG_READ -> handleRead(event);
+        }
+    }
+
+    private void handleRead(AgentEvent event) {
+        String msgCode = event.text();
+        if (StringUtils.isBlank(msgCode)) {
+            return;
+        }
+        chatMessageComponent.delivered(List.of(msgCode));
+        log.info("Message read: user={}, msg={}", userId, msgCode);
+        try {
+            WsUtils.send(new WsMessage(WsMsgType.READ_RECEIPT, new ReadReceiptPayload(conversationCode, msgCode)));
+        } catch (Exception e) {
+            log.warn("Failed to send message read event for message {}: {}", msgCode, e.getMessage());
         }
     }
 

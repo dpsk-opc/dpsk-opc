@@ -5,6 +5,8 @@ import lombok.Data;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 
+import java.util.List;
+
 /**
  * Agent 创建命令对象
  *
@@ -81,4 +83,9 @@ public class AgentCreateCmd {
      * 示例: {"model":"gpt-3.5-turbo","access_key":"xxx","temperature":0.7,"max_tokens":1024}
      */
     private String llmConfig;
+
+    /**
+     *  工具
+     */
+    private List<String> tools;
 }

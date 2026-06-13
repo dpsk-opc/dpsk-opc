@@ -60,4 +60,9 @@ public class ChatMsgDto {
      */
     private String conversationCode;
 
+    /**
+     * 文件编码列表
+     */
+    private List<String> fileCodes;
+
 }

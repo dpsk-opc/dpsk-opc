@@ -176,6 +176,8 @@ public class TaskManagerImpl implements TaskManager {
                         .pollingInterval(Duration.ofSeconds(1))
                         .registerShutdownHook()
                         .serializer(new JacksonSerializer(objectMapper))
+                        .threads(1)
+                        .executorService(executor)
                         .build();
         this.scheduler.start();
 

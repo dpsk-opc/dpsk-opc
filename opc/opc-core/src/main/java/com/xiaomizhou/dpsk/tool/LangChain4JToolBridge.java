@@ -15,6 +15,7 @@ import dev.langchain4j.service.tool.ToolProviderResult;
 import lombok.Builder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.context.ApplicationContext;
 
@@ -114,7 +115,7 @@ public class LangChain4JToolBridge implements ToolProvider {
         // 按 Agent 过滤：获取专属工具 + 公共工具
         List<ToolMetadata> tools = toolRegistry.getToolsForAgent(agentCode);
 
-        if (tools.isEmpty()) {
+        if (CollectionUtils.isEmpty(tools)) {
             log.debug("No tools available for agent '{}'", agentCode);
             return ToolProviderResult.builder().build();
         }
@@ -135,12 +136,12 @@ public class LangChain4JToolBridge implements ToolProvider {
             Object bean = applicationContext.getBean(beanName);
             List<ToolSpecification> specs = ToolSpecifications.toolSpecificationsFrom(bean);
 
-            builder.addAll(specs.stream().map(spec -> {
-                return AiServiceTool.builder()
-                        .toolSpecification(spec)
-                        .toolExecutor(this::execute)
-                        .build();
-            }).collect(Collectors.toList()));
+            builder.addAll(specs.stream().filter(spec -> {
+                return spec.name().equals(tool.getName());
+            }).map(spec -> AiServiceTool.builder()
+                    .toolSpecification(spec)
+                    .toolExecutor(this::execute)
+                    .build()).collect(Collectors.toList()));
 
             cache.add(beanName);
         }

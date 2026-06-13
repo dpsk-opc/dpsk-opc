@@ -27,5 +27,4 @@ public interface WsMsgType {
 
     // 错误（服务端主动推送）
     String ERROR = "error";
-    
 }

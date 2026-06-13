@@ -1,17 +1,17 @@
 package com.xiaomizhou.dpsk.memory.store;
 
+import com.google.common.collect.Lists;
 import com.xiaomizhou.dpsk.memory.PersonaProvider;
 import com.xiaomizhou.dpsk.memory.config.MemoryConfig;
 import com.xiaomizhou.dpsk.memory.config.MemoryKey;
 import com.xiaomizhou.dpsk.memory.manager.MemoryManager;
 import com.xiaomizhou.dpsk.memory.repository.MessageRepository;
+import com.xiaomizhou.dpsk.utils.MemoryUtils;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
-import dev.langchain4j.data.message.AiMessage;
-import dev.langchain4j.data.message.ChatMessage;
-import dev.langchain4j.data.message.SystemMessage;
-import dev.langchain4j.data.message.ToolExecutionResultMessage;
-import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.data.message.*;
 import dev.langchain4j.store.memory.chat.ChatMemoryStore;
+import org.apache.commons.collections.MapUtils;
+import org.apache.commons.lang3.Strings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -76,14 +76,17 @@ public class DatabaseChatMemoryStore implements ChatMemoryStore {
         }
 
         // 去掉最后一个 UserMessage（如果存在），原因是Langchain4j在构建UserMessage()会append一个消息，同一条数据也会从db查出来，导致有两条一模一样的消息发给LLM
-        ChatMessage last = dbMessages.get(dbMessages.size() - 1);
-        if (last instanceof UserMessage) {
-            if (dbMessages.size() == 1) {
-                dbMessages = List.of();
-            } else {
-                dbMessages = dbMessages.subList(0, dbMessages.size() - 1);
-            }
-        }
+//        ChatMessage last = dbMessages.get(dbMessages.size() - 1);
+//        if (last instanceof UserMessage) {
+//            if (dbMessages.size() == 1) {
+//                dbMessages = List.of();
+//            } else {
+//                dbMessages = dbMessages.subList(0, dbMessages.size() - 1);
+//
+//                Map<String, Object> attributes = ((UserMessage) last).attributes();
+//                dbMessages.add(UserMessage.from(Lists))
+//            }
+//        }
 
         // 确保工具调用消息配对完整（THINKING 的 call_id 与 TOOL 的 id 必须成对）
         dbMessages = ensureToolPairing(dbMessages);
@@ -167,7 +170,7 @@ public class DatabaseChatMemoryStore implements ChatMemoryStore {
         if (message instanceof AiMessage) {
             return "AI:" + ((AiMessage) message).text();
         } else if (message instanceof UserMessage) {
-            return "USER:" + ((UserMessage) message).singleText();
+            return MemoryUtils.toSingleContent((UserMessage) message);
         }
         return message.type().name() + ":" + message.hashCode();
     }

@@ -1,6 +1,10 @@
 package com.xiaomizhou.dpsk.memory.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Sets;
+import com.xiaomizhou.dpsk.db.FileService;
+import com.xiaomizhou.dpsk.db.dto.FileRecordDto;
 import com.xiaomizhou.dpsk.utils.JsonUtils;
 import com.xiaomizhou.dpsk.db.dao.ChatMessageDao;
 import com.xiaomizhou.dpsk.db.dao.ConversationDao;
@@ -16,10 +20,16 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.collections.MapUtils;
+import org.apache.commons.io.FileUtils;
+import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
+import org.springframework.ai.chat.messages.MessageType;
+import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Component;
 
+import java.io.File;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -39,7 +49,13 @@ import static com.xiaomizhou.dpsk.utils.SequenceUtils.UUIDSequenceGenerator.CHAT
 public class MessageRepositoryImpl implements MessageRepository {
 
     private final ConversationDao conversationDao;
+
     private final ChatMessageDao chatMessageDao;
+
+
+    private final FileService fileService;
+
+    private static final Set<String> ALLOW_SUFFIX = Sets.newHashSet(".txt", ".md", ".log",".java",".py");
 
     @Override
     public List<ChatMessage> findTopByConversationAndAgent(String conversationCode, String ownerCode, int limit) {
@@ -54,6 +70,7 @@ public class MessageRepositoryImpl implements MessageRepository {
 
         List<com.xiaomizhou.dpsk.db.model.ChatMessage> messages = chatMessageDao.list(
                 Wrappers.<com.xiaomizhou.dpsk.db.model.ChatMessage>lambdaQuery()
+                        .ne(com.xiaomizhou.dpsk.db.model.ChatMessage::getStatus, "IGNORE")
                         .and(w -> w.and(w1 -> {
                             w1.eq(com.xiaomizhou.dpsk.db.model.ChatMessage::getSenderCode, userCode);
                             w1.eq(com.xiaomizhou.dpsk.db.model.ChatMessage::getReceiverCode, agentCode);
@@ -61,15 +78,54 @@ public class MessageRepositoryImpl implements MessageRepository {
                             w2.eq(com.xiaomizhou.dpsk.db.model.ChatMessage::getSenderCode, agentCode);
                             w2.eq(com.xiaomizhou.dpsk.db.model.ChatMessage::getReceiverCode, userCode);
                         }))
-                        .orderByDesc(com.xiaomizhou.dpsk.db.model.ChatMessage::getId)
+                        .orderByAsc(com.xiaomizhou.dpsk.db.model.ChatMessage::getId)
                         .last("LIMIT " + limit));
 
         if (CollectionUtils.isEmpty(messages)) {
             return List.of();
         }
 
+        justMsg(messages);
+
+//        int size = messages.size();
+//        com.xiaomizhou.dpsk.db.model.ChatMessage last = messages.get(size - 1);
+//        messages.remove(size - 1);
+
+//        String msgCode = last.getCode();
+//        List<File> files = fileService.getDiskFilesByMsgCode(msgCode, (file) -> {
+//            String suffix = file.getFileExtension();
+//            return ALLOW_SUFFIX.contains(suffix.toLowerCase());
+//        });
+//
+//        if (CollectionUtils.isEmpty(files)){
+//            // 时间正序
+//            return messages.stream()
+//                    .map(this::toChatMessage)
+//                    .filter(Objects::nonNull)
+//                    .distinct()
+//                    .collect(Collectors.toList());
+//        }
+//
+//        files.forEach(file -> {
+//                    try {
+//                        String str = FileUtils.readFileToString(file, StandardCharsets.UTF_8);
+//                        String c = """
+//                                the file is uploaded by user.
+//                                fileName:%s,
+//                                fileContent:%s
+//                                """.formatted(file.getName(), str);
+//                        com.xiaomizhou.dpsk.db.model.ChatMessage cm = new com.xiaomizhou.dpsk.db.model.ChatMessage();
+//                        BeanUtils.copyProperties(last, cm);
+//                        cm.setContent(c);
+//                        messages.add(cm);
+//                    } catch (Exception e) {
+//                        log.warn("load file content failed.", e);
+//                    }
+//                });
+
+
         // 时间正序
-        Collections.reverse(messages);
+//        Collections.reverse(messages);
         return messages.stream()
                 .map(this::toChatMessage)
                 .filter(Objects::nonNull)
@@ -87,15 +143,16 @@ public class MessageRepositoryImpl implements MessageRepository {
                 Wrappers.<com.xiaomizhou.dpsk.db.model.ChatMessage>lambdaQuery()
                         .eq(com.xiaomizhou.dpsk.db.model.ChatMessage::getReceiverCode, groupCode)
                         .eq(com.xiaomizhou.dpsk.db.model.ChatMessage::getConversationType, "GROUP")
-                        .orderByDesc(com.xiaomizhou.dpsk.db.model.ChatMessage::getId)
+                        .ne(com.xiaomizhou.dpsk.db.model.ChatMessage::getStatus, "IGNORE")
+                        .orderByAsc(com.xiaomizhou.dpsk.db.model.ChatMessage::getId)
                         .last("LIMIT " + limit));
 
         if (CollectionUtils.isEmpty(messages)) {
             return List.of();
         }
 
-        // 时间正序
-        Collections.reverse(messages);
+        justMsg(messages);
+
         return messages.stream()
                 .map(this::toChatMessage)
                 .filter(Objects::nonNull)
@@ -134,6 +191,7 @@ public class MessageRepositoryImpl implements MessageRepository {
 
         List<com.xiaomizhou.dpsk.db.model.ChatMessage> allContext = chatMessageDao.list(
                 Wrappers.<com.xiaomizhou.dpsk.db.model.ChatMessage>lambdaQuery()
+                        .ne(com.xiaomizhou.dpsk.db.model.ChatMessage::getStatus, "IGNORE")
                         .and(w -> w.and(w1 -> {
                             w1.eq(com.xiaomizhou.dpsk.db.model.ChatMessage::getSenderCode, senderCode);
                             w1.eq(com.xiaomizhou.dpsk.db.model.ChatMessage::getReceiverCode, receiverCode);
@@ -275,6 +333,7 @@ public class MessageRepositoryImpl implements MessageRepository {
 
         List<com.xiaomizhou.dpsk.db.model.ChatMessage> messages = chatMessageDao.list(
                 Wrappers.<com.xiaomizhou.dpsk.db.model.ChatMessage>lambdaQuery()
+                        .ne(com.xiaomizhou.dpsk.db.model.ChatMessage::getStatus, "IGNORE")
                         .and(w -> w.and(w1 -> {
                             w1.eq(com.xiaomizhou.dpsk.db.model.ChatMessage::getSenderCode, userCode);
                             w1.eq(com.xiaomizhou.dpsk.db.model.ChatMessage::getReceiverCode, agentCode);
@@ -291,6 +350,55 @@ public class MessageRepositoryImpl implements MessageRepository {
                 .collect(Collectors.toList());
     }
 
+    private void justMsg(List<com.xiaomizhou.dpsk.db.model.ChatMessage> messages) {
+
+        if (CollectionUtils.isEmpty(messages)) {
+            return;
+        }
+
+
+        if(1 == messages.size() && messages.get(0).getMessageType().equals(MessageType.USER.getValue())){
+            messages = List.of();
+        }
+
+        // 获取最后一条消息的 code
+        int size = messages.size();
+        com.xiaomizhou.dpsk.db.model.ChatMessage last = messages.get(size - 1);
+
+        // 去掉最后一个 UserMessage（如果存在），原因是Langchain4j在构建UserMessage()会append一个消息，同一条数据也会从db查出来，导致有两条一模一样的消息发给LLM
+        messages.remove(size - 1);
+
+        String msgCode = last.getCode();
+        List<File> files = fileService.getDiskFilesByMsgCode(msgCode, (file) -> {
+            String suffix = file.getFileExtension();
+            return ALLOW_SUFFIX.contains(suffix.toLowerCase());
+        });
+
+        if (CollectionUtils.isEmpty(files)) {
+            return;
+        }
+
+        var tmp = messages;
+
+        files.forEach(file -> {
+            try {
+                String str = FileUtils.readFileToString(file, StandardCharsets.UTF_8);
+                String c = """
+                        the file is uploaded by user. 
+                        fileName:%s,
+                        fileContent:%s
+                        """.formatted(file.getName(), str);
+                com.xiaomizhou.dpsk.db.model.ChatMessage cm = new com.xiaomizhou.dpsk.db.model.ChatMessage();
+                BeanUtils.copyProperties(last, cm);
+                cm.setContent(c);
+                tmp.add(cm);
+            } catch (Exception e) {
+                log.warn("load file content failed.", e);
+            }
+        });
+
+    }
+
     /**
      * 将 DB ChatMessage 转为 LangChain4j ChatMessage。
      * 约定：sender_code 为 user 的是 UserMessage，否则为 AiMessage。
@@ -302,10 +410,11 @@ public class MessageRepositoryImpl implements MessageRepository {
 
         Map<String, Object> attributes = new HashMap<>();
         attributes.put("code", msg.getCode());
-        List<Content> contents = List.of(TextContent.from(msg.getContent()));
+        List<Content> contents = Lists.newArrayList(TextContent.from(msg.getContent()));
 
         // default 或 user 类型的是用户消息
         if (Strings.CS.equals("USER", msg.getMessageType())) {
+
             return UserMessage.builder()
                     .contents(contents)
                     .attributes(attributes)
@@ -341,7 +450,7 @@ public class MessageRepositoryImpl implements MessageRepository {
             AiThinkingMsgDto thinking = JsonUtils.toObj(content, AiThinkingMsgDto.class);
 
             if (Objects.isNull(thinking) || CollectionUtils.isEmpty(thinking.getRequests())) {
-                log.warn("tool is null or tool requests is empty, content: {}", content);
+                log.debug("tool is null or tool requests is empty, content: {}", content);
                 return null;
             }
 

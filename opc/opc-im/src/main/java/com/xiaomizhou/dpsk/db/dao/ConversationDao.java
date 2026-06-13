@@ -6,7 +6,10 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.google.common.collect.Maps;
 import com.xiaomizhou.dpsk.agent.factory.AgentComponentFactory;
 import com.xiaomizhou.dpsk.constant.ConversationType;
+import com.xiaomizhou.dpsk.constant.FileRefType;
+import com.xiaomizhou.dpsk.db.FileService;
 import com.xiaomizhou.dpsk.db.chat.ChatProtocol;
+import com.xiaomizhou.dpsk.db.dto.FileRecordDto;
 import com.xiaomizhou.dpsk.db.mapper.ConversationMapper;
 import com.xiaomizhou.dpsk.db.model.*;
 import com.xiaomizhou.dpsk.db.dto.ConversationDto;
@@ -41,11 +44,14 @@ public class ConversationDao extends ServiceImpl<ConversationMapper, Conversatio
 
     private final ChatGroupDao chatGroupDao;
 
+    private final FileService fileService;
 
-    public ImmutablePair<Long, List<ConversationDto>> page(int pageNo, int pageSize, Integer type, String name) {
+
+    public ImmutablePair<Long, List<ConversationDto>> page(int pageNo, int pageSize, Integer type, String name, String ownerCode) {
 
 
         LambdaQueryWrapper<Conversation> wrapper = Wrappers.<Conversation>lambdaQuery()
+                .eq(StringUtils.isNotBlank(ownerCode), Conversation::getOwnerCode, ownerCode)
                 .eq(Objects.nonNull(type), Conversation::getConversationType, type);
 
         long cnt = count(wrapper);
@@ -64,7 +70,7 @@ public class ConversationDao extends ServiceImpl<ConversationMapper, Conversatio
         List<Agent> agents = CollectionUtils.isEmpty(agentCodes) ? List.of() : agentDao.list(Wrappers.<Agent>lambdaQuery().in(Agent::getCode, agentCodes));
 
 
-        List<String> groupCodes = list.stream().filter(conversation -> conversation.getConversationType() == 1).map(conversation -> conversation.getTargetCode()).toList();
+        List<String> groupCodes = list.stream().filter(conversation -> conversation.getConversationType() == 1).map(Conversation::getTargetCode).toList();
         List<ChatGroup> groups = CollectionUtils.isEmpty(groupCodes) ? List.of() : chatGroupDao.lambdaQuery().in(ChatGroup::getCode, groupCodes).list();
 
         return ImmutablePair.of(cnt, list.stream().map(record -> {
@@ -263,6 +269,8 @@ public class ConversationDao extends ServiceImpl<ConversationMapper, Conversatio
                 .stream()
                 .collect(Collectors.toMap(ChatMessage::getId, m -> m, (m1, m2) -> m1));
 
+        Map<String, List<FileRecordDto>> files = fileService.getFileCodesByRefCode(messageCodes, FileRefType.CHAT_MESSAGE);
+
         // 5. 组装 ChatProtocol
         List<ChatProtocol> protocols = messages.stream().map(msg -> {
             Agent senderAgent = agentMap.get(msg.getSenderCode());
@@ -295,6 +303,8 @@ public class ConversationDao extends ServiceImpl<ConversationMapper, Conversatio
             content.setContent(msg.getContent());
             content.setEventType("message");
             content.setMsgCode(msg.getCode());
+            content.setMsgStatus(msg.getStatus());
+            content.setFiles(files.get(msg.getCode()));
 
             ChatProtocol.QuotedMessage quotedMessage = null;
             if (quotedMessageMap.containsKey(msg.getParentId())) {
