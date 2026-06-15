@@ -2,6 +2,7 @@ package com.xiaomizhou.dpsk.agent.factory;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.xiaomizhou.dpsk.agent.AgentBuildSpec;
 import com.xiaomizhou.dpsk.agent.data.AgentDef;
 import com.xiaomizhou.dpsk.memory.MemorySystem;
 import com.xiaomizhou.dpsk.memory.assembler.ContextAssembler;
@@ -183,17 +184,25 @@ public class AgentComponentFactory {
     }
 
     /** 构建 ChatMemory（L0 工作记忆） */
-    public ChatMemory createChatMemory(String conversationCode, String agentCode, String groupCode) {
+    public ChatMemory createChatMemory(AgentDef def,AgentBuildSpec spec) {
         Object memoryId;
+
+        String conversationCode = spec.getConversationCode();
+        String groupCode = spec.getGroupCode();
+        String agentCode = spec.getUserCode();
+
         if (groupCode != null && !groupCode.isEmpty()) {
             memoryId = MemoryConfig.buildGroupMemoryId(conversationCode, groupCode, agentCode);
         } else {
             memoryId = MemoryConfig.buildMemoryId(conversationCode, agentCode);
         }
 
+        ContextAssembler.AssembledPrompt prompt = assembleSystemPrompt(def, spec);
+
+
         return MessageWindowChatMemory.builder()
                 .maxMessages(MemoryConfig.L0_MAX_MESSAGES)
-                .chatMemoryStore(memorySystem.getChatMemoryStore())
+                .chatMemoryStore(memorySystem.getChatMemoryStore(prompt))
                 .id(memoryId)
                 .build();
     }
@@ -207,16 +216,30 @@ public class AgentComponentFactory {
         return Collections.singletonList(bridge);
     }
 
-    /** 组装完整 System Prompt（人设 + L2 长期事实 + L1 摘要 + @引用 + 历史） */
+    /**
+     * 组装完整 System Prompt（人设 + L2 长期事实 + L1 摘要 + @引用 + 历史）
+     */
     public ContextAssembler.AssembledPrompt assembleSystemPrompt(AgentDef def,
-                                                                  String userContent,
-                                                                  String userCode,
-                                                                  String conversationCode,
-                                                                  String quoteMessageCode) {
+                                                                 AgentBuildSpec spec) {
         ContextAssembler assembler = memorySystem.getContextAssembler();
+
         String basePersona = def.toPersonaText();
-        return assembler.assemble(basePersona, userContent, userCode,
+
+        String conversationCode = spec.getConversationCode();
+        String quoteMessageCode = spec.getQuoteMessageCode();
+        String userContent = spec.getUserContent();
+        String userCode = spec.getUserCode();
+
+        ContextAssembler.AssembledPrompt assemble = assembler.assemble(basePersona, userContent, userCode,
                 def.getCode(), conversationCode, quoteMessageCode);
+
+        // 5.1 注入定时任务锚点上下文（如果有）
+        String systemMessage = assemble.getSystemPart();
+        if (spec.getTaskContext() != null && !spec.getTaskContext().isEmpty()) {
+            systemMessage = systemMessage + "\n\n" + spec.getTaskContext();
+        }
+
+        return new ContextAssembler.AssembledPrompt(systemMessage, assemble.getHistoryPart());
     }
 
     /** 注入 L2 长期事实到 System Prompt（群聊使用） */

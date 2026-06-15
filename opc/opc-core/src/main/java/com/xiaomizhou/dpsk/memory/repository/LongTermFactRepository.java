@@ -44,4 +44,19 @@ public interface LongTermFactRepository {
      * @param code 事实编码
      */
     void updateLastAccessedTime(String code);
+
+    /**
+     * 查询所有未删除的事实（用于恢复向量索引）。
+     *
+     * @return 所有未删除的事实列表
+     */
+    List<LongTermFact> findAllUnEmbedding();
+
+
+    /**
+     * 将事实标记为待向量化。
+     * @param code
+     * @return
+     */
+    boolean toBedEmbedding(String code);
 }

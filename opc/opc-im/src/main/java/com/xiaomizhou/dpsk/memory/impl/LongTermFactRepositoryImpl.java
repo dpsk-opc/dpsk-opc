@@ -1,5 +1,6 @@
 package com.xiaomizhou.dpsk.memory.impl;
 
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.xiaomizhou.dpsk.db.dao.LongTermFactDao;
 import com.xiaomizhou.dpsk.db.model.LongTermFactDO;
 import com.xiaomizhou.dpsk.memory.model.LongTermFact;
@@ -48,6 +49,20 @@ public class LongTermFactRepositoryImpl implements LongTermFactRepository {
     @Override
     public void updateLastAccessedTime(String code) {
         longTermFactDao.updateLastAccessedTime(code);
+    }
+
+    @Override
+    public List<LongTermFact> findAllUnEmbedding() {
+        return longTermFactDao.findAllUnEmbedding().stream()
+                .map(this::toCoreModel)
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    public boolean toBedEmbedding(String code) {
+        longTermFactDao.update(Wrappers.<LongTermFactDO>lambdaUpdate().eq(LongTermFactDO::getCode, code)
+                .set(LongTermFactDO::getStatus, 1));
+        return true;
     }
 
     private LongTermFact toCoreModel(LongTermFactDO entity) {

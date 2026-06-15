@@ -1,12 +1,11 @@
 package com.xiaomizhou.dpsk.memory;
 
 import com.xiaomizhou.dpsk.memory.assembler.ContextAssembler;
-import com.xiaomizhou.dpsk.memory.generator.FactExtractor;
 import com.xiaomizhou.dpsk.memory.generator.SummaryGenerator;
 import com.xiaomizhou.dpsk.memory.manager.FactManager;
+import com.xiaomizhou.dpsk.memory.manager.KnowledgeManager;
 import com.xiaomizhou.dpsk.memory.manager.MemoryManager;
 import com.xiaomizhou.dpsk.memory.manager.SummaryManager;
-import com.xiaomizhou.dpsk.memory.repository.LongTermFactRepository;
 import com.xiaomizhou.dpsk.memory.repository.MemorySummaryRepository;
 import com.xiaomizhou.dpsk.memory.repository.MessageRepository;
 import com.xiaomizhou.dpsk.memory.store.DatabaseChatMemoryStore;
@@ -18,28 +17,31 @@ import java.util.concurrent.ExecutorService;
 /**
  * 记忆系统构建器。
  * <p>
- * 提供简化的构建方法，按需组装 L0/L1/L2 各层组件。
- * 支持三种模式：
+ * 提供简化的构建方法，按需组装 L0/L1/L2/L3 各层组件。
+ * 支持四种模式：
  * <ul>
  *   <li><b>L0 Only</b>：仅工作记忆，适合简单场景</li>
  *   <li><b>L0 + L1</b>：工作记忆 + 摘要记忆</li>
- *   <li><b>L0 + L1 + L2</b>：完整三级记忆</li>
+ *   <li><b>L0 + L1 + L2</b>：工作记忆 + 摘要 + 语义记忆（纯 RAG）</li>
+ *   <li><b>L0 + L1 + L2 + L3</b>：完整四级记忆（含知识库 RAG）</li>
  * </ul>
+ * <p>
+ * L2 已改为纯 RAG 模式：消息移出 L0 窗口时直接向量化原始文本，
+ * 检索时按需语义检索 Top-K，不再使用 LLM 提取事实。
  *
  * <pre>{@code
- * // 示例：构建完整三级记忆系统
+ * // 示例：构建完整四级记忆系统
  * MemorySystem system = MemorySystem.builder()
  *     .messageRepository(messageRepo)      // 必填
  *     .summaryRepository(summaryRepo)      // L1 需要
  *     .summaryGenerator(summaryGen)        // L1 需要
- *     .factRepository(factRepo)            // L2 需要
- *     .factExtractor(factExt)              // L2 需要
- *     .embeddingStore(embeddingStore)      // L2 向量检索需要（可选）
- *     .embeddingClient(embeddingClient)    // L2 向量检索需要（可选）
+ *     .embeddingStore(embeddingStore)      // L2 向量存储（可选）
+ *     .embeddingClient(embeddingClient)    // L2/L3 向量化客户端（可选）
+ *     .knowledgeEmbeddingStore(store)      // L3 知识库向量存储（可选，默认复用 embeddingStore）
+ *     .knowledgeEmbeddingClient(client)    // L3 向量化客户端（可选，默认复用 embeddingClient）
  *     .build();
  *
  * // 使用
- * DatabaseChatMemoryStore store = system.getChatMemoryStore();
  * ContextAssembler assembler = system.getContextAssembler();
  * }</pre>
  *
@@ -48,11 +50,13 @@ import java.util.concurrent.ExecutorService;
  */
 public class MemorySystem {
 
-    private final DatabaseChatMemoryStore chatMemoryStore;
     private final ContextAssembler contextAssembler;
     private final SummaryManager summaryManager;
     private final FactManager factManager;
+    private final KnowledgeManager knowledgeManager;
     private final MemoryManager memoryManager;
+
+    private final MessageRepository messageRepository;
 
     private MemorySystem(Builder builder) {
         // 构建 L1（可选）
@@ -61,36 +65,43 @@ public class MemorySystem {
             sm = new SummaryManager(builder.summaryRepository, builder.summaryGenerator);
         }
 
-        // 构建 L2（可选）
+        // 构建 L2（可选）：纯 RAG 模式，只需要 embeddingStore 和 embeddingClient
         FactManager fm = null;
-        if (builder.factRepository != null && builder.factExtractor != null) {
-            fm = new FactManager(builder.factRepository, builder.factExtractor,
-                    builder.embeddingStore, builder.embeddingClient);
+        if (builder.embeddingStore != null && builder.embeddingClient != null) {
+            fm = new FactManager(builder.embeddingStore, builder.embeddingClient);
+        }
+
+        // 构建 L3（可选）：知识库 RAG
+        // L3 可独立配置 store/client，默认复用 L2 的
+        KnowledgeManager km = null;
+        if (builder.knowledgeEmbeddingStore != null && builder.knowledgeEmbeddingClient != null) {
+            km = new KnowledgeManager(builder.knowledgeEmbeddingStore, builder.knowledgeEmbeddingClient);
+        } else if (builder.embeddingStore != null && builder.embeddingClient != null) {
+            // 未单独配置 L3 时，复用 L2 的 store 和 client
+            km = new KnowledgeManager(builder.embeddingStore, builder.embeddingClient);
         }
 
         // 构建 MemoryManager（L1+L2 都有时才创建完整编排器）
         MemoryManager mm = null;
         if (sm != null && fm != null) {
             if (builder.executorService != null) {
-                mm = new MemoryManager(sm, fm, builder.factExtractor, builder.executorService);
+                mm = new MemoryManager(sm, fm, builder.executorService);
             } else {
-                mm = new MemoryManager(sm, fm, builder.factExtractor);
+                mm = new MemoryManager(sm, fm);
             }
         }
 
-        // 构建 DatabaseChatMemoryStore
-        this.chatMemoryStore = new DatabaseChatMemoryStore(builder.messageRepository, mm, builder.personaProvider);
-
-        // 构建 ContextAssembler
-        this.contextAssembler = new ContextAssembler(builder.messageRepository, sm, fm);
-
+        // 构建 ContextAssembler（传入 L3 KnowledgeManager）
+        this.contextAssembler = new ContextAssembler(builder.messageRepository, sm, fm, km);
         this.summaryManager = sm;
         this.factManager = fm;
+        this.knowledgeManager = km;
         this.memoryManager = mm;
+        this.messageRepository = builder.messageRepository;
     }
 
-    public DatabaseChatMemoryStore getChatMemoryStore() {
-        return chatMemoryStore;
+    public DatabaseChatMemoryStore getChatMemoryStore(ContextAssembler.AssembledPrompt prompt) {
+        return new DatabaseChatMemoryStore(messageRepository, memoryManager, prompt);
     }
 
     public ContextAssembler getContextAssembler() {
@@ -105,11 +116,17 @@ public class MemorySystem {
         return factManager;
     }
 
+    public KnowledgeManager getKnowledgeManager() {
+        return knowledgeManager;
+    }
+
     public MemoryManager getMemoryManager() {
         return memoryManager;
     }
 
-    /** 关闭异步资源 */
+    /**
+     * 关闭异步资源
+     */
     public void shutdown() {
         if (memoryManager != null) {
             memoryManager.shutdown();
@@ -127,22 +144,15 @@ public class MemorySystem {
         private MessageRepository messageRepository;
         private MemorySummaryRepository summaryRepository;
         private SummaryGenerator summaryGenerator;
-        private LongTermFactRepository factRepository;
-        private FactExtractor factExtractor;
         private EmbeddingStore embeddingStore;
         private FactManager.EmbeddingClient embeddingClient;
+        private EmbeddingStore knowledgeEmbeddingStore;
+        private FactManager.EmbeddingClient knowledgeEmbeddingClient;
         private ExecutorService executorService;
-        private PersonaProvider personaProvider;
 
         /** 必填：消息仓储 */
         public Builder messageRepository(MessageRepository repo) {
             this.messageRepository = repo;
-            return this;
-        }
-
-        /** 可选：人设提供者，用于在 L0 消息前置 persona */
-        public Builder personaProvider(PersonaProvider provider) {
-            this.personaProvider = provider;
             return this;
         }
 
@@ -158,27 +168,35 @@ public class MemorySystem {
             return this;
         }
 
-        /** L2：事实仓储 */
-        public Builder factRepository(LongTermFactRepository repo) {
-            this.factRepository = repo;
-            return this;
-        }
-
-        /** L2：事实提取器 */
-        public Builder factExtractor(FactExtractor extractor) {
-            this.factExtractor = extractor;
-            return this;
-        }
-
         /** L2：向量存储（可选） */
         public Builder embeddingStore(EmbeddingStore store) {
             this.embeddingStore = store;
             return this;
         }
 
-        /** L2：向量化客户端（可选） */
+        /** L2/L3：向量化客户端（可选） */
         public Builder embeddingClient(FactManager.EmbeddingClient client) {
             this.embeddingClient = client;
+            return this;
+        }
+
+        /**
+         * L3：知识库向量存储（可选，默认复用 embeddingStore）。
+         * <p>
+         * 如果 L3 与 L2 共用同一个 JVector 实例，则无需单独配置此方法。
+         */
+        public Builder knowledgeEmbeddingStore(EmbeddingStore store) {
+            this.knowledgeEmbeddingStore = store;
+            return this;
+        }
+
+        /**
+         * L3：知识库向量化客户端（可选，默认复用 embeddingClient）。
+         * <p>
+         * 如果 L3 与 L2 使用同一个 embedding 模型，则无需单独配置此方法。
+         */
+        public Builder knowledgeEmbeddingClient(FactManager.EmbeddingClient client) {
+            this.knowledgeEmbeddingClient = client;
             return this;
         }
 

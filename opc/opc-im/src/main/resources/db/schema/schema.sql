@@ -340,6 +340,7 @@ CREATE TABLE IF NOT EXISTS `t_long_term_fact` (
     `fact_type` VARCHAR(50) NOT NULL DEFAULT '' COMMENT 'PREFERENCE, EVENT, RELATION',
     `fact_content` TEXT NOT NULL COMMENT '事实自然语言描述',
     `importance` FLOAT NOT NULL DEFAULT 0.5 COMMENT '重要性 0-1',
+    `status` tinyint(3) NOT NULL DEFAULT 0 COMMENT '向量化 0-未向量化, 1-已向量化',
     `create_time` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间',
     `last_accessed_time` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '最后访问时间',
@@ -498,7 +499,7 @@ CREATE TABLE IF NOT EXISTS `t_file_record` (
     `content_type` VARCHAR(200) NOT NULL DEFAULT '' COMMENT 'MIME类型',
     `uploader_code` VARCHAR(100) NOT NULL DEFAULT '' COMMENT '上传者 Agent Code',
     `ref_code` VARCHAR(100) NOT NULL DEFAULT '' COMMENT '关联的业务编码',
-    `ref_type` TINYINT(4) NOT NULL DEFAULT 0 COMMENT '0-默认，1-聊天，2-会话',
+    `ref_type` TINYINT(4) NOT NULL DEFAULT 0 COMMENT '0-默认，1-聊天，2-会话，3-知识库节点',
     `source_type` VARCHAR(50) NOT NULL DEFAULT 'OTHER' COMMENT '文件来源类型: CHAT, TASK, AVATAR, OTHER',
     `create_time` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间',
@@ -509,6 +510,52 @@ CREATE TABLE IF NOT EXISTS `t_file_record` (
 CREATE INDEX IF NOT EXISTS `idx_file_record_uploader` ON `t_file_record` (`uploader_code`, `create_time` DESC);
 CREATE INDEX IF NOT EXISTS `idx_file_record_ref` ON `t_file_record` (`ref_code`);
 CREATE INDEX IF NOT EXISTS `idx_file_record_source_type` ON `t_file_record` (`source_type`);
+
+-- =============================================
+-- 表名: t_knowledge_lib
+-- 描述: 知识库表，一个Agent仅有一个知识库，创建Agent时自动初始化
+-- =============================================
+CREATE TABLE IF NOT EXISTS `t_knowledge_lib` (
+    `id` BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键ID',
+    `code` VARCHAR(100) NOT NULL DEFAULT '' COMMENT '知识库编码，唯一标识',
+    `name` VARCHAR(200) NOT NULL DEFAULT '' COMMENT '知识库名称',
+    `description` VARCHAR(500) NOT NULL DEFAULT '' COMMENT '知识库描述',
+    `owner_code` VARCHAR(100) NOT NULL DEFAULT '' COMMENT '归属实体编码，如 agent.code',
+    `owner_type` TINYINT(4) NOT NULL DEFAULT 0 COMMENT '归属类型: 0-AGENT, 1-GROUP(预留), 2-DISCUSSION(预留)',
+    `status` TINYINT(4) NOT NULL DEFAULT 0 COMMENT '状态: 0-已上传(UPLOADED), 1-分析中(ANALYZING), 2-已学习(LEARNED), 3-失败(FAILED)',
+    `create_time` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间',
+    `is_deleted` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0=未删除, 1=已删除',
+    CONSTRAINT uk_knowledge_lib_code UNIQUE (`code`)
+) COMMENT '知识库表';
+
+CREATE INDEX IF NOT EXISTS `idx_knowledge_lib_owner` ON `t_knowledge_lib` (`owner_code`, `owner_type`, `is_deleted`);
+CREATE INDEX IF NOT EXISTS `idx_knowledge_lib_status` ON `t_knowledge_lib` (`status`, `is_deleted`);
+
+-- =============================================
+-- 表名: t_knowledge_node
+-- 描述: 知识库节点表，管理知识库的目录树结构。目录节点可挂子节点，文件节点为叶子不可再挂子节点
+-- =============================================
+CREATE TABLE IF NOT EXISTS `t_knowledge_node` (
+    `id` BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键ID',
+    `code` VARCHAR(100) NOT NULL DEFAULT '' COMMENT '节点编码，唯一标识',
+    `lib_code` VARCHAR(100) NOT NULL DEFAULT '' COMMENT '所属知识库编码，关联 t_knowledge_lib.code',
+    `parent_code` VARCHAR(100) NOT NULL DEFAULT '' COMMENT '父节点编码，空字符串表示根节点',
+    `name` VARCHAR(200) NOT NULL DEFAULT '' COMMENT '节点名称（目录名或文件名）',
+    `node_type` TINYINT(4) NOT NULL DEFAULT 0 COMMENT '节点类型: 0-目录(FOLDER), 1-文件(FILE)',
+    `level` INT NOT NULL DEFAULT 0 COMMENT '层级深度，根节点=0，每增加一层+1',
+    `file_code` VARCHAR(100) NOT NULL DEFAULT '' COMMENT '关联的文件编码（node_type=1时，指向 t_file_record.code）',
+    `sort_order` INT NOT NULL DEFAULT 0 COMMENT '排序号，同一父节点下按此字段升序排列',
+    `status` TINYINT(4) NOT NULL DEFAULT 0 COMMENT '状态: 0-已上传(UPLOADED), 1-分析中(ANALYZING), 2-已学习(LEARNED), 3-失败(FAILED)',
+    `create_time` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间',
+    `is_deleted` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0=未删除, 1=已删除',
+    CONSTRAINT uk_knowledge_node_code UNIQUE (`code`)
+) COMMENT '知识库节点表';
+
+CREATE INDEX IF NOT EXISTS `idx_knowledge_node_lib` ON `t_knowledge_node` (`lib_code`, `is_deleted`);
+CREATE INDEX IF NOT EXISTS `idx_knowledge_node_parent` ON `t_knowledge_node` (`parent_code`, `sort_order`, `is_deleted`);
+CREATE INDEX IF NOT EXISTS `idx_knowledge_node_file` ON `t_knowledge_node` (`file_code`);
 
 create table if not exists scheduled_tasks (
   task_name varchar(100) not null,

@@ -6,7 +6,7 @@ import dev.langchain4j.store.memory.chat.ChatMemoryStore;
 public interface MemoryStore {
 
 
-    ChatMemoryStore getChatMemoryStore();
+    ChatMemoryStore getChatMemoryStore(ContextAssembler.AssembledPrompt prompt);
 
     ContextAssembler getContextAssembler();
 

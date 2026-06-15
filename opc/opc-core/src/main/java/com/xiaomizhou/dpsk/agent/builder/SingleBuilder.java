@@ -56,28 +56,27 @@ public class SingleBuilder implements AgentBuilder {
         OpenAiStreamingChatModel model = factory.createStreamingModel(agentDef.getLlmConfig());
 
         // 3. 构建 ChatMemory
-        ChatMemory chatMemory = factory.createChatMemory(
-                spec.getConversationCode(), targetAgentCode, null);
+        ChatMemory chatMemory = factory.createChatMemory(agentDef,spec);
 
         // 4. 获取工具
         List<ToolProvider> toolProviders = factory.getToolProviders(targetAgentCode, spec.getUserCode(), spec.getConversationCode());
 
         // 5. 组装 System Prompt
-        com.xiaomizhou.dpsk.memory.assembler.ContextAssembler.AssembledPrompt enrichedPrompt = factory.assembleSystemPrompt(
-                agentDef, spec.getUserContent(), spec.getUserCode(),
-                spec.getConversationCode(), spec.getQuoteMessageCode());
+//        com.xiaomizhou.dpsk.memory.assembler.ContextAssembler.AssembledPrompt enrichedPrompt = factory.assembleSystemPrompt(
+//                agentDef, spec.getUserContent(), spec.getUserCode(),
+//                spec.getConversationCode(), spec.getQuoteMessageCode(),spec);
 
-        // 5.1 注入定时任务锚点上下文（如果有）
-        String systemMessage = enrichedPrompt.getSystemPart();
-        if (spec.getTaskContext() != null && !spec.getTaskContext().isEmpty()) {
-            systemMessage = systemMessage + "\n\n" + spec.getTaskContext();
-        }
+//        // 5.1 注入定时任务锚点上下文（如果有）
+//        String systemMessage = enrichedPrompt.getSystemPart();
+//        if (spec.getTaskContext() != null && !spec.getTaskContext().isEmpty()) {
+//            systemMessage = systemMessage + "\n\n" + spec.getTaskContext();
+//        }
 
         // 6. 构建 AgenticServices Agent
         UntypedAgent agent = AgenticServices.agentBuilder()
                 .streamingChatModel(model)
                 .name(agentDef.getName())
-                .systemMessage(systemMessage)
+                //.systemMessage("")
                 .toolProviders(toolProviders)
                 .userMessage(spec.getUserContent())
                 .chatMemory(chatMemory)

@@ -1,6 +1,5 @@
 package com.xiaomizhou.dpsk.tool;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.xiaomizhou.dpsk.db.TaskComponent;
 import com.xiaomizhou.dpsk.db.dao.ConversationDao;
 import com.xiaomizhou.dpsk.db.dto.TaskCreateCmd;
@@ -10,6 +9,7 @@ import com.xiaomizhou.dpsk.task.consumer.AgentTaskConsumer;
 import com.xiaomizhou.dpsk.task.consumer.NotificationTaskConsumer;
 import com.xiaomizhou.dpsk.task.model.Task;
 import com.xiaomizhou.dpsk.tool.model.ToolContext;
+import com.xiaomizhou.dpsk.utils.JsonUtils;
 import dev.langchain4j.agent.tool.P;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -43,7 +43,6 @@ public class CreateScheduledTaskTool {
 
     private final TaskComponent taskComponent;
     private final ConversationDao conversationDao;
-    private final ObjectMapper objectMapper = new ObjectMapper();
 
     /**
      * 创建一个定时任务。
@@ -110,7 +109,7 @@ public class CreateScheduledTaskTool {
                 params.put("message", content);
             }
 
-            String parameters = objectMapper.writeValueAsString(params);
+            String parameters = JsonUtils.toJson(params);
 
             // 创建任务
             TaskCreateCmd cmd = new TaskCreateCmd();

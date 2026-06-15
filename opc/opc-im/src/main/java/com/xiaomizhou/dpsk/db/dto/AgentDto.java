@@ -107,6 +107,11 @@ public class AgentDto {
     private List<AgentToolRefVO> tools;
 
     /**
+     * 知识库编码
+     */
+    private String knowledgeLibCode;
+
+    /**
      * 创建时间
      */
     private Date createTime;

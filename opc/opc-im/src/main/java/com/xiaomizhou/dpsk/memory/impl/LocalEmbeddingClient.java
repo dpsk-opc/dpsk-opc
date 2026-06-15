@@ -25,4 +25,9 @@ public class LocalEmbeddingClient implements FactManager.EmbeddingClient {
         Embedding embedding = response.content();
         return embedding.vectorAsList();
     }
+
+    @Override
+    public int getDimension() {
+        return embeddingModel.dimension();
+    }
 }

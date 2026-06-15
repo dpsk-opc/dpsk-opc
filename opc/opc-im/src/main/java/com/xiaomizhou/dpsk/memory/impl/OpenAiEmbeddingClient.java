@@ -67,4 +67,9 @@ public class OpenAiEmbeddingClient implements FactManager.EmbeddingClient {
             return List.of();
         }
     }
+
+    @Override
+    public int getDimension() {
+        return embeddingModel.dimension();
+    }
 }

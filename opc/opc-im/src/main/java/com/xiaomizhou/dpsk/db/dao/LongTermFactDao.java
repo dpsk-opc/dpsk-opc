@@ -58,4 +58,13 @@ public class LongTermFactDao extends ServiceImpl<LongTermFactMapper, LongTermFac
                 .set(LongTermFactDO::getUpdateTime, new Date())
                 .update();
     }
+
+    /**
+     * 查询所有未删除的事实（用于恢复向量索引）。
+     */
+    public List<LongTermFactDO> findAllUnEmbedding() {
+        return lambdaQuery()
+                .eq(LongTermFactDO::getStatus, 0)
+                .list();
+    }
 }

@@ -1,4 +1,4 @@
-package com.xiaomizhou.dpsk.core.config;
+package com.xiaomizhou.dpsk.config.web;
 
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;

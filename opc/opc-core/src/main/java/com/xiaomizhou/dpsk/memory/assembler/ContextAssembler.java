@@ -1,10 +1,9 @@
 package com.xiaomizhou.dpsk.memory.assembler;
 
 import com.xiaomizhou.dpsk.memory.config.MemoryConfig;
-import com.xiaomizhou.dpsk.memory.config.MemoryKey;
 import com.xiaomizhou.dpsk.memory.manager.FactManager;
+import com.xiaomizhou.dpsk.memory.manager.KnowledgeManager;
 import com.xiaomizhou.dpsk.memory.manager.SummaryManager;
-import com.xiaomizhou.dpsk.memory.model.LongTermFact;
 import com.xiaomizhou.dpsk.memory.model.MemoryFragment;
 import com.xiaomizhou.dpsk.memory.repository.MessageRepository;
 import com.xiaomizhou.dpsk.utils.MemoryUtils;
@@ -12,13 +11,15 @@ import dev.langchain4j.data.message.*;
 
 import java.util.List;
 import java.util.Objects;
-import java.util.stream.Collectors;
 
 /**
  * 上下文组装引擎。
  * <p>
- * 按照 L2(长期事实) → L1(摘要) → @引用 → L2(语义检索) → L0(工作记忆) → 当前消息 的顺序
+ * 按照 人设 → L3(知识库) → L1(摘要) → @引用 → L2(语义检索) → L0(工作记忆) → 当前消息 的顺序
  * 组装最终发给 LLM 的 Prompt。
+ * <p>
+ * L2 已改为纯 RAG 模式：不再"全量注入"长期事实到 system prompt，
+ * 而是在 history 部分按需语义检索 Top-K 相关历史消息。
  * <p>
  * 无状态设计，每次调用 assemble() 都会实时查询各层记忆。
  *
@@ -30,13 +31,16 @@ public class ContextAssembler {
     private final MessageRepository messageRepository;
     private final SummaryManager summaryManager;
     private final FactManager factManager;
+    private final KnowledgeManager knowledgeManager;
 
     public ContextAssembler(MessageRepository messageRepository,
                             SummaryManager summaryManager,
-                            FactManager factManager) {
+                            FactManager factManager,
+                            KnowledgeManager knowledgeManager) {
         this.messageRepository = Objects.requireNonNull(messageRepository, "messageRepository must not be null");
         this.summaryManager = summaryManager;
         this.factManager = factManager;
+        this.knowledgeManager = knowledgeManager;
     }
 
 
@@ -67,15 +71,11 @@ public class ContextAssembler {
             systemPart.append(systemPrompt).append("\n");
         }
 
-        // 2. L2 长期结构化事实（直接注入 system prompt）
-        if (factManager != null) {
-            List<LongTermFact> facts = factManager.getFacts(agentCode, userCode);
-            if (!facts.isEmpty()) {
-                systemPart.append("[你对用户的长期记忆]\n");
-                for (LongTermFact fact : facts) {
-                    systemPart.append("- ").append(fact.getFactContent()).append("\n");
-                }
-                systemPart.append("\n");
+        // 2. L3 知识库记忆（向量检索 + 分级注入）
+        if (knowledgeManager != null) {
+            KnowledgeManager.L3Result l3Result = knowledgeManager.retrieve(userContent, agentCode);
+            if (l3Result.shouldInject()) {
+                systemPart.append(l3Result.getInjectText());
             }
         }
 
@@ -103,12 +103,12 @@ public class ContextAssembler {
             }
         }
 
-        // 5. L2 按需语义检索
-        if (needRetrieve(userContent) && factManager != null) {
+        // 5. L2 语义检索（纯 RAG，按需检索 Top-K 历史消息）
+        if (factManager != null) {
             List<MemoryFragment> retrieved = factManager.retrieveMemories(
                     userContent, agentCode, userCode, MemoryConfig.L2_RETRIEVAL_TOPK);
             if (!retrieved.isEmpty()) {
-                historyPart.append("[你可能想起来的旧事]\n");
+                historyPart.append("[相关历史消息]\n");
                 for (MemoryFragment f : retrieved) {
                     historyPart.append("- ").append(f.getText()).append("\n");
                 }
@@ -116,39 +116,25 @@ public class ContextAssembler {
             }
         }
 
-        // 6. L0 工作记忆（最近 N 轮对话）
-        MemoryKey key = new MemoryKey(conversationCode, agentCode);
-        List<ChatMessage> recentMessages = messageRepository.findTopByConversationAndAgent(
-                conversationCode, agentCode, MemoryConfig.L0_MAX_MESSAGES);
-        for (ChatMessage m : recentMessages) {
-            historyPart.append(formatChatMessage(m)).append("\n");
-        }
+//        // 6. L0 工作记忆（最近 N 轮对话）
+//        List<ChatMessage> recentMessages = messageRepository.findTopByConversationAndAgent(
+//                conversationCode, agentCode, MemoryConfig.L0_MAX_MESSAGES);
+//        for (ChatMessage m : recentMessages) {
+//            historyPart.append(formatChatMessage(m)).append("\n");
+//        }
 
-        // 7. 当前用户消息
-        historyPart.append("用户: ").append(userContent);
+//        // 7. 当前用户消息
+//        historyPart.append("用户: ").append(userContent);
 
         return new AssembledPrompt(systemPart.toString(), historyPart.toString());
     }
 
 
-
-    private boolean needRetrieve(String userContent) {
-        if (userContent == null) {
-            return false;
-        }
-        for (String keyword : MemoryConfig.RETRIEVAL_TRIGGER_KEYWORDS) {
-            if (userContent.contains(keyword)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     /**
-     * 仅注入 L2 长期事实到 system prompt（不包含 L0/L1 历史）。
+     * 仅注入 L2 语义检索结果到 system prompt（不包含 L0/L1 历史）。
      * <p>
      * 适用于群聊场景：群聊的 L0 历史由 MessageWindowChatMemory 管理，
-     * L1 摘要通过 MemoryManager 异步生成，此处仅注入 L2 事实。
+     * L1 摘要通过 MemoryManager 异步生成，此处仅注入 L2 检索结果。
      *
      * @param systemPrompt Agent 人设
      * @param ownerCode    Agent 编码
@@ -163,15 +149,17 @@ public class ContextAssembler {
             return systemPrompt;
         }
 
+        // 群聊场景：根据 targetCode 做一次 L2 语义检索
         StringBuilder sb = new StringBuilder(systemPrompt);
-        List<LongTermFact> facts = factManager.getFacts(ownerCode, targetCode);
-        if (!facts.isEmpty()) {
+        List<MemoryFragment> retrieved = factManager.retrieveMemories(
+                targetCode, ownerCode, targetCode, MemoryConfig.L2_RETRIEVAL_TOPK);
+        if (!retrieved.isEmpty()) {
             if (sb.length() > 0) {
                 sb.append("\n");
             }
-            sb.append("[你对用户的长期记忆]\n");
-            for (LongTermFact fact : facts) {
-                sb.append("- ").append(fact.getFactContent()).append("\n");
+            sb.append("[相关历史消息]\n");
+            for (MemoryFragment f : retrieved) {
+                sb.append("- ").append(f.getText()).append("\n");
             }
         }
         return sb.toString();
@@ -213,7 +201,6 @@ public class ContextAssembler {
 
         /**
          * 获取完整的 Prompt 文本（System + History 合并）
-         *
          */
         public String getFullPrompt() {
             if (systemPart.isEmpty()) {

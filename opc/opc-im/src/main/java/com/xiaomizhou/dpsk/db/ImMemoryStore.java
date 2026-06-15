@@ -23,8 +23,8 @@ public class ImMemoryStore implements MemoryStore {
     private final MemorySystem memorySystem;
 
     @Override
-    public ChatMemoryStore getChatMemoryStore() {
-        return memorySystem.getChatMemoryStore();
+    public ChatMemoryStore getChatMemoryStore(ContextAssembler.AssembledPrompt prompt) {
+        return memorySystem.getChatMemoryStore(prompt);
     }
 
     @Override

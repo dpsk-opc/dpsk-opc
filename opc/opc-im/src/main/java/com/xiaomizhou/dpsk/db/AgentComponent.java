@@ -3,6 +3,7 @@ package com.xiaomizhou.dpsk.db;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.xiaomizhou.dpsk.constant.OwnerType;
 import com.xiaomizhou.dpsk.db.dao.AgentAuthTokenDao;
 import com.xiaomizhou.dpsk.db.dao.AgentDao;
 import com.xiaomizhou.dpsk.db.dao.AgentToolRefDao;
@@ -11,20 +12,20 @@ import com.xiaomizhou.dpsk.db.dto.*;
 import com.xiaomizhou.dpsk.db.model.Agent;
 import com.xiaomizhou.dpsk.db.model.AgentAuthToken;
 import com.xiaomizhou.dpsk.core.exceptions.BusinessException;
+import com.xiaomizhou.dpsk.db.model.KnowledgeLib;
 import com.xiaomizhou.dpsk.utils.PasswordEncoder;
 import com.xiaomizhou.dpsk.utils.SequenceUtils;
 import com.xiaomizhou.dpsk.utils.TokenUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.collections.MapUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.Collection;
-import java.util.Date;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import static com.xiaomizhou.dpsk.utils.SequenceUtils.UUIDSequenceGenerator.AGENT_PREFIX;
@@ -47,6 +48,7 @@ public class AgentComponent {
     private final ContactDao contactDao;
 
     private final AgentToolComponent agentToolComponent;
+    private final KnowledgeLibComponent knowledgeLibComponent;
 
     /**
      * 分页查询（仅查询好友列表中的 Agent）
@@ -107,13 +109,27 @@ public class AgentComponent {
         IPage<AgentDto> results = agentPage.convert(this::convertToDto);
 
         List<String> agentCodes = results.getRecords().stream().map(AgentDto::getCode).collect(Collectors.toList());
-        if(CollectionUtils.isEmpty(agentCodes)){
+        if (CollectionUtils.isEmpty(agentCodes)) {
             return results;
         }
 
-        Map<String,List<AgentToolRefVO>> tools = agentToolComponent.queryByAgentCodes(agentCodes);
+        Map<String, List<AgentToolRefVO>> tools = agentToolComponent.queryByAgentCodes(agentCodes);
         results.getRecords().forEach(agentDto -> {
             agentDto.setTools(tools.get(agentDto.getCode()));
+        });
+
+        // 设置知识库数量
+        Map<String, KnowledgeLib> libs = knowledgeLibComponent.listByOwnerCodes(agentCodes, OwnerType.AGENT).stream().collect(Collectors.toMap(KnowledgeLib::getOwnerCode, Function.identity(), (k1, k2) -> k1));
+        if (MapUtils.isEmpty(libs)) {
+            return results;
+        }
+
+        results.getRecords().forEach(agentDto -> {
+            if (!libs.containsKey(agentDto.getCode())) {
+                return;
+            }
+            KnowledgeLib lib = libs.get(agentDto.getCode());
+            agentDto.setKnowledgeLibCode(Objects.isNull(lib) ? "" : lib.getCode());
         });
 
         return results;
@@ -184,6 +200,9 @@ public class AgentComponent {
 
         agentDao.save(agent);
 
+        // 初始化知识库（一个 Agent 一个知识库）
+        knowledgeLibComponent.init(agent.getCode(), agent.getName());
+
         List<String> tools = cmd.getTools();
         if (CollectionUtils.isNotEmpty(tools)) {
             AgentToolBindCmd bind = new AgentToolBindCmd();
@@ -192,7 +211,7 @@ public class AgentComponent {
             agentToolComponent.bindTools(bind);
         }
 
-        // 新增还有关系
+        // 新增好友关系
         contactDao.addFriendRelation(agent.getCode(), loginUserCode);
 
         log.info("创建Agent成功, id={}", agent.getId());
@@ -359,14 +378,17 @@ public class AgentComponent {
         agentDao.save(agent);
         log.info("用户注册成功, email={}, code={}", cmd.getEmail(), agent.getCode());
 
+        // 初始化知识库
+        knowledgeLibComponent.init(agent.getCode(), agent.getName());
+
         // 新用户与所有已有用户建立双向好友关系
-        List<Agent> allUsers = agentDao.findByType("USER");
-        for (Agent existingUser : allUsers) {
-            if (!existingUser.getCode().equals(agent.getCode())) {
-                contactDao.addFriendRelation(agent.getCode(), existingUser.getCode());
-            }
-        }
-        log.info("新用户 {} 已与 {} 个已有用户建立好友关系", agent.getCode(), allUsers.size() - 1);
+//        List<Agent> allUsers = agentDao.findByType("USER");
+//        for (Agent existingUser : allUsers) {
+//            if (!existingUser.getCode().equals(agent.getCode())) {
+//                contactDao.addFriendRelation(agent.getCode(), existingUser.getCode());
+//            }
+//        }
+//        log.info("新用户 {} 已与 {} 个已有用户建立好友关系", agent.getCode(), allUsers.size() - 1);
 
         // 生成 Token 并持久化
         String token = writeToken(agent.getId());

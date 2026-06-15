@@ -1,39 +1,36 @@
 package com.xiaomizhou.dpsk.memory.impl;
 
+import com.xiaomizhou.dpsk.memory.manager.FactManager;
+import com.xiaomizhou.dpsk.memory.model.LongTermFact;
+import com.xiaomizhou.dpsk.memory.repository.LongTermFactRepository;
 import com.xiaomizhou.dpsk.memory.store.EmbeddingStore;
-import io.github.jbellis.jvector.graph.*;
-import io.github.jbellis.jvector.graph.similarity.BuildScoreProvider;
-import io.github.jbellis.jvector.graph.similarity.DefaultSearchScoreProvider;
-import io.github.jbellis.jvector.graph.similarity.SearchScoreProvider;
-import io.github.jbellis.jvector.vector.DefaultVectorizationProvider;
-import io.github.jbellis.jvector.vector.VectorSimilarityFunction;
-import io.github.jbellis.jvector.vector.types.VectorFloat;
+import dev.langchain4j.community.store.embedding.jvector.JVectorEmbeddingStore;
+import dev.langchain4j.data.document.Metadata;
+import dev.langchain4j.data.embedding.Embedding;
+import dev.langchain4j.data.segment.TextSegment;
+import dev.langchain4j.store.embedding.EmbeddingMatch;
+import dev.langchain4j.store.embedding.EmbeddingSearchRequest;
+import dev.langchain4j.store.embedding.EmbeddingSearchResult;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.collections.CollectionUtils;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.stream.Collectors;
 
 /**
  * 基于 JVector 的向量存储实现（ANN + 磁盘持久化）。
  * <p>
- * 使用 JVector 3.x API 实现近似最近邻检索。
- * <b>当前状态：JVector 依赖已添加到 pom.xml，但需手动安装 jar 到本地仓库。</b>
- * <p>
- * 安装方式：
- * <pre>
- *   mvn dependency:get -Dartifact=io.github.jbellis:jvector:3.1.0
- * </pre>
- * 或手动下载 jar 后：
- * <pre>
- *   mvn install:install-file -Dfile=jvector-3.1.0.jar -DgroupId=io.github.jbellis -DartifactId=jvector -Dversion=3.1.0 -Dpackaging=jar
- * </pre>
+ * 委托给 LangChain4j 封装的 {@link JVectorEmbeddingStore}，支持自动磁盘持久化。
+ * 初始化时异步从数据库恢复历史向量数据。
  *
  * @author eason - vipzhsh@163.com
  * @date 2026/5/29
@@ -41,71 +38,164 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 @Slf4j
 public class JVectorEmbeddingStoreImpl implements EmbeddingStore {
 
-    private static final int DEFAULT_DIMENSION = 1536;
-    private static final int GRAPH_M = 32;
-    private static final int GRAPH_CONSTRUCTION_BEAM_WIDTH = 100;
-    private static final int GRAPH_SEARCH_BEAM_WIDTH = 200;
-    private static final float GRAPH_ALPHA = 1.2f;
+    /** 底层 LangChain4j JVector 存储（自带 ANN + 磁盘持久化） */
+    private final JVectorEmbeddingStore store;
 
-    private final List<VectorFloat<?>> vectors = new ArrayList<>();
-    private final Map<Integer, DocEntry> entryMap = new ConcurrentHashMap<>();
+
     private final ReadWriteLock lock = new ReentrantReadWriteLock();
-    private final int dimension;
-    private final Path persistenceDir;
 
-    private volatile GraphSearcher searcher;
-    private volatile boolean dirty = false;
-    private int pendingAddCount = 0;
-    private static final int REBUILD_THRESHOLD = 10;
+    /** 当前向量数量 */
+    private final AtomicInteger count = new AtomicInteger(0);
 
-    public JVectorEmbeddingStoreImpl() {
-        this(DEFAULT_DIMENSION, null);
+    /** 是否已完成历史数据恢复 */
+    private volatile boolean restored = false;
+
+    private final ExecutorService executorService;
+
+
+    /**
+     * @param dimension        向量维度
+     * @param persistencePath  磁盘持久化目录（为空则不持久化）
+     * @param factRepository   事实仓储（用于恢复历史数据，可为 null）
+     * @param embeddingClient  向量化客户端（用于恢复历史数据，可为 null）
+     * @param executorService  线程池（用于异步恢复，可为 null）
+     */
+    public JVectorEmbeddingStoreImpl(int dimension,
+                                     String persistencePath,
+                                     LongTermFactRepository factRepository,
+                                     FactManager.EmbeddingClient embeddingClient,
+                                     ExecutorService executorService) {
+        Path dir = (persistencePath != null && !persistencePath.isEmpty())
+                ? Paths.get(persistencePath) : null;
+
+        var builder = JVectorEmbeddingStore.builder()
+                .dimension(dimension);
+        if (dir != null) {
+            builder.persistencePath(dir.toString());
+        }
+        this.store = builder.build();
+        this.executorService = executorService;
+
+        log.info("JVectorEmbeddingStoreImpl initialized: dimension={}, persistenceDir={}", dimension, dir);
+
+        // 异步从数据库恢复历史数据
+        if (factRepository != null && embeddingClient != null) {
+            restoreFromDatabase(factRepository, embeddingClient);
+        } else {
+            this.restored = true;
+            log.info("No factRepository/embeddingClient provided, skip history restore");
+        }
     }
 
-    public JVectorEmbeddingStoreImpl(int dimension, String persistencePath) {
-        this.dimension = dimension;
-        this.persistenceDir = (persistencePath != null && !persistencePath.isEmpty())
-                ? Paths.get(persistencePath) : null;
-        log.info("JVectorEmbeddingStore initialized: dimension={}, persistenceDir={}", dimension, persistenceDir);
+    /**
+     * 异步从数据库恢复所有未删除的长期事实到向量存储。
+     */
+    private void restoreFromDatabase(LongTermFactRepository factRepository,
+                                     FactManager.EmbeddingClient embeddingClient) {
+        log.info("Starting async restore of historical facts from database...");
+        try {
+            List<LongTermFact> facts = factRepository.findAllUnEmbedding();
+            if (facts == null || facts.isEmpty()) {
+                log.info("No historical facts to restore");
+                this.restored = true;
+                return;
+            }
+
+            for (LongTermFact fact : facts) {
+                executorService.execute(() -> {
+                    try {
+                        List<Float> vector = embeddingClient.embed(fact.getFactContent());
+                        if (vector == null || vector.isEmpty()) {
+                            log.warn("Failed to embed fact: code={}, content={}", fact.getCode(),
+                                    fact.getFactContent().substring(0, Math.min(50, fact.getFactContent().length())));
+                            return;
+                        }
+
+                        Map<String, String> metadata = buildMetadata(fact);
+                        addInternal(vector, fact.getFactContent(), metadata);
+                    } catch (Exception e) {
+                        log.warn("Failed to restore fact: code={}, content={}", fact.getCode(),
+                                fact.getFactContent().substring(0, Math.min(50, fact.getFactContent().length())), e);
+                    }
+                });
+
+                factRepository.toBedEmbedding(fact.getCode());
+            }
+        } catch (Exception e) {
+            log.error("Failed to restore historical facts from database", e);
+        } finally {
+            this.restored = true;
+        }
+    }
+
+    private Map<String, String> buildMetadata(LongTermFact fact) {
+        Map<String, String> metadata = new LinkedHashMap<>();
+        metadata.put("type", "fact");
+        metadata.put("owner_code", fact.getOwnerCode() != null ? fact.getOwnerCode() : "");
+        metadata.put("target_code", fact.getTargetCode() != null ? fact.getTargetCode() : "");
+        metadata.put("timestamp", fact.getCreateTime() != null ? fact.getCreateTime().toString() : "");
+        metadata.put("importance", String.valueOf(fact.getImportance()));
+        return metadata;
     }
 
     @Override
-    public String add(String id, List<Float> vector, String text, Map<String, String> metadata) {
-        VectorFloat<?> vf = toVectorFloat(vector);
-        if (vf == null) return id;
+    public String add(List<Float> vector, String text, Map<String, String> metadata) {
+        return addInternal(vector, text, metadata);
+    }
+
+    private String addInternal(List<Float> vector, String text, Map<String, String> metadata) {
+        if (CollectionUtils.isEmpty(vector)) {
+            return "";
+        }
+
 
         lock.writeLock().lock();
         try {
-            int idx = vectors.size();
-            vectors.add(vf);
-            entryMap.put(idx, new DocEntry(id, text, metadata));
-            dirty = true;
-            pendingAddCount++;
-
-            if (pendingAddCount >= REBUILD_THRESHOLD) {
-                rebuildIndex();
-            }
+            // 将 text 和 metadata 封装为 TextSegment 存入 JVector payload，实现持久化
+            // 这样即使重启，search() 也能从 JVector 的磁盘文件中恢复 text 和 metadata
+            TextSegment segment = TextSegment.from(text, Metadata.from(metadata));
+            store.add(Embedding.from(vector), segment);
+            // Save to disk
+            store.save();
         } finally {
             lock.writeLock().unlock();
         }
-        log.debug("Added embedding: id={}, total={}", id, vectors.size());
-        return id;
+        return "";
     }
 
     @Override
-    public List<EmbeddingMatch> search(List<Float> queryVector, int maxResults, double minScore) {
-        VectorFloat<?> queryVf = toVectorFloat(queryVector);
-        if (queryVf == null) return List.of();
+    public List<com.xiaomizhou.dpsk.memory.store.EmbeddingStore.EmbeddingMatch> search(
+            List<Float> queryVector, int maxResults, double minScore) {
+
+        if (CollectionUtils.isEmpty(queryVector)) {
+            return List.of();
+        }
 
         lock.readLock().lock();
         try {
-            if (vectors.isEmpty()) return List.of();
+            Embedding queryEmbedding = Embedding.from(queryVector);
+            EmbeddingSearchResult<TextSegment> result = store.search(
+                    EmbeddingSearchRequest.builder()
+                            .queryEmbedding(queryEmbedding)
+                            .maxResults(maxResults * 2)
+                            .minScore(minScore)
+                            .build());
 
-            if (searcher != null && vectors.size() >= REBUILD_THRESHOLD) {
+            List<dev.langchain4j.store.embedding.EmbeddingMatch<TextSegment>> matches = result.matches();
+            if (matches == null || matches.isEmpty()) return List.of();
 
-                return searchWithGraph(queryVf, maxResults, minScore);
-            }
-            return bruteForceSearch(queryVf, maxResults, minScore);
+            return matches.stream()
+                    .filter(m -> m.score() >= minScore)
+                    .map(m -> {
+                        TextSegment segment = m.embedded();
+                        String text = segment.text();
+                        Metadata meta = segment.metadata();
+                        return new com.xiaomizhou.dpsk.memory.store.EmbeddingStore.EmbeddingMatch(
+                                m.score(), m.embeddingId(), text, meta);
+                    })
+                    .sorted((a, b) -> Double.compare(b.getScore(), a.getScore()))
+                    .limit(maxResults)
+                    .collect(Collectors.toList());
         } finally {
             lock.readLock().unlock();
         }
@@ -115,167 +205,17 @@ public class JVectorEmbeddingStoreImpl implements EmbeddingStore {
     public void delete(String id) {
         lock.writeLock().lock();
         try {
-            entryMap.values().removeIf(e -> id.equals(e.id));
-            dirty = true;
-            pendingAddCount++;
+            store.remove(id);
             log.debug("Deleted embedding: id={}", id);
         } finally {
             lock.writeLock().unlock();
         }
     }
 
-    public int size() {
-        lock.readLock().lock();
-        try {
-            return entryMap.size();
-        } finally {
-            lock.readLock().unlock();
-        }
-    }
-
-    // ======================== 内部方法 ========================
-
-    private VectorFloat<?> toVectorFloat(List<Float> list) {
-        if (list == null || list.isEmpty()) return null;
-        float[] arr = new float[list.size()];
-        for (int i = 0; i < list.size(); i++) arr[i] = list.get(i);
-
-        return DefaultVectorizationProvider.getInstance().getVectorTypeSupport().createFloatVector(arr);
-    }
-
-    private List<EmbeddingMatch> searchWithGraph(VectorFloat<?> queryVf, int maxResults, double minScore) {
-        try {
-
-
-//            SearchScoreProvider scoreProvider = new DefaultSearchScoreProvider(VectorSimilarityFunction.COSINE, queryVf);
-//            SearchScoreProvider scoreProvider = SearchScoreProvider.exact(queryVf, VectorSimilarityFunction.COSINE);
-            List<VectorFloat<?>> ss = List.of(queryVf);
-            // TODO 这里的1可能有问题，需要根据实际情况调整
-            SearchScoreProvider scoreProvider = DefaultSearchScoreProvider.exact(queryVf, VectorSimilarityFunction.COSINE, new ListRandomAccessVectorValues(ss, 1));
-            SearchResult result = searcher.search(
-                    scoreProvider, maxResults * 2, GRAPH_SEARCH_BEAM_WIDTH,
-                    (float) minScore, 0.0f, null);
-
-            List<EmbeddingMatch> matches = new ArrayList<>();
-            if (result.getNodes() != null) {
-                for (SearchResult.NodeScore ns : result.getNodes()) {
-                    if (ns == null) continue;
-                    int idx = ns.node;
-                    DocEntry entry = entryMap.get(idx);
-                    if (entry != null && ns.score >= minScore) {
-                        matches.add(new EmbeddingMatch(ns.score, entry.id, entry.text, entry.metadata));
-                    }
-                }
-            }
-            matches.sort((a, b) -> Double.compare(b.getScore(), a.getScore()));
-            if (matches.size() > maxResults) return matches.subList(0, maxResults);
-            return matches;
-        } catch (Exception e) {
-            log.warn("Graph search failed, falling back to brute force: {}", e.getMessage());
-            return bruteForceSearch(queryVf, maxResults, minScore);
-        }
-    }
-
-    private List<EmbeddingMatch> bruteForceSearch(VectorFloat<?> query, int maxResults, double minScore) {
-        List<EmbeddingMatch> results = new ArrayList<>();
-        float[] queryArr = toArray(query);
-        for (int i = 0; i < vectors.size(); i++) {
-            DocEntry entry = entryMap.get(i);
-            if (entry == null) continue;
-            double score = cosineSimilarity(queryArr, toArray(vectors.get(i)));
-            if (score >= minScore) {
-                results.add(new EmbeddingMatch(score, entry.id, entry.text, entry.metadata));
-            }
-        }
-        results.sort((a, b) -> Double.compare(b.getScore(), a.getScore()));
-        if (results.size() > maxResults) return results.subList(0, maxResults);
-        return results;
-    }
-
-    private void rebuildIndex() {
-        if (vectors.isEmpty()) return;
-        try {
-            BuildScoreProvider bsp = BuildScoreProvider.randomAccessScoreProvider(
-                    new ListRAVV(vectors), VectorSimilarityFunction.COSINE);
-            GraphIndexBuilder builder = new GraphIndexBuilder(
-                    bsp, dimension, GRAPH_M, GRAPH_CONSTRUCTION_BEAM_WIDTH,
-                    GRAPH_ALPHA, 1.2f, false, false);
-            var graphIndex = builder.build(new ListRAVV(vectors));
-            this.searcher = new GraphSearcher(graphIndex);
-            this.dirty = false;
-            this.pendingAddCount = 0;
-            log.debug("Graph index rebuilt: {} vectors", vectors.size());
-        } catch (Exception e) {
-            log.error("Failed to rebuild graph index: {}", e.getMessage());
-            this.searcher = null;
-        }
-    }
-
-    private float[] toArray(VectorFloat<?> vf) {
-        float[] arr = new float[vf.length()];
-        for (int i = 0; i < arr.length; i++) arr[i] = vf.get(i);
-        return arr;
-    }
-
-    private double cosineSimilarity(float[] a, float[] b) {
-        if (a.length != b.length) return 0.0;
-        double dot = 0.0, normA = 0.0, normB = 0.0;
-        for (int i = 0; i < a.length; i++) {
-            dot += (double) a[i] * b[i];
-            normA += (double) a[i] * a[i];
-            normB += (double) b[i] * b[i];
-        }
-        if (normA == 0.0 || normB == 0.0) return 0.0;
-        return dot / (Math.sqrt(normA) * Math.sqrt(normB));
-    }
-
-    // ======================== 内部类 ========================
-
-    private static class DocEntry {
-        final String id;
-        final String text;
-        final Map<String, String> metadata;
-
-        DocEntry(String id, String text, Map<String, String> metadata) {
-            this.id = id;
-            this.text = text;
-            this.metadata = new LinkedHashMap<>(metadata);
-        }
-    }
-
     /**
-     * 将 List&lt;VectorFloat&gt; 适配为 JVector 的 RandomAccessVectorValues
+     * 是否已完成历史数据恢复。
      */
-    private static class ListRAVV implements RandomAccessVectorValues {
-        private final List<VectorFloat<?>> vecs;
-
-        ListRAVV(List<VectorFloat<?>> vecs) {
-            this.vecs = vecs;
-        }
-
-        @Override
-        public int size() {
-            return vecs.size();
-        }
-
-        @Override
-        public int dimension() {
-            return vecs.isEmpty() ? 0 : vecs.get(0).length();
-        }
-
-        @Override
-        public VectorFloat<?> getVector(int i) {
-            return vecs.get(i);
-        }
-
-        @Override
-        public boolean isValueShared() {
-            return false;
-        }
-
-        @Override
-        public RandomAccessVectorValues copy() {
-            return new ListRAVV(new ArrayList<>(vecs));
-        }
+    public boolean isRestored() {
+        return restored;
     }
 }

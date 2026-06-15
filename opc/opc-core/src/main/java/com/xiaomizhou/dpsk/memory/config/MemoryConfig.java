@@ -35,9 +35,9 @@ public final class MemoryConfig {
             "- 新对话：\n{formatted_messages}\n\n" +
             "合并后的摘要：";
 
-    // ======================== L2 长期事实记忆 ========================
+    // ======================== L2 语义记忆（纯 RAG） ========================
 
-    /** 每次注入的最多记忆片段数 */
+    /** 每次检索的最多历史消息片段数 */
     public static final int L2_RETRIEVAL_TOPK = 3;
 
     /** 语义相似度阈值 */
@@ -45,12 +45,6 @@ public final class MemoryConfig {
 
     /** 记忆时间衰减系数 λ（每天） */
     public static final double L2_DECAY_LAMBDA = 0.01;
-
-    /** 事实提取 Prompt 模板 */
-    public static final String L2_FACT_EXTRACTION_PROMPT_TEMPLATE =
-            "从以下对话中提取所有值得长期记住的事实（关于用户），以 JSON 数组输出：\n" +
-            "[{\"type\": \"PREFERENCE|EVENT|RELATION\", \"content\": \"...\", \"importance\": 0.0-1.0}]\n\n" +
-            "对话：\n{dialogues}";
 
     // ======================== Memory ID 模板 ========================
 
@@ -76,13 +70,24 @@ public final class MemoryConfig {
     /** 关系 */
     public static final String FACT_TYPE_RELATION = "RELATION";
 
-    // ======================== 检索触发关键词 ========================
+    // ======================== L3 知识库记忆 ========================
 
-    /** 触发 L2 语义检索的关键词 */
-    public static final String[] RETRIEVAL_TRIGGER_KEYWORDS = {
-            "还记得", "之前", "上次", "以前", "过去", "曾经",
-            "记得吗", "回忆", "往事", "以前说过"
-    };
+    /** L3 每次检索最多返回的片段数 */
+    public static final int L3_RETRIEVAL_TOPK = 3;
+
+    /** L3 高置信度阈值：score >= 此值时，作为强约束注入（告诉 LLM 严格基于知识库回答） */
+    public static final double L3_HIGH_THRESHOLD = 0.90;
+
+    /** L3 低置信度阈值：score < 此值时，不注入，避免噪声干扰 */
+    public static final double L3_LOW_THRESHOLD = 0.75;
+
+    /** L3 高置信度注入前缀：告诉 LLM 必须基于知识库回答 */
+    public static final String L3_HIGH_CONFIDENCE_PREFIX = "[请严格基于以下知识库内容回答，不要自由发挥]";
+
+    /** L3 中等置信度注入前缀：知识库内容作为参考 */
+    public static final String L3_MEDIUM_CONFIDENCE_PREFIX = "[以下知识库内容可能对你有帮助]";
+
+    // ======================== 事实类型常量（保留向后兼容） ========================
 
     /**
      * 构建 memoryId。

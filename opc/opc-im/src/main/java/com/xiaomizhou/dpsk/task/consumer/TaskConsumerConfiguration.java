@@ -16,6 +16,8 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.event.EventListener;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 
+import java.util.Map;
+
 /**
  * 定时任务消费者 Spring 配置。
  * <p>
@@ -66,8 +68,9 @@ public class TaskConsumerConfiguration {
     @EventListener(ApplicationReadyEvent.class)
     public void registerConsumers(ApplicationReadyEvent event) {
         var ctx = event.getApplicationContext();
-        taskConsumerRegistry.register(ctx.getBean(NotificationTaskConsumer.class));
-        taskConsumerRegistry.register(ctx.getBean(AgentTaskConsumer.class));
-        log.info("Registered task consumers: NOTIFICATION, AGENT_TASK");
+
+        Map<String, TaskConsumer> consumers = ctx.getBeansOfType(TaskConsumer.class);
+
+        consumers.values().forEach(taskConsumerRegistry::register);
     }
 }

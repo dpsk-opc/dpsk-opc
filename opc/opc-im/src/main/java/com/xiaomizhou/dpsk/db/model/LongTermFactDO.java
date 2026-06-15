@@ -37,4 +37,7 @@ public class LongTermFactDO extends BaseModel {
 
     @TableField("last_accessed_time")
     private Date lastAccessedTime;
+
+    @TableField("status")
+    private Integer status;
 }

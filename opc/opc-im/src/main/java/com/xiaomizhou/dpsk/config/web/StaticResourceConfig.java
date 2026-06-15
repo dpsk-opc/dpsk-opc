@@ -1,4 +1,4 @@
-package com.xiaomizhou.dpsk.core.config;
+package com.xiaomizhou.dpsk.config.web;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;

@@ -78,12 +78,15 @@ public class MessageRepositoryImpl implements MessageRepository {
                             w2.eq(com.xiaomizhou.dpsk.db.model.ChatMessage::getSenderCode, agentCode);
                             w2.eq(com.xiaomizhou.dpsk.db.model.ChatMessage::getReceiverCode, userCode);
                         }))
-                        .orderByAsc(com.xiaomizhou.dpsk.db.model.ChatMessage::getId)
+                        .orderByDesc(com.xiaomizhou.dpsk.db.model.ChatMessage::getId)
                         .last("LIMIT " + limit));
 
         if (CollectionUtils.isEmpty(messages)) {
             return List.of();
         }
+
+        // 时间正序
+        Collections.reverse(messages);
 
         justMsg(messages);
 
@@ -123,9 +126,6 @@ public class MessageRepositoryImpl implements MessageRepository {
 //                    }
 //                });
 
-
-        // 时间正序
-//        Collections.reverse(messages);
         return messages.stream()
                 .map(this::toChatMessage)
                 .filter(Objects::nonNull)
@@ -144,15 +144,16 @@ public class MessageRepositoryImpl implements MessageRepository {
                         .eq(com.xiaomizhou.dpsk.db.model.ChatMessage::getReceiverCode, groupCode)
                         .eq(com.xiaomizhou.dpsk.db.model.ChatMessage::getConversationType, "GROUP")
                         .ne(com.xiaomizhou.dpsk.db.model.ChatMessage::getStatus, "IGNORE")
-                        .orderByAsc(com.xiaomizhou.dpsk.db.model.ChatMessage::getId)
+                        .orderByDesc(com.xiaomizhou.dpsk.db.model.ChatMessage::getId)
                         .last("LIMIT " + limit));
 
         if (CollectionUtils.isEmpty(messages)) {
             return List.of();
         }
 
-        justMsg(messages);
+        Collections.reverse(messages);
 
+        justMsg(messages);
         return messages.stream()
                 .map(this::toChatMessage)
                 .filter(Objects::nonNull)

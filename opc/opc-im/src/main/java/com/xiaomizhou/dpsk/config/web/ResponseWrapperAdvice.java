@@ -1,4 +1,4 @@
-package com.xiaomizhou.dpsk.core.config;
+package com.xiaomizhou.dpsk.config.web;
 
 import com.xiaomizhou.dpsk.core.model.Results;
 import com.xiaomizhou.dpsk.core.model.response.Response;

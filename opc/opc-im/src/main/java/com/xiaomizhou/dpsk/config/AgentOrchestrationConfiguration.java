@@ -1,4 +1,4 @@
-package com.xiaomizhou.dpsk.agent.config;
+package com.xiaomizhou.dpsk.config;
 
 import com.xiaomizhou.dpsk.agent.AgentOrchestrator;
 import com.xiaomizhou.dpsk.agent.builder.GroupBuilder;
@@ -34,13 +34,13 @@ import org.springframework.context.annotation.Configuration;
 @Slf4j
 public class AgentOrchestrationConfiguration {
 
-    @Value("${com.xiaomizhou.opc.llm.api-key:sk-0803dabfa90b4a188e116e007f442a62}")
+    @Value("${com.xiaomizhou.opc.llm.api-key}")
     private String apiKey;
 
-    @Value("${com.xiaomizhou.opc.llm.base-url:https://api.deepseek.com/v1}")
+    @Value("${com.xiaomizhou.opc.llm.base-url}")
     private String baseUrl;
 
-    @Value("${com.xiaomizhou.opc.llm.model-name:deepseek-chat}")
+    @Value("${com.xiaomizhou.opc.llm.model-name}")
     private String modelName;
 
     @Bean

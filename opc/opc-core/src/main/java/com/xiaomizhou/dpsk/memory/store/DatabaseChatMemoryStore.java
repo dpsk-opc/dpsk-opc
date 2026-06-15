@@ -1,7 +1,9 @@
 package com.xiaomizhou.dpsk.memory.store;
 
 import com.google.common.collect.Lists;
+import com.xiaomizhou.dpsk.agent.AgentBuildSpec;
 import com.xiaomizhou.dpsk.memory.PersonaProvider;
+import com.xiaomizhou.dpsk.memory.assembler.ContextAssembler;
 import com.xiaomizhou.dpsk.memory.config.MemoryConfig;
 import com.xiaomizhou.dpsk.memory.config.MemoryKey;
 import com.xiaomizhou.dpsk.memory.manager.MemoryManager;
@@ -34,9 +36,12 @@ public class DatabaseChatMemoryStore implements ChatMemoryStore {
 
     private final MessageRepository messageRepository;
     private final MemoryManager memoryManager;
-    private final PersonaProvider personaProvider;
 
-    /** 内存快照：memoryId -> 消息指纹列表（用于检测移出窗口的消息） */
+    private final ContextAssembler.AssembledPrompt assembledPrompt;
+
+    /**
+     * 内存快照：memoryId -> 消息指纹列表（用于检测移出窗口的消息）
+     */
     private final Map<Object, List<String>> snapshotMap = new ConcurrentHashMap<>();
 
     /**
@@ -44,14 +49,13 @@ public class DatabaseChatMemoryStore implements ChatMemoryStore {
      *
      * @param messageRepository 消息仓储（由 opc-im 实现并注入）
      * @param memoryManager     记忆管理器（可为 null，仅 L0 模式）
-     * @param personaProvider   人设提供者（可为 null）
      */
     public DatabaseChatMemoryStore(MessageRepository messageRepository,
                                    MemoryManager memoryManager,
-                                   PersonaProvider personaProvider) {
+                                   ContextAssembler.AssembledPrompt assembledPrompt) {
         this.messageRepository = Objects.requireNonNull(messageRepository, "messageRepository must not be null");
         this.memoryManager = memoryManager;
-        this.personaProvider = personaProvider;
+        this.assembledPrompt = Objects.requireNonNull(assembledPrompt, "assembledPrompt can not be null.");
     }
 
     @Override
@@ -76,17 +80,6 @@ public class DatabaseChatMemoryStore implements ChatMemoryStore {
         }
 
         // 去掉最后一个 UserMessage（如果存在），原因是Langchain4j在构建UserMessage()会append一个消息，同一条数据也会从db查出来，导致有两条一模一样的消息发给LLM
-//        ChatMessage last = dbMessages.get(dbMessages.size() - 1);
-//        if (last instanceof UserMessage) {
-//            if (dbMessages.size() == 1) {
-//                dbMessages = List.of();
-//            } else {
-//                dbMessages = dbMessages.subList(0, dbMessages.size() - 1);
-//
-//                Map<String, Object> attributes = ((UserMessage) last).attributes();
-//                dbMessages.add(UserMessage.from(Lists))
-//            }
-//        }
 
         // 确保工具调用消息配对完整（THINKING 的 call_id 与 TOOL 的 id 必须成对）
         dbMessages = ensureToolPairing(dbMessages);
@@ -94,18 +87,13 @@ public class DatabaseChatMemoryStore implements ChatMemoryStore {
         // 裁剪到 L0_MAX_MESSAGES，但不切断 THINKING-TOOL 工具调用组
         dbMessages = trimKeepLatest(dbMessages, MemoryConfig.L0_MAX_MESSAGES);
 
-        // 从 DB 加载后前置 persona（与 DefaultMemory 第 48-51 行逻辑一致）
-        // 群聊中不使用 persona provider，因为群聊 system message 已在 ChatService 中设置
-        if (!key.isGroupChat() && personaProvider != null) {
-            String persona = personaProvider.getPersona(key.getOwnerCode());
-            if (persona != null && !persona.isEmpty()) {
-                List<ChatMessage> result = new ArrayList<>();
-                result.add(SystemMessage.from(persona));
-                result.addAll(dbMessages);
-                return result;
-            }
-        }
-        return dbMessages;
+
+        List<ChatMessage> result = new ArrayList<>();
+
+        result.add(SystemMessage.from(assembledPrompt.getFullPrompt()));
+        result.addAll(dbMessages);
+
+        return result;
     }
 
     @Override
@@ -182,8 +170,8 @@ public class DatabaseChatMemoryStore implements ChatMemoryStore {
      * opc-im 可以实现更精确的重建逻辑。
      */
     private List<ChatMessage> rebuildEvictedMessages(List<String> evictedFingerprints,
-                                                      List<String> allOldFingerprints,
-                                                      List<ChatMessage> currentMessages) {
+                                                     List<String> allOldFingerprints,
+                                                     List<ChatMessage> currentMessages) {
         List<ChatMessage> result = new ArrayList<>();
         // 使用一个简易的索引：在旧快照中找位置，然后推算消息
         // 由于被移出的消息不在 currentMessages 中，这里使用指纹解析
@@ -242,7 +230,7 @@ public class DatabaseChatMemoryStore implements ChatMemoryStore {
                     }
                 } else {
                     log.debug("Dropping THINKING message with incomplete tool results: "
-                            + "expected={}, found={}",
+                                    + "expected={}, found={}",
                             requests.stream().map(ToolExecutionRequest::id).collect(Collectors.toList()),
                             requests.stream().filter(r -> toolResultIds.contains(r.id()))
                                     .map(ToolExecutionRequest::id).collect(Collectors.toList()));

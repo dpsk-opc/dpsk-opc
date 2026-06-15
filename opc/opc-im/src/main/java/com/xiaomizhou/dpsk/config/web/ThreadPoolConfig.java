@@ -1,4 +1,4 @@
-package com.xiaomizhou.dpsk.core.config;
+package com.xiaomizhou.dpsk.config.web;
 
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.concurrent.BasicThreadFactory;

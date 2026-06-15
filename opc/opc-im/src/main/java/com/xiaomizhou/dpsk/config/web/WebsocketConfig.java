@@ -1,4 +1,4 @@
-package com.xiaomizhou.dpsk.core.config;
+package com.xiaomizhou.dpsk.config.web;
 
 import com.xiaomizhou.dpsk.ws.ChatWsChannel;
 import org.springframework.context.annotation.Bean;

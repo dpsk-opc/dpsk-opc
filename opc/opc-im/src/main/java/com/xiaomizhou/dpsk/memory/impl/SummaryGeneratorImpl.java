@@ -4,6 +4,7 @@ import com.xiaomizhou.dpsk.memory.config.MemoryConfig;
 import com.xiaomizhou.dpsk.memory.generator.SummaryGenerator;
 import dev.langchain4j.model.openai.OpenAiChatModel;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -20,11 +21,20 @@ public class SummaryGeneratorImpl implements SummaryGenerator {
 
     private final OpenAiChatModel chatModel;
 
+    @Value("${com.xiaomizhou.opc.llm.api-key}")
+    private String apiKey;
+
+    @Value("${com.xiaomizhou.opc.llm.base-url}")
+    private String baseUrl;
+
+    @Value("${com.xiaomizhou.opc.llm.model-name}")
+    private String modelName;
+
     public SummaryGeneratorImpl() {
         this.chatModel = OpenAiChatModel.builder()
-                .modelName("deepseek-chat")
-                .baseUrl("https://api.deepseek.com/v1")
-                .apiKey("sk-0803dabfa90b4a188e116e007f442a62")
+                .modelName(modelName)
+                .baseUrl(baseUrl)
+                .apiKey(modelName)
                 .temperature(0.3)
                 .maxTokens(1024)
                 .logRequests(true)

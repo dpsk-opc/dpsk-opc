@@ -158,7 +158,7 @@ public class EmbeddingTask implements Runnable {
                 metadata.put("importance", String.valueOf(fact.getImportance()));
 
                 // 写入向量存储
-                embeddingStore.add(job.factCode, vector, fact.getFactContent(), metadata);
+                embeddingStore.add(vector, fact.getFactContent(), metadata);
                 log.debug("Embedding stored: code={}, content={}", job.factCode,
                         fact.getFactContent().substring(0, Math.min(50, fact.getFactContent().length())));
 

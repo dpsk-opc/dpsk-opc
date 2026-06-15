@@ -73,7 +73,7 @@ public class FileRecord extends BaseModel {
     private String refCode;
 
     /**
-     * 关联业务类系。0-无关联，1-聊天，2-任务，3-头像，4-其他
+     * 关联业务类系。0-默认，1-聊天，2-会话，3-知识库节点
      */
     @TableField("ref_type")
     private Integer refType;

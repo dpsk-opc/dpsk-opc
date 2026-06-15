@@ -59,7 +59,8 @@ public class AgentDef {
                 Your role:%s
                 Your workspace:%s
                 Your slogan:%s
-                """.formatted(name, nickname, mbti, 1 == sex ? "男" : "女", role, workspace, slogan);
+                Your prompt:%s
+                """.formatted(name, nickname, mbti, 1 == sex ? "男" : "女", role, workspace, slogan, prompt);
     }
 
 }
