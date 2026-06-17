@@ -15,7 +15,7 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
  */
 public class JsonUtils {
 
-    private static final ObjectMapper OBJECT_MAPPER;
+    public static final ObjectMapper OBJECT_MAPPER;
 
     static {
         // 推荐使用 JsonMapper 构建，支持更多配置

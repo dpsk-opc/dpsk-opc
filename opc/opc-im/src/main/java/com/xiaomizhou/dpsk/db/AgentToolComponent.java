@@ -1,17 +1,22 @@
 package com.xiaomizhou.dpsk.db;
 
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.xiaomizhou.dpsk.db.dao.AgentDao;
+import com.xiaomizhou.dpsk.db.dao.AgentMcpBindingDao;
 import com.xiaomizhou.dpsk.db.dao.AgentToolRefDao;
 import com.xiaomizhou.dpsk.db.dao.ToolDao;
 import com.xiaomizhou.dpsk.db.dto.AgentToolBindCmd;
 import com.xiaomizhou.dpsk.db.dto.AgentToolRefVO;
 import com.xiaomizhou.dpsk.db.model.Agent;
+import com.xiaomizhou.dpsk.db.model.AgentMcpBindingDO;
 import com.xiaomizhou.dpsk.db.model.AgentToolRefDO;
 import com.xiaomizhou.dpsk.db.model.ToolDO;
 import com.xiaomizhou.dpsk.core.exceptions.BusinessException;
+import com.xiaomizhou.dpsk.tool.SourceType;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.collections.MapUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -35,6 +40,7 @@ public class AgentToolComponent {
     private final ToolDao toolDao;
     private final AgentDao agentDao;
 
+
     /**
      * 查询 Agent 绑定的工具列表。
      * 若 agentCode 为空，则查询所有在用的工具（有绑定记录的工具列表，去重）。
@@ -45,7 +51,7 @@ public class AgentToolComponent {
     public List<AgentToolRefVO> queryByAgentCode(String agentCode) {
         if (StringUtils.isBlank(agentCode)) {
             // 查询所有在用的工具绑定
-            List<ToolDO> tools = toolDao.lambdaQuery().list();
+            List<ToolDO> tools = toolDao.list(Wrappers.<ToolDO>lambdaQuery().eq(ToolDO::getSourceType, SourceType.LOCAL));
             List<AgentToolRefDO> allRefs = tools.stream().map(tool -> {
                 AgentToolRefDO ref = new AgentToolRefDO();
                 ref.setToolCode(tool.getCode());
@@ -64,9 +70,13 @@ public class AgentToolComponent {
             return Map.of();
         }
 
+        // 本地工具
         List<AgentToolRefDO> refs = agentToolRefDao.lambdaQuery()
                 .in(AgentToolRefDO::getAgentCode, agentCodes)
                 .list();
+
+
+
 
         return toVOList(refs).stream()
                 .collect(Collectors.groupingBy(AgentToolRefVO::getAgentCode));

@@ -27,4 +27,9 @@ public interface WsMsgType {
 
     // 错误（服务端主动推送）
     String ERROR = "error";
+
+    // MCP 工具调用（后端 -> 前端 Electron）
+    String MCP_CALL = "mcp_call";
+    // MCP 工具调用结果（前端 Electron -> 后端）
+    String MCP_CALL_RESULT = "mcp_call_result";
 }

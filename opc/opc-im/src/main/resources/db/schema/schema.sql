@@ -392,7 +392,7 @@ CREATE TABLE IF NOT EXISTS `t_tool_audit_log` (
     `user_code` VARCHAR(60) NOT NULL DEFAULT '',
     `conversation_code` VARCHAR(100) NOT NULL DEFAULT '',
     `request_params` TEXT COMMENT '调用参数（脱敏后）',
-    `response_summary` VARCHAR(500) DEFAULT '' COMMENT '结果摘要',
+    `response_summary` TEXT DEFAULT '' COMMENT '结果摘要',
     `status` VARCHAR(20) NOT NULL DEFAULT 'SUCCESS' COMMENT 'SUCCESS, FAIL, PENDING, CANCELLED',
     `risk_level` VARCHAR(20) NOT NULL DEFAULT 'NORMAL',
     `execution_time_ms` INT DEFAULT 0,
@@ -574,4 +574,50 @@ create table if not exists scheduled_tasks (
   INDEX execution_time_idx (execution_time),
   INDEX last_heartbeat_idx (last_heartbeat),
   INDEX priority_execution_time_idx (priority desc, execution_time asc)
-)
+);
+
+-- =============================================
+-- 表名: t_mcp_template
+-- 描述: MCP 服务模板表
+-- =============================================
+CREATE TABLE IF NOT EXISTS `t_mcp_template` (
+    `id`                BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键ID',
+    `code`              VARCHAR(100) NOT NULL DEFAULT '' COMMENT '业务编码，唯一标识',
+    `name`              VARCHAR(128) NOT NULL DEFAULT '' COMMENT '模板名称',
+    `description`       VARCHAR(512) NOT NULL DEFAULT '' COMMENT '模板描述',
+    `command`           VARCHAR(64)  NOT NULL DEFAULT '' COMMENT '启动命令: npx/node/python/uvx/go/docker',
+    `args`              JSON         NOT NULL DEFAULT '[]' COMMENT '命令参数列表，JSON数组',
+    `runtime_env`       TINYINT(2)   NOT NULL DEFAULT 0 COMMENT '执行路由: 0-none, 1-electron, 2-backend',
+    `runtime_available` TINYINT(1)   NOT NULL DEFAULT 0 COMMENT '环境是否可用: 0-否, 1-是',
+    `tools`             JSON         NOT NULL DEFAULT '[]' COMMENT '工具列表快照: [{name,description,inputSchema}]',
+    `create_time`       TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time`       TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间',
+    `is_deleted`        TINYINT(1)   NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-未删除, 1-已删除',
+    CONSTRAINT uk_mcp_template_code UNIQUE (`code`)
+) COMMENT 'MCP服务模板表';
+
+CREATE INDEX IF NOT EXISTS idx_mcp_template_name ON `t_mcp_template` (`name`, `is_deleted`);
+CREATE INDEX IF NOT EXISTS idx_mcp_template_runtime_env ON `t_mcp_template` (`runtime_env`, `is_deleted`);
+
+-- =============================================
+-- 表名: t_agent_mcp_binding
+-- 描述: Agent MCP 绑定表
+-- =============================================
+CREATE TABLE IF NOT EXISTS `t_agent_mcp_binding` (
+    `id`             BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键ID',
+    `code`           VARCHAR(100) NOT NULL DEFAULT '' COMMENT '业务编码，唯一标识',
+    `template_code`  VARCHAR(100) NOT NULL DEFAULT '' COMMENT '关联模板编码',
+    `agent_code`     VARCHAR(100) NOT NULL DEFAULT '' COMMENT '绑定的Agent编码',
+    `enabled`        TINYINT(1)   NOT NULL DEFAULT 1 COMMENT '是否启用: 0-停用, 1-启用',
+    `env_vars`       TEXT         NOT NULL DEFAULT '' COMMENT 'Agent专属环境变量',
+    `status`         TINYINT(2)   NOT NULL DEFAULT 0 COMMENT '运行状态: 0-stopped, 1-running, 2-connecting',
+    `tools_snapshot` JSON         NOT NULL DEFAULT '[]' COMMENT '绑定时的工具快照: [{name,description,inputSchema}]',
+    `create_time`    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time`    TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间',
+    `is_deleted`     TINYINT(1)   NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0-未删除, 1-已删除',
+    CONSTRAINT uk_mcp_binding_agent_template UNIQUE (`agent_code`, `template_code`)
+) COMMENT 'Agent MCP绑定表';
+
+CREATE INDEX IF NOT EXISTS idx_mcp_binding_template ON `t_agent_mcp_binding` (`template_code`, `is_deleted`);
+CREATE INDEX IF NOT EXISTS idx_mcp_binding_agent ON `t_agent_mcp_binding` (`agent_code`, `is_deleted`);
+CREATE INDEX IF NOT EXISTS idx_mcp_binding_status ON `t_agent_mcp_binding` (`status`, `is_deleted`);

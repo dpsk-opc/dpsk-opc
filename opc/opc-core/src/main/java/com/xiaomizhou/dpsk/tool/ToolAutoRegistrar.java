@@ -119,7 +119,7 @@ public class ToolAutoRegistrar {
                     .name(toolName)
                     .description(description)
                     .parametersSchema(parametersSchema)
-                    .sourceType(ToolMetadata.SOURCE_LOCAL)
+                    .sourceType(SourceType.LOCAL)
 //                    .sourceRef(clazz.getCanonicalName() + "." + method.getName())
                     .sourceRef(sourceRef)
                     .riskLevel(ToolMetadata.RISK_NORMAL)

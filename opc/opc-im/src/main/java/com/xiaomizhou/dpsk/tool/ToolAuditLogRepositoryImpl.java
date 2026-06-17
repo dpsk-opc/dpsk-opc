@@ -6,6 +6,7 @@ import com.xiaomizhou.dpsk.tool.model.ToolAuditLog;
 import com.xiaomizhou.dpsk.tool.repository.ToolAuditLogRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Component;
 
 import java.util.Date;
@@ -93,7 +94,7 @@ public class ToolAuditLogRepositoryImpl implements ToolAuditLogRepository {
         entity.setUserCode(model.getUserCode());
         entity.setConversationCode(model.getConversationCode());
         entity.setRequestParams(model.getRequestParams());
-        entity.setResponseSummary(model.getResponseSummary());
+        entity.setResponseSummary(StringUtils.left(model.getResponseSummary(), 500));
         entity.setStatus(model.getStatus());
         entity.setRiskLevel(model.getRiskLevel());
         entity.setExecutionTimeMs(model.getExecutionTimeMs());

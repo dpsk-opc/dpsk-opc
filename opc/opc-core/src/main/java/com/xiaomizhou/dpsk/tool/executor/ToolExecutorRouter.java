@@ -1,5 +1,6 @@
 package com.xiaomizhou.dpsk.tool.executor;
 
+import com.xiaomizhou.dpsk.tool.SourceType;
 import com.xiaomizhou.dpsk.tool.ToolExecutor;
 import com.xiaomizhou.dpsk.tool.model.ToolCall;
 import com.xiaomizhou.dpsk.tool.model.ToolContext;
@@ -15,12 +16,17 @@ import org.springframework.context.ApplicationContext;
  * @date 2026/5/30
  */
 @Slf4j
-@RequiredArgsConstructor
 public class ToolExecutorRouter {
 
     private final LocalToolExecutor localExecutor;
-    private final McpToolExecutor mcpExecutor;
+    private volatile McpToolExecutor mcpExecutor;
     private final ScriptToolExecutor scriptExecutor;
+
+    public ToolExecutorRouter(LocalToolExecutor localExecutor, McpToolExecutor mcpExecutor, ScriptToolExecutor scriptExecutor) {
+        this.localExecutor = localExecutor;
+        this.mcpExecutor = mcpExecutor;
+        this.scriptExecutor = scriptExecutor;
+    }
 
     /**
      * 创建默认路由器（需要 Spring ApplicationContext）。
@@ -31,6 +37,13 @@ public class ToolExecutorRouter {
                 new McpToolExecutor(),
                 new ScriptToolExecutor()
         );
+    }
+
+    /**
+     * 设置 MCP 执行器（由 im 模块注入，可替换默认的无参实例）。
+     */
+    public void setMcpExecutor(McpToolExecutor mcpExecutor) {
+        this.mcpExecutor = mcpExecutor;
     }
 
     /**
@@ -62,9 +75,9 @@ public class ToolExecutorRouter {
         }
 
         return switch (sourceType.toUpperCase()) {
-            case ToolMetadata.SOURCE_LOCAL -> localExecutor;
-            case ToolMetadata.SOURCE_MCP -> mcpExecutor;
-            case ToolMetadata.SOURCE_SCRIPT -> scriptExecutor;
+            case SourceType.LOCAL -> localExecutor;
+            case SourceType.MCP -> mcpExecutor;
+            case SourceType.SCRIPT -> scriptExecutor;
             default -> throw new IllegalArgumentException("Unknown sourceType: " + sourceType);
         };
     }

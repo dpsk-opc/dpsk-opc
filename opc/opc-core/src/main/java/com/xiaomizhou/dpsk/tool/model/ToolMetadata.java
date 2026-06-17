@@ -64,11 +64,6 @@ public class ToolMetadata {
     /** 所属 Agent（空为公共） */
     private String ownerAgentCode;
 
-    // ---- 便捷常量 ----
-
-    public static final String SOURCE_LOCAL = "LOCAL";
-    public static final String SOURCE_MCP = "MCP";
-    public static final String SOURCE_SCRIPT = "SCRIPT";
 
     public static final String RISK_NORMAL = "NORMAL";
     public static final String RISK_DANGEROUS = "DANGEROUS";

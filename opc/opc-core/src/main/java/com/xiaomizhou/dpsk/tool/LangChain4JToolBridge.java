@@ -8,6 +8,7 @@ import com.xiaomizhou.dpsk.tool.model.ToolMetadata;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.agent.tool.ToolSpecification;
 import dev.langchain4j.agent.tool.ToolSpecifications;
+import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 import dev.langchain4j.service.tool.AiServiceTool;
 import dev.langchain4j.service.tool.ToolProvider;
 import dev.langchain4j.service.tool.ToolProviderRequest;
@@ -17,6 +18,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.springframework.context.ApplicationContext;
 
 import java.util.HashMap;
@@ -123,27 +125,61 @@ public class LangChain4JToolBridge implements ToolProvider {
         Set<String> cache = Sets.newHashSet();
         ToolProviderResult.Builder builder = ToolProviderResult.builder();
 
+        Set<String> mpcCache = Sets.newHashSet();
+
         for (ToolMetadata tool : tools) {
 
 
-            String sourceRef = tool.getSourceRef();
-            String beanName = sourceRef.split("\\.")[0];
+            String sourceType = tool.getSourceType();
 
-            if (cache.contains(beanName)) {
-                continue;
+
+            if (Strings.CS.equals(sourceType, SourceType.LOCAL)) {
+
+                String sourceRef = tool.getSourceRef();
+                String beanName = sourceRef.split("\\.")[0];
+
+                if (cache.contains(beanName)) {
+                    continue;
+                }
+
+                Object bean = applicationContext.getBean(beanName);
+                List<ToolSpecification> specs = ToolSpecifications.toolSpecificationsFrom(bean);
+
+                builder.addAll(specs.stream().filter(spec -> {
+                    return spec.name().equals(tool.getName());
+                }).map(spec -> AiServiceTool.builder()
+                        .toolSpecification(spec)
+                        .toolExecutor(this::execute)
+                        .build()).collect(Collectors.toList()));
+
+                cache.add(beanName);
             }
 
-            Object bean = applicationContext.getBean(beanName);
-            List<ToolSpecification> specs = ToolSpecifications.toolSpecificationsFrom(bean);
+            if (Strings.CS.equals(sourceType, SourceType.MCP)) {
 
-            builder.addAll(specs.stream().filter(spec -> {
-                return spec.name().equals(tool.getName());
-            }).map(spec -> AiServiceTool.builder()
-                    .toolSpecification(spec)
-                    .toolExecutor(this::execute)
-                    .build()).collect(Collectors.toList()));
+                // 将 MCP 的 JSON Schema 转为 LangChain4j 的 JsonObjectSchema
+                JsonObjectSchema parameters = McpSchemaConverter.convert(tool.getParametersSchema());
+                if (parameters == null) {
+                    parameters = JsonObjectSchema.builder().build();
+                }
 
-            cache.add(beanName);
+                if(mpcCache.contains(tool.getName())){
+                    continue;
+                }
+
+                ToolSpecification toolSpecification = ToolSpecification.builder()
+                        .name(tool.getName())
+                        .description(StringUtils.defaultString(tool.getDescription()))
+                        .parameters(parameters)
+                        .build();
+
+                builder.add(AiServiceTool.builder()
+                        .toolSpecification(toolSpecification)
+                        .toolExecutor(this::execute)
+                        .build());
+
+                mpcCache.add(tool.getName());
+            }
         }
 
         return builder.build();

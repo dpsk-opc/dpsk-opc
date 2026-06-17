@@ -52,4 +52,7 @@ public class ToolDO extends BaseModel {
 
     @TableField("timeout_ms")
     private Integer timeoutMs;
+
+    @TableField("owner_agent_code")
+    private String ownerAgentCode;
 }
