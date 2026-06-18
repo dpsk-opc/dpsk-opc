@@ -168,6 +168,12 @@ public class TaskManagerImpl implements TaskManager {
 
                             log.debug("Instance: {},ran using ran using persistent schedule:{}", taskInstance.getId(), taskInstance.getData().getSchedule());
                             Task tk = getTask(taskInstance.getId());
+
+                            if(Objects.isNull(tk)){
+                                log.warn("Task not found: {}", taskInstance.getId());
+                                return;
+                            }
+
                             executeTask(tk, tk.getConsumerKey(), Map.of());
                         });
 

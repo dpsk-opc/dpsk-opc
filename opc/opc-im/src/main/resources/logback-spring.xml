@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration scan="true" scanPeriod="60 seconds" debug="false">
+    <!-- 定义日志文件的存储地址 -->
+<!--    <property name="LOG_HOME" value="${com.xiaomizhou.dpsk.opc.log.file-path}"/>-->
+<!--    <property name="MAX_HISTORY" value="${com.xiaomizhou.dpsk.opc.log.max-history:10}"/>-->
+<!--    <property name="MAX_FILE_SIZE" value="${com.xiaomizhou.dpsk.opc.log.max-file-size:10MB}"/>-->
+
+    <!-- 使用 springProperty 标签读取 application.yml 中的属性 -->
+    <!-- scope="context" 让该属性在整个日志配置中生效 -->
+    <!-- name 是在本 logback 配置中使用的变量名 -->
+    <!-- source 指向 application.yml 中的属性 key -->
+    <!-- defaultValue 是可选属性，当属性未找到时使用默认值，提高健壮性 -->
+    <springProperty scope="context" name="LOG_HOME" source="com.xiaomizhou.dpsk.opc.log.file-path" defaultValue="./logs"/>
+    <springProperty scope="context" name="LOG_FILE_NAME" source="com.xiaomizhou.dpsk.opc.log.file-name" defaultValue="dpsk-opc.log"/>
+    <springProperty scope="context" name="MAX_HISTORY" source="com.xiaomizhou.dpsk.opc.log.max-history" defaultValue="10"/>
+    <springProperty scope="context" name="MAX_FILE_SIZE" source="com.xiaomizhou.dpsk.opc.log.max-file-size" defaultValue="10MB"/>
+
+    <!-- 控制台输出 -->
+    <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{50} - %msg%n</pattern>
+        </encoder>
+    </appender>
+    <!-- 按照每天生成日志文件 -->
+    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+
+        <file>${LOG_HOME}/${LOG_FILE_NAME}</file>
+
+        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+            <FileNamePattern>${LOG_HOME}/{LOG_FILE_NAME}.%d{yyyy-MM-dd}.log</FileNamePattern>
+            <MaxHistory>${MAX_HISTORY}</MaxHistory>
+        </rollingPolicy>
+        <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+            <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{50} - %msg%n</pattern>
+        </encoder>
+        <triggeringPolicy class="ch.qos.logback.core.rolling.SizeBasedTriggeringPolicy">
+            <MaxFileSize>${MAX_FILE_SIZE}</MaxFileSize>
+        </triggeringPolicy>
+    </appender>
+    <!-- 日志输出级别 -->
+    <root level="INFO">
+        <appender-ref ref="STDOUT" />
+        <appender-ref ref="FILE" />
+    </root>
+</configuration>

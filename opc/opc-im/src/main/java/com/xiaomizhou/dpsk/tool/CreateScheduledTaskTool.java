@@ -1,5 +1,6 @@
 package com.xiaomizhou.dpsk.tool;
 
+import com.github.kagkarlsson.shaded.cronutils.parser.CronParser;
 import com.xiaomizhou.dpsk.db.TaskComponent;
 import com.xiaomizhou.dpsk.db.dao.ConversationDao;
 import com.xiaomizhou.dpsk.db.dto.TaskCreateCmd;
@@ -61,11 +62,10 @@ public class CreateScheduledTaskTool {
             value = "创建定时任务")
     public String createScheduledTask(
             @P(name = "name", description = "任务名称，简要描述任务用途", required = true) String name,
-            @P(name = "cronExpression", description = "Cron 6位 表达式，如 0 0 9 * * ? 表示每天9点", required = true) String cronExpression,
+            @P(name = "cronExpression", description = "Cron 表达式,例如：0 13 13 18 6 ? 表示6月18日13点13分", required = true) String cronExpression,
             @P(name = "consumerKey", description = "任务类型：NOTIFICATION=纯提醒，AGENT_TASK=AI执行", required = true) String consumerKey,
-            @P(name = "content", description = "任务内容：提醒文本（NOTIFICATION时）或AI指令（AGENT_TASK时）", required = true)
-            String content,
-            ToolContext toolContext) {
+            @P(name = "content", description = "任务内容：提醒文本（NOTIFICATION时）或AI指令（AGENT_TASK时）", required = true) String content,
+            @P(name = "toolContext", description = "工具上下文，不能传这个参数", required = false) ToolContext toolContext) {
 
         // 从 ThreadLocal 透传获取上下文参数
         String userId = toolContext.getUserCode();

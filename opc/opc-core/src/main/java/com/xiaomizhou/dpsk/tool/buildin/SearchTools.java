@@ -2,8 +2,9 @@ package com.xiaomizhou.dpsk.tool.buildin;
 
 import com.xiaomizhou.dpsk.tool.ToolMeta;
 import com.xiaomizhou.dpsk.tool.ToolRegistry;
+import com.xiaomizhou.dpsk.tool.model.ToolContext;
 import com.xiaomizhou.dpsk.tool.model.ToolMetadata;
-import org.springframework.ai.tool.annotation.Tool;
+import dev.langchain4j.agent.tool.P;
 import org.springframework.ai.tool.annotation.ToolParam;
 
 import java.util.List;
@@ -17,7 +18,7 @@ import java.util.stream.Collectors;
  * @author eason - vipzhsh@163.com
  * @date 2026/5/30
  */
-@ToolMeta(value = "查询可用工具", level = "normal", category = "系统", tags = {"查询可用工具列表、工具详情"})
+@ToolMeta(value = "查询可用工具", level = "normal", category = "meta", tags = {"查询可用工具列表、工具详情"})
 public class SearchTools {
 
     private final ToolRegistry registry;
@@ -26,13 +27,12 @@ public class SearchTools {
         this.registry = registry;
     }
 
-    @Tool(name = "search_tools", description = "搜索可用工具，输入关键词返回匹配的工具列表")
     @dev.langchain4j.agent.tool.Tool(name = "search_tools", value = "搜索可用工具，输入关键词返回匹配的工具列表")
     public String searchTools(
-            @ToolParam(description = "搜索关键词，匹配工具名称、描述、分类和标签") String keyword,
-            @ToolParam(description = "返回工具的最大数量，默认10") int limit) {
+            @P(description = "搜索关键词，匹配工具名称、描述、分类和标签") String keyword,
+            @P(description = "返回工具的最大数量，默认10") int limit, @P(value = "工具上下文，不能传这个参数",required = false) ToolContext context) {
 
-        List<ToolMetadata> results = registry.searchTools(keyword);
+        List<ToolMetadata> results = registry.searchTools(keyword, context.getAgentCode());
 
         if (results.isEmpty()) {
             return "未找到匹配关键词 \"" + keyword + "\" 的工具。";
@@ -51,10 +51,8 @@ public class SearchTools {
                         ""));
     }
 
-    @Tool(name = "get_tool_detail", description = "获取指定工具的详细参数Schema信息")
     @dev.langchain4j.agent.tool.Tool(name = "get_tool_detail", value = "获取指定工具的详细参数Schema信息")
-    public String getToolDetail(
-            @ToolParam(description = "工具名称") String toolName) {
+    public String getToolDetail(@P(description = "工具名称") String toolName,@P(value = "工具上下文，不能传这个参数",required = false) ToolContext context) {
 
         ToolMetadata metadata = registry.getMetadata(toolName);
         if (metadata == null) {

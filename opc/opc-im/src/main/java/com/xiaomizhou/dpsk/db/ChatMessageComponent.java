@@ -216,6 +216,10 @@ public class ChatMessageComponent {
         msg.setStatus(MessageStatus.SENT);
         msg.setContentType(0);
 
+        if (StringUtils.isNotBlank(dto.getStatus())) {
+            msg.setStatus(dto.getStatus());
+        }
+
         if (StringUtils.isNotBlank(dto.getParentMsgCode())) {
             ChatMessage chat = getByCode(dto.getParentMsgCode());
             msg.setParentId(Objects.isNull(chat) ? 0L : chat.getId());

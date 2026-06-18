@@ -42,6 +42,7 @@ public class AuthFilter extends OncePerRequestFilter {
      * 不需要认证的路径前缀
      */
     private static final String[] EXCLUDE_PATHS = {
+            "/health",
             "/xiaomizhou/opc/v1/agent/auth/",
             "/upload",
             "/upload/*",

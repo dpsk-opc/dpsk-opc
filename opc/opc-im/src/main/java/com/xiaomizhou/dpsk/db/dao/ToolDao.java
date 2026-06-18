@@ -70,21 +70,6 @@ public class ToolDao extends ServiceImpl<ToolMapper, ToolDO> {
                 .list();
     }
 
-//    /**
-//     * 根据所属 Agent 查询启用的工具（包含公共工具）。
-//     */
-//    public List<ToolDO> findByOwnerAgent(String ownerAgentCode) {
-//        return lambdaQuery()
-//                .and(wrapper -> wrapper
-//                        .eq(ToolDO::getOwnerAgentCode, ownerAgentCode)
-//                        .or()
-//                        .eq(ToolDO::getOwnerAgentCode, "")
-//                )
-//                .eq(ToolDO::getStatus, "ENABLED")
-//                .eq(ToolDO::getIsDeleted, 0)
-//                .list();
-//    }
-
     /**
      * 关键词搜索工具（匹配 name、description、category、tags）。
      */

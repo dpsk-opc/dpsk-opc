@@ -85,6 +85,7 @@ public class NotificationTaskConsumer implements TaskConsumer {
                             .conversationType(ConversationType.SINGLE.getCode())
                             .conversationCode(conversationCode)
                             .taskId(taskCode)
+                            .status("IGNORE")
                             .build(),
                     null, null);
 

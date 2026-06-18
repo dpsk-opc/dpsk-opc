@@ -84,9 +84,8 @@ public class ToolAutoRegistrar {
     }
 
     private void registerTool(String beanName, Class<?> clazz, Method method) {
-        // 优先使用 langchain4j 的 @Tool，fallback 到 spring-ai 的 @Tool
+
         Tool lc4jTool = method.getAnnotation(Tool.class);
-//        org.springframework.ai.tool.annotation.Tool saiTool = method.getAnnotation(org.springframework.ai.tool.annotation.Tool.class);
 
         String toolName = lc4jTool != null ? lc4jTool.name() : "";
         String description = lc4jTool != null ? String.join(", ", lc4jTool.value()) : "";
@@ -110,8 +109,8 @@ public class ToolAutoRegistrar {
             existing.setDescription(description);
             existing.setParametersSchema(parametersSchema);
             existing.setSourceRef(sourceRef);
+            existing.setCategory(Objects.isNull(meta) ? "" : meta.category());
             toolRepository.save(existing);
-            log.debug("Updated tool: {} (code={})", toolName, code);
         } else {
             // 新增
             ToolMetadata metadata = ToolMetadata.builder()
@@ -166,9 +165,11 @@ public class ToolAutoRegistrar {
             if (toolParam != null && !toolParam.description().isEmpty()) {
                 paramDesc = toolParam.description();
             }
-            boolean required = !Objects.isNull(toolParam);
-            if (Objects.nonNull(toolParam)) {
-                required = toolParam.required();
+
+            // 不需要的参数不传给llm
+            boolean required = Objects.nonNull(toolParam) && toolParam.required();
+            if(!required){
+                continue;
             }
 
 

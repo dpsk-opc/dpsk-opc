@@ -119,6 +119,8 @@ public class SingleBuilder implements AgentBuilder {
                     callback.onEvent(AgentEvent.streamChunk(agentDef.getCode(), response.text()));
                     index.incrementAndGet();
 
+                }).onPartialResponse(response -> {
+                    log.info("partial response: {}", response);
                 }).onError(error -> {
                     log.error("SinglePipeline stream error for agent={}", agentDef.getCode(), error);
                     callback.onEvent(AgentEvent.error(agentDef.getCode(), error.getMessage()));

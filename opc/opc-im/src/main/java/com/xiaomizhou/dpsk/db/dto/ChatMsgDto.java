@@ -65,4 +65,9 @@ public class ChatMsgDto {
      */
     private List<String> fileCodes;
 
+    /**
+     * 消息状态
+     */
+    private String status;
+
 }

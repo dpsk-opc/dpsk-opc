@@ -58,7 +58,7 @@ public class MessageRepositoryImpl implements MessageRepository {
     private static final Set<String> ALLOW_SUFFIX = Sets.newHashSet(".txt", ".md", ".log",".java",".py");
 
     @Override
-    public List<ChatMessage> findTopByConversationAndAgent(String conversationCode, String ownerCode, int limit) {
+    public synchronized List<ChatMessage> findTopByConversationAndAgent(String conversationCode, String ownerCode, int limit) {
         Conversation conv = conversationDao.getOneByCode(conversationCode);
         if (conv == null) {
             log.debug("Conversation not found: {}", conversationCode);
@@ -87,44 +87,7 @@ public class MessageRepositoryImpl implements MessageRepository {
 
         // 时间正序
         Collections.reverse(messages);
-
         justMsg(messages);
-
-//        int size = messages.size();
-//        com.xiaomizhou.dpsk.db.model.ChatMessage last = messages.get(size - 1);
-//        messages.remove(size - 1);
-
-//        String msgCode = last.getCode();
-//        List<File> files = fileService.getDiskFilesByMsgCode(msgCode, (file) -> {
-//            String suffix = file.getFileExtension();
-//            return ALLOW_SUFFIX.contains(suffix.toLowerCase());
-//        });
-//
-//        if (CollectionUtils.isEmpty(files)){
-//            // 时间正序
-//            return messages.stream()
-//                    .map(this::toChatMessage)
-//                    .filter(Objects::nonNull)
-//                    .distinct()
-//                    .collect(Collectors.toList());
-//        }
-//
-//        files.forEach(file -> {
-//                    try {
-//                        String str = FileUtils.readFileToString(file, StandardCharsets.UTF_8);
-//                        String c = """
-//                                the file is uploaded by user.
-//                                fileName:%s,
-//                                fileContent:%s
-//                                """.formatted(file.getName(), str);
-//                        com.xiaomizhou.dpsk.db.model.ChatMessage cm = new com.xiaomizhou.dpsk.db.model.ChatMessage();
-//                        BeanUtils.copyProperties(last, cm);
-//                        cm.setContent(c);
-//                        messages.add(cm);
-//                    } catch (Exception e) {
-//                        log.warn("load file content failed.", e);
-//                    }
-//                });
 
         return messages.stream()
                 .map(this::toChatMessage)
@@ -134,7 +97,7 @@ public class MessageRepositoryImpl implements MessageRepository {
     }
 
     @Override
-    public List<ChatMessage> findTopGroupMessages(String groupCode, String agentCode, int limit) {
+    public synchronized List<ChatMessage> findTopGroupMessages(String groupCode, String agentCode, int limit) {
         if (StringUtils.isBlank(groupCode)) {
             return List.of();
         }

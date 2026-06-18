@@ -51,7 +51,7 @@ public class AgentToolComponent {
     public List<AgentToolRefVO> queryByAgentCode(String agentCode) {
         if (StringUtils.isBlank(agentCode)) {
             // 查询所有在用的工具绑定
-            List<ToolDO> tools = toolDao.list(Wrappers.<ToolDO>lambdaQuery().eq(ToolDO::getSourceType, SourceType.LOCAL));
+            List<ToolDO> tools = toolDao.list(Wrappers.<ToolDO>lambdaQuery().eq(ToolDO::getSourceType, SourceType.LOCAL).ne(ToolDO::getCategory, "meta"));
             List<AgentToolRefDO> allRefs = tools.stream().map(tool -> {
                 AgentToolRefDO ref = new AgentToolRefDO();
                 ref.setToolCode(tool.getCode());
@@ -74,9 +74,6 @@ public class AgentToolComponent {
         List<AgentToolRefDO> refs = agentToolRefDao.lambdaQuery()
                 .in(AgentToolRefDO::getAgentCode, agentCodes)
                 .list();
-
-
-
 
         return toVOList(refs).stream()
                 .collect(Collectors.groupingBy(AgentToolRefVO::getAgentCode));

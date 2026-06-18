@@ -1,11 +1,13 @@
 package com.xiaomizhou.dpsk.tool;
 
+import com.google.common.collect.Lists;
 import com.xiaomizhou.dpsk.tool.executor.ToolExecutorRouter;
 import com.xiaomizhou.dpsk.tool.model.ToolCall;
 import com.xiaomizhou.dpsk.tool.model.ToolContext;
 import com.xiaomizhou.dpsk.tool.model.ToolMetadata;
 import com.xiaomizhou.dpsk.tool.repository.ToolRepository;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -78,7 +80,7 @@ public class ToolRegistry {
     /**
      * 根据工具名称获取元数据。
      */
-    public ToolMetadata getMetadata(String toolName) {
+    public ToolMetadata getMetadata(String toolName/*, String agentCode*/) {
         ensureInitialized();
         return toolsByName.get(toolName);
     }
@@ -118,18 +120,28 @@ public class ToolRegistry {
         return toolRepository.findByOwnerAgent(ownerAgentCode);
     }
 
+    public List<ToolMetadata> getMetaTools(){
+        ensureInitialized();
+        return toolRepository.findByCategory("meta");
+    }
+
     /**
      * 关键词搜索工具。
      *
      * @param keyword 关键词
      * @return 匹配的工具元数据列表
      */
-    public List<ToolMetadata> searchTools(String keyword) {
-        if (keyword == null || keyword.isBlank()) {
-            return getAllTools();
+    public List<ToolMetadata> searchTools(String keyword,String agentCode) {
+
+        if (StringUtils.isBlank(agentCode)) {
+            return List.of();
         }
+
+        // local & mcp tools
+        List<ToolMetadata> localTools = toolRepository.findByOwnerAgent(agentCode);
+
         String lowerKeyword = keyword.toLowerCase();
-        return toolsByName.values().stream()
+        return localTools.stream()
                 .filter(t -> t.getName().toLowerCase().contains(lowerKeyword)
                         || t.getDescription().toLowerCase().contains(lowerKeyword)
                         || (t.getCategory() != null && t.getCategory().toLowerCase().contains(lowerKeyword))

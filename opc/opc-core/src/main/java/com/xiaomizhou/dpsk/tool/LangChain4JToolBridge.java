@@ -1,5 +1,6 @@
 package com.xiaomizhou.dpsk.tool;
 
+import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import com.xiaomizhou.dpsk.tool.model.ToolCall;
 import com.xiaomizhou.dpsk.tool.model.ToolContext;
@@ -114,15 +115,20 @@ public class LangChain4JToolBridge implements ToolProvider {
     public ToolProviderResult provideTools(ToolProviderRequest request) {
         toolRegistry.ensureInitialized();
 
-        // 按 Agent 过滤：获取专属工具 + 公共工具
+        // only meta tools send to llm to reduce context.
+        // TODO 要把search的工具塞到ToolProviderResult对象里，执行器要有一个钩子参数
+//        List<ToolMetadata> tools = toolRegistry.getMetaTools();
         List<ToolMetadata> tools = toolRegistry.getToolsForAgent(agentCode);
+
+        List<ToolMetadata> metaTools = toolRegistry.getMetaTools();
+        tools.addAll(metaTools);
 
         if (CollectionUtils.isEmpty(tools)) {
             log.debug("No tools available for agent '{}'", agentCode);
             return ToolProviderResult.builder().build();
         }
 
-        Set<String> cache = Sets.newHashSet();
+        Map<String,List<ToolSpecification>> cache = Maps.newHashMap();
         ToolProviderResult.Builder builder = ToolProviderResult.builder();
 
         Set<String> mpcCache = Sets.newHashSet();
@@ -138,12 +144,15 @@ public class LangChain4JToolBridge implements ToolProvider {
                 String sourceRef = tool.getSourceRef();
                 String beanName = sourceRef.split("\\.")[0];
 
-                if (cache.contains(beanName)) {
-                    continue;
-                }
+                List<ToolSpecification> specs;
+                if (cache.containsKey(beanName)) {
+                    specs = cache.get(beanName);
+                } else {
+                    Object bean = applicationContext.getBean(beanName);
+                    specs = ToolSpecifications.toolSpecificationsFrom(bean);
 
-                Object bean = applicationContext.getBean(beanName);
-                List<ToolSpecification> specs = ToolSpecifications.toolSpecificationsFrom(bean);
+                    cache.put(beanName, specs);
+                }
 
                 builder.addAll(specs.stream().filter(spec -> {
                     return spec.name().equals(tool.getName());
@@ -151,8 +160,6 @@ public class LangChain4JToolBridge implements ToolProvider {
                         .toolSpecification(spec)
                         .toolExecutor(this::execute)
                         .build()).collect(Collectors.toList()));
-
-                cache.add(beanName);
             }
 
             if (Strings.CS.equals(sourceType, SourceType.MCP)) {

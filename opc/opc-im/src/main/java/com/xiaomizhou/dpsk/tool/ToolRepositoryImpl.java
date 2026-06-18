@@ -86,7 +86,10 @@ public class ToolRepositoryImpl implements ToolRepository {
             var toolCodes = refs.stream().map(AgentToolRefVO::getToolCode).collect(Collectors.toSet());
 
             if (CollectionUtils.isNotEmpty(toolCodes)) {
-                result.addAll(toolDao.lambdaQuery().in(ToolDO::getCode, toolCodes).list());
+                result.addAll(toolDao.lambdaQuery().in(ToolDO::getCode, toolCodes)
+                        .eq(ToolDO::getSourceType, SourceType.LOCAL)
+                        .eq(ToolDO::getStatus, "ENABLED")
+                        .list());
             }
         }
 
