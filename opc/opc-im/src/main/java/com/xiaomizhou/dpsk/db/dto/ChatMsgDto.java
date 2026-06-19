@@ -66,6 +66,11 @@ public class ChatMsgDto {
     private List<String> fileCodes;
 
     /**
+     * MCP 编码列表
+     */
+    private List<String> mcpCodes;
+
+    /**
      * 消息状态
      */
     private String status;

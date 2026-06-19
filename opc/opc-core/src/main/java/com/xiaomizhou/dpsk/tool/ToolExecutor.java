@@ -2,6 +2,7 @@ package com.xiaomizhou.dpsk.tool;
 
 import com.xiaomizhou.dpsk.tool.model.ToolCall;
 import com.xiaomizhou.dpsk.tool.model.ToolContext;
+import com.xiaomizhou.dpsk.tool.model.ToolMetadata;
 
 /**
  * 工具执行器接口，所有工具执行器需实现此接口。
@@ -19,5 +20,5 @@ public interface ToolExecutor {
      * @return 执行结果字符串
      * @throws Exception 执行异常
      */
-    String execute(ToolCall call, ToolContext context) throws Exception;
+    String execute(ToolCall call, ToolContext context, ToolMetadata metadata) throws Exception;
 }

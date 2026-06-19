@@ -10,6 +10,9 @@ import org.springframework.context.ApplicationContext;
 import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * 本地工具执行器，通过反射调用 Spring Bean 上标注了 @Tool 注解的方法。
@@ -22,13 +25,15 @@ public class LocalToolExecutor implements ToolExecutor {
 
     private final ApplicationContext applicationContext;
 
+    /** 本地工具调用超时时间（秒），默认 30 秒 */
+    private static final long DEFAULT_TIMEOUT_SECONDS = 30;
+
     public LocalToolExecutor(ApplicationContext applicationContext) {
         this.applicationContext = applicationContext;
     }
 
     @Override
-    public String execute(ToolCall call, ToolContext context) throws Exception {
-        ToolMetadata metadata = null; // 由 Router 层预先获取 metadata 并传入
+    public String execute(ToolCall call, ToolContext context,ToolMetadata metadata) throws Exception {
         String sourceRef = resolveSourceRef(call);
 
         if (sourceRef == null || !sourceRef.contains(".")) {
@@ -49,13 +54,29 @@ public class LocalToolExecutor implements ToolExecutor {
             throw new NoSuchMethodException("Method not found: " + methodName + " on bean " + beanName);
         }
 
+
         log.debug("Invoking local tool: {}.{} with params: {}", beanName, methodName, call.getParameters());
 
         // 简单参数调用（参数按方法参数顺序传入）
         Object[] args = resolveArgs(method, call.getParameters(), context);
-        Object result = method.invoke(bean, args);
 
-        return result != null ? result.toString() : "";
+        Object result = CompletableFuture
+                .supplyAsync(() -> {
+                    try {
+                        return method.invoke(bean, args);
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                })
+                .get(metadata.getTimeoutMs(), TimeUnit.MINUTES);
+
+        if (result == null) {
+            return "";
+        }
+        if (result instanceof String s) {
+            return s;
+        }
+        return result.toString();
     }
 
     /**

@@ -34,6 +34,9 @@ public class McpElectronRequest {
     /** 工具名称 */
     private String toolName;
 
-    /** 工具参数 JSON */
+    /** 工具参数 JSON（仅 MCP 工具自身参数，不含上下文） */
     private String arguments;
+
+    /** 执行上下文 JSON（agentCode / userCode / conversationCode / traceId 等） */
+    private String context;
 }

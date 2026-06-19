@@ -28,6 +28,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
 
+
 /**
  * ImAgentCallback — AgentCallback 接口的 opc-im 实现。
  * 将 opc-core 发射的 AgentEvent 语义事件翻译为前端 WsMessage 协议，
@@ -53,7 +54,9 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
     private String streamCode;
     private SenderInfo senderInfo;
     private final AtomicInteger chunkIndex = new AtomicInteger(0);
-    private boolean streamStarted = false;
+
+
+    private final AtomicInteger msgChunkIndex = new AtomicInteger(0);
 
     // 累计 Token
     private TokenUsage accumulatedToken;
@@ -105,12 +108,97 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
         switch (type) {
             case THINKING -> handleThinking(event);
             case STREAM_CHUNK -> handleStreamChunk(event);
+            case STREAM_CHUNK_END -> handleStreamChunkEnd(event);
+            case MESSAGE -> handleMessage(event);
+            case MESSAGE_CHUNK -> handleMessageChunk(event);
+            case MESSAGE_CHUNK_END -> handleMessageChunkEnd(event);
             case DONE -> handleDone(event);
             case ERROR -> handleError(event);
-            case TOOL_CALL -> log.debug("Tool call: agent={}, tool={}", event.agentCode(), event.toolName());
-            case TOOL_RESULT -> log.debug("Tool result: agent={}, tool={}", event.agentCode(), event.toolName());
+            case TOOL_CALL -> handleToolCall(event);
+            case TOOL_RESULT -> handleToolResult(event);
             case MSG_READ -> handleRead(event);
         }
+    }
+
+    private void handleToolResult(AgentEvent event) {
+        String text = event.text();
+        if (StringUtils.isBlank(text)) {
+            return;
+        }
+        try {
+            WsUtils.send(new WsMessage(WsMsgType.TOOL_RESULT, new ToolCallPayload(event.text(), streamCode, event.toolName(), event.toolInput(), event.toolOutput(), event.meta())));
+        } catch (Exception e) {
+            log.error("Failed to send tool call event for stream {}!", streamCode, e);
+        }
+    }
+
+
+    private void handleToolCall(AgentEvent event) {
+        String text = event.text();
+        if (StringUtils.isBlank(text)) {
+            return;
+        }
+        try {
+            WsUtils.send(new WsMessage(WsMsgType.TOOL_CALL, new ToolCallPayload(event.text(), streamCode, event.toolName(), event.toolInput(), null, null)));
+        } catch (Exception e) {
+            log.error("Failed to send tool call event for stream {}!", streamCode, e);
+        }
+    }
+
+    private void handleMessageChunkEnd(AgentEvent event) {
+        if (streamCode != null) {
+            try {
+                WsUtils.send(new WsMessage(WsMsgType.MESSAGE_CHUNK_END,
+                        new StreamEndPayload(streamCode, null, null)));
+            } catch (Exception e) {
+                log.error("Failed to send message stream end event for stream {}!", streamCode, e);
+            }
+        }
+    }
+
+    private void handleMessageChunk(AgentEvent event) {
+
+        if (StringUtils.isBlank(streamCode) || null == event.text()) {
+            return;
+        }
+        try {
+            int index = msgChunkIndex.incrementAndGet();
+            WsUtils.send(new WsMessage(WsMsgType.MESSAGE_CHUNK,
+                    new StreamChunkPayload(streamCode, event.text(), index)));
+        } catch (Exception e) {
+            log.error("Failed to send stream end event for stream {}!", streamCode, e);
+        }
+    }
+
+
+    private void handleMessage(AgentEvent event) {
+
+        String text = event.text();
+        if (streamCode == null) {
+            return;
+        }
+
+        try {
+
+
+            msgChunkIndex.set(0);
+            WsUtils.send(new WsMessage(WsMsgType.MESSAGE,
+                    new StreamChunkPayload(streamCode, text, 0)));
+        } catch (Exception e) {
+            log.warn("Failed to send message event for stream {}: {}", streamCode, e.getMessage());
+        }
+    }
+
+    private void handleStreamChunkEnd(AgentEvent event) {
+        if (streamCode != null) {
+            try {
+                WsUtils.send(new WsMessage(WsMsgType.STREAM_END,
+                        new StreamEndPayload(streamCode, null, null)));
+            } catch (Exception e) {
+                log.error("Failed to send stream end event for stream {}!", streamCode, e);
+            }
+        }
+
     }
 
     private void handleRead(AgentEvent event) {
@@ -129,24 +217,15 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
 
     private void handleThinking(AgentEvent event) {
         String text = event.text();
-        if (text == null || streamCode == null) {
+        if (streamCode == null) {
             return;
         }
 
         try {
-            if (!streamStarted) {
-                streamStarted = true;
-                chunkIndex.set(0);
-                if (senderInfo != null) {
-                    WsUtils.send(new WsMessage(WsMsgType.STREAM_START,
-                            new StreamStartPayload(streamCode, conversationCode,
-                                    senderInfo, System.currentTimeMillis())));
-                }
-            }
 
-            int index = chunkIndex.incrementAndGet();
-            WsUtils.send(new WsMessage(WsMsgType.STREAM_CHUNK,
-                    new StreamChunkPayload(streamCode, text, index)));
+            chunkIndex.set(0);
+            WsUtils.send(new WsMessage(WsMsgType.STREAM_START,
+                    new StreamStartPayload(streamCode, conversationCode, senderInfo,System.currentTimeMillis())));
         } catch (Exception e) {
             log.warn("Failed to send thinking event for stream {}: {}", streamCode, e.getMessage());
         }
@@ -159,16 +238,6 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
         }
 
         try {
-            if (!streamStarted) {
-                streamStarted = true;
-                chunkIndex.set(0);
-                if (senderInfo != null) {
-                    WsUtils.send(new WsMessage(WsMsgType.STREAM_START,
-                            new StreamStartPayload(streamCode, conversationCode,
-                                    senderInfo, System.currentTimeMillis())));
-                }
-            }
-
             int index = chunkIndex.incrementAndGet();
             WsUtils.send(new WsMessage(WsMsgType.STREAM_CHUNK,
                     new StreamChunkPayload(streamCode, text, index)));
@@ -193,10 +262,10 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
 
         // 发送 stream_end
         try {
-            if (streamCode != null) {
-                WsUtils.send(new WsMessage(WsMsgType.STREAM_END,
-                        new StreamEndPayload(streamCode, msgCode, null)));
-            }
+//            if (streamCode != null) {
+//                WsUtils.send(new WsMessage(WsMsgType.STREAM_END,
+//                        new StreamEndPayload(streamCode, msgCode, null)));
+//            }
 
             // 发送完整消息
             Map<String, Object> fullContent = Maps.newHashMap();
@@ -208,7 +277,7 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
                 }
             }
 
-            WsUtils.send(new WsMessage(WsMsgType.MESSAGE,
+            WsUtils.send(new WsMessage(WsMsgType.MESSAGE_DONE,
                     new MessagePayload(
                             streamCode != null ? streamCode : msgCode,
                             conversationCode,
@@ -282,10 +351,5 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
             log.error("Failed to save message to DB for agent={}", agentCode, e);
             return null;
         }
-    }
-
-    /** 获取累计的 Token 用量 */
-    public TokenUsage getAccumulatedToken() {
-        return accumulatedToken;
     }
 }

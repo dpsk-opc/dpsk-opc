@@ -50,6 +50,11 @@ public class AgentBuildSpec {
     /** 引用消息编码（@ 功能） */
     private String quoteMessageCode;
 
+    /**
+     * MCP 编码列表（工作流模式时使用）
+     */
+    private List<String> mcpCodes;
+
     /** 扩展参数（透传给 Builder） */
     private Map<String, Object> params;
 

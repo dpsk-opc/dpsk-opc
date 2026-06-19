@@ -4,17 +4,16 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.xiaomizhou.dpsk.tool.ToolExecutor;
-import com.xiaomizhou.dpsk.tool.model.McpElectronRequest;
-import com.xiaomizhou.dpsk.tool.model.McpElectronResult;
-import com.xiaomizhou.dpsk.tool.model.ToolCall;
-import com.xiaomizhou.dpsk.tool.model.ToolContext;
+import com.xiaomizhou.dpsk.tool.model.*;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
+import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -35,6 +34,13 @@ public class McpToolExecutor implements ToolExecutor {
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final long TIMEOUT_MS = 30_000;
 
+    /**
+     * 上下文参数 key，这些 key 不应发送给 MCP 工具，而是单独走 context 字段
+     */
+    private static final Set<String> CONTEXT_KEYS = Set.of(
+            "agentCode", "userCode", "conversationCode", "traceId"
+    );
+
     private final McpBindingRepository bindingRepository;
     private final McpElectronBridge electronBridge;
 
@@ -49,7 +55,7 @@ public class McpToolExecutor implements ToolExecutor {
     }
 
     @Override
-    public String execute(ToolCall call, ToolContext context) throws Exception {
+    public String execute(ToolCall call, ToolContext context, ToolMetadata metadata) throws Exception {
         // 1. 从 sourceRef 解析 bindingCode + toolName
         // sourceRef 格式: "{bindingCode}:{toolName}"
         String sourceRef = (String) call.getParameters().get("__sourceRef__");
@@ -73,18 +79,28 @@ public class McpToolExecutor implements ToolExecutor {
             throw new IllegalArgumentException("MCP binding not found: " + bindingCode);
         }
 
-        // 3. 构建 JSON-RPC 参数
-        Map<String, Object> params = call.getParameters();
+        // 3. 分离上下文参数与工具参数
+        Map<String, Object> allParams = call.getParameters();
         // 移除内部字段
-        params.remove("__sourceRef__");
+        allParams.remove("__sourceRef__");
 
-        String jsonRpcRequest = buildJsonRpcRequest(toolName, params);
+        Map<String, Object> toolArgs = new LinkedHashMap<>();
+        Map<String, Object> ctx = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> entry : allParams.entrySet()) {
+            if (CONTEXT_KEYS.contains(entry.getKey())) {
+                ctx.put(entry.getKey(), entry.getValue());
+            } else {
+                toolArgs.put(entry.getKey(), entry.getValue());
+            }
+        }
+
+        String jsonRpcRequest = buildJsonRpcRequest(toolName, toolArgs);
         log.debug("JSON-RPC request: {}", jsonRpcRequest);
 
         // 4. 根据 runtimeEnv 分发执行
         // runtimeEnv: 1-electron, 2-backend
         if (binding.getRuntimeEnv() != null && binding.getRuntimeEnv() == 1) {
-            return executeViaElectron(binding, toolName, params);
+            return executeViaElectron(binding, toolName, toolArgs, ctx);
         } else {
             return executeViaBackend(binding, jsonRpcRequest);
         }
@@ -136,8 +152,11 @@ public class McpToolExecutor implements ToolExecutor {
 
     /**
      * 通过 Electron 桥接执行。
+     * <p>
+     * arguments 只包含 MCP 工具自身参数，context 单独传递，前端无需区分哪些是上下文。
      */
-    private String executeViaElectron(McpBindingInfo binding, String toolName, Map<String, Object> params) throws Exception {
+    private String executeViaElectron(McpBindingInfo binding, String toolName,
+                                      Map<String, Object> toolArgs, Map<String, Object> ctx) throws Exception {
         if (electronBridge == null) {
             throw new IllegalStateException("Electron bridge not available");
         }
@@ -148,7 +167,8 @@ public class McpToolExecutor implements ToolExecutor {
                 .args(binding.getArgs())
                 .envVars(binding.getEnvVars())
                 .toolName(toolName)
-                .arguments(MAPPER.writeValueAsString(params))
+                .arguments(MAPPER.writeValueAsString(toolArgs))
+                .context(ctx.isEmpty() ? null : MAPPER.writeValueAsString(ctx))
                 .build();
 
         McpElectronResult result = electronBridge.call(request);

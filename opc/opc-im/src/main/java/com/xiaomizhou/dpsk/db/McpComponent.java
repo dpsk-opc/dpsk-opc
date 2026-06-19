@@ -151,6 +151,7 @@ public class McpComponent {
                 .envVars(parseEnvVars(envVars))
                 .toolName(null)  // null 表示 tools/list
                 .arguments(null)
+                .context(null)    // tools/list 不需要上下文
                 .build();
 
         McpElectronResult result = electronBridge.call(request);
@@ -435,6 +436,22 @@ public class McpComponent {
         if (entity == null) {
             throw BusinessException.notFound("模板不存在: " + id);
         }
+
+        // 级联物理删除关联的绑定和工具（模板没了，绑定也没意义了）
+        List<AgentMcpBindingDO> bindings = agentMcpBindingDao.findByTemplateCode(id);
+        for (AgentMcpBindingDO binding : bindings) {
+            // 物理删除关联的 tool 记录
+            List<ToolDO> tools = toolDao.findBySourceRefPrefix(binding.getCode());
+            if (!tools.isEmpty()) {
+                List<Long> toolIds = tools.stream().map(ToolDO::getId).collect(Collectors.toList());
+                toolDao.hardDeleteByIds(toolIds);
+            }
+            agentMcpBindingDao.hardDeleteById(binding.getId());
+        }
+        if (!bindings.isEmpty()) {
+            log.info("Cascade deleted {} bindings for deleted template: code={}", bindings.size(), id);
+        }
+
         mcpTemplateDao.deleteByCode(id);
         log.info("MCP template deleted: code={}", id);
     }
@@ -443,17 +460,13 @@ public class McpComponent {
 
     public IPage<McpBindingVO> listBindings(int pageNo, int pageSize, String agentCode, Boolean enabled) {
 
-        var query = Wrappers.<AgentMcpBindingDO>lambdaQuery();
-
-        if (StringUtils.isNotBlank(agentCode)) {
-            query.eq(AgentMcpBindingDO::getAgentCode, agentCode);
+        // 默认只查已绑定的（enabled=1），除非明确传了 enabled=false
+        List<AgentMcpBindingDO> agents;
+        if (enabled != null && !enabled) {
+            agents = agentMcpBindingDao.findByAgentCode(agentCode);
+        } else {
+            agents = agentMcpBindingDao.findEnabledByAgentCode(agentCode);
         }
-        if (enabled != null) {
-            query.eq(AgentMcpBindingDO::getEnabled, enabled ? 1 : 0);
-        }
-
-        List<AgentMcpBindingDO> agents = agentMcpBindingDao.findByAgentCode(agentCode);
-
 
         List<McpBindingVO> vos = agents.stream().map(this::toBindingVO).collect(Collectors.toList());
 
@@ -479,25 +492,21 @@ public class McpComponent {
             throw BusinessException.notFound("模板不存在: " + req.getTemplateId());
         }
 
-        // 查找现有绑定
+        // 查找现有绑定（含之前解绑 enabled=0 的记录）
         AgentMcpBindingDO existing = agentMcpBindingDao.findByAgentAndTemplate(agentCode, req.getTemplateId());
 
         if (existing != null) {
-            // 更新
-            if (req.getEnabled() != null) {
-                existing.setEnabled(req.getEnabled() ? 1 : 0);
-            }
+            // 重新激活绑定
+            existing.setEnabled(1);
             if (req.getEnvVars() != null) {
                 existing.setEnvVars(req.getEnvVars());
             }
             existing.setUpdateTime(new Date());
             agentMcpBindingDao.updateById(existing);
 
-            // 同步 t_tool 状态
-            if (req.getEnabled() != null) {
-                syncToolStatus(existing.getCode(), req.getEnabled());
-            }
-            log.info("MCP binding updated: agentCode={}, templateCode={}", agentCode, req.getTemplateId());
+            // 同步 t_tool 状态为启用
+            syncToolStatus(existing.getCode(), true);
+            log.info("MCP binding re-activated: agentCode={}, templateCode={}", agentCode, req.getTemplateId());
         } else {
             // 新增
             String bindingCode = "mcp_bind_" + UUID.randomUUID().toString().replace("-", "").substring(0, 8);
@@ -506,7 +515,7 @@ public class McpComponent {
             binding.setCode(bindingCode);
             binding.setTemplateCode(req.getTemplateId());
             binding.setAgentCode(agentCode);
-            binding.setEnabled(req.getEnabled() != null && req.getEnabled() ? 1 : 0);
+            binding.setEnabled(1);
             binding.setEnvVars(StringUtils.defaultString(req.getEnvVars()));
             binding.setStatus(0); // stopped
             binding.setToolsSnapshot(template.getTools());
@@ -538,16 +547,14 @@ public class McpComponent {
             throw BusinessException.notFound("绑定不存在");
         }
 
-        // 清理 t_tool 表中对应工具
-        String bindingCode = binding.getCode();
-        toolDao.lambdaUpdate()
-                .likeRight(ToolDO::getSourceRef, bindingCode + ":")
-                .set(ToolDO::getIsDeleted, 1)
-                .update();
+        // 解绑：改 enabled=0，保留 env_vars 等配置
+        binding.setEnabled(0);
+        binding.setUpdateTime(new Date());
+        agentMcpBindingDao.updateById(binding);
 
-        // 逻辑删除绑定
-        agentMcpBindingDao.deleteByAgentAndTemplate(agentCode, templateId);
-        log.info("MCP binding deleted: agentCode={}, templateCode={}", agentCode, templateId);
+        // 同步停用关联的 tool
+        syncToolStatus(binding.getCode(), false);
+        log.info("MCP binding unbound: agentCode={}, templateCode={}", agentCode, templateId);
     }
 
     // ---- 内部方法 ----
@@ -581,6 +588,7 @@ public class McpComponent {
                 .templateName(templateName)
                 .command(command)
                 .args(args)
+                .code(entity.getCode())
                 .agentCode(entity.getAgentCode())
                 .enabled(entity.getEnabled() == 1)
                 .envVars(entity.getEnvVars())
@@ -634,11 +642,7 @@ public class McpComponent {
 
     private void syncToolStatus(String bindingCode, boolean enabled) {
         String status = enabled ? "ENABLED" : "DISABLED";
-        toolDao.lambdaUpdate()
-                .likeRight(ToolDO::getSourceRef, bindingCode + ":")
-                .set(ToolDO::getStatus, status)
-                .set(ToolDO::getUpdateTime, new Date())
-                .update();
+        toolDao.batchUpdateStatusBySourceRefPrefix(bindingCode, status);
     }
 
     private String[] parseArgs(String argsJson) {

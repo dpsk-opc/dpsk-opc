@@ -210,9 +210,9 @@ public class AgentComponentFactory {
     /**
      * 获取 Agent 绑定的工具列表
      */
-    public List<ToolProvider> getToolProviders(String agentCode, String userCode, String conversationCode) {
+    public List<ToolProvider> getToolProviders(String agentCode, String userCode, String conversationCode,List<String> mcpCodes) {
         LangChain4JToolBridge bridge = LangChain4JToolBridge.forAgent(
-                toolRegistry, toolInvocationInterceptor, applicationContext, agentCode, userCode, conversationCode);
+                toolRegistry, toolInvocationInterceptor, applicationContext, agentCode, userCode, conversationCode,mcpCodes);
         return Collections.singletonList(bridge);
     }
 

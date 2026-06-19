@@ -93,11 +93,11 @@ public class ChatService {
      * @param msgCode
      * @param userId  发送
      */
-    public void doChat(String userId, String msgCode) {
+    public void doChat(String userId, String msgCode,List<String> mcpCodes) {
 
         if (StringUtils.isBlank(msgCode)) {
             return;
         }
-        agentBridge.dispatch(userId, msgCode);
+        agentBridge.dispatch(userId, msgCode, mcpCodes);
     }
 }

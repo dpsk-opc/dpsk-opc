@@ -18,6 +18,7 @@ import java.util.List;
 @NoArgsConstructor
 @AllArgsConstructor
 public class McpBindingVO {
+    private String code;
     private String templateId;
     private String templateName;
     private String command;

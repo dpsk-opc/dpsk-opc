@@ -1,5 +1,6 @@
 package com.xiaomizhou.dpsk.tool;
 
+import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import com.xiaomizhou.dpsk.tool.model.ToolCall;
@@ -22,10 +23,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 import org.springframework.context.ApplicationContext;
 
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 import java.util.stream.Collectors;
 
 /**
@@ -100,6 +98,9 @@ public class LangChain4JToolBridge implements ToolProvider {
     @Builder.Default
     private final String conversationCode = "";
 
+    @Builder.Default
+    private final List<String> mcpCodes = Lists.newArrayList();
+
     // ==================== ToolProvider 接口实现 ====================
 
     /**
@@ -123,12 +124,27 @@ public class LangChain4JToolBridge implements ToolProvider {
         List<ToolMetadata> metaTools = toolRegistry.getMetaTools();
         tools.addAll(metaTools);
 
+        // mcp工具
+
+        // mcp改由前端传入 (全部传给大模型耗费token）
+        tools = tools.stream().filter(tool->{
+
+            // 过滤掉MCP工具
+            if(CollectionUtils.isEmpty(mcpCodes)){
+                return !Objects.equals(tool.getSourceType(), SourceType.MCP);
+            }
+
+            // sourceType为MCP，且sourceRef的第一个字符串为mcp_code
+            return mcpCodes.contains(tool.getSourceRef().split(":")[0]) && Objects.equals(tool.getStatus(), "ENABLED") || Strings.CS.equals(tool.getSourceType(), SourceType.LOCAL);
+        }).collect(Collectors.toList());
+
         if (CollectionUtils.isEmpty(tools)) {
             log.debug("No tools available for agent '{}'", agentCode);
             return ToolProviderResult.builder().build();
         }
 
         Map<String,List<ToolSpecification>> cache = Maps.newHashMap();
+        Set<String> localCache = Sets.newHashSet();
         ToolProviderResult.Builder builder = ToolProviderResult.builder();
 
         Set<String> mpcCache = Sets.newHashSet();
@@ -140,6 +156,10 @@ public class LangChain4JToolBridge implements ToolProvider {
 
 
             if (Strings.CS.equals(sourceType, SourceType.LOCAL)) {
+
+                if(localCache.contains(tool.getName())){
+                    continue;
+                }
 
                 String sourceRef = tool.getSourceRef();
                 String beanName = sourceRef.split("\\.")[0];
@@ -153,6 +173,8 @@ public class LangChain4JToolBridge implements ToolProvider {
 
                     cache.put(beanName, specs);
                 }
+
+                localCache.add(tool.getName());
 
                 builder.addAll(specs.stream().filter(spec -> {
                     return spec.name().equals(tool.getName());
@@ -304,7 +326,7 @@ public class LangChain4JToolBridge implements ToolProvider {
                                                  ApplicationContext applicationContext,
                                                  String agentCode,
                                                  String userCode,
-                                                 String conversationCode) {
+                                                 String conversationCode,List<String> mcpCodes) {
         return LangChain4JToolBridge.builder()
                 .toolRegistry(toolRegistry)
                 .interceptor(interceptor)
@@ -312,6 +334,7 @@ public class LangChain4JToolBridge implements ToolProvider {
                 .agentCode(agentCode)
                 .userCode(userCode)
                 .conversationCode(conversationCode)
+                .mcpCodes(mcpCodes)
                 .build();
     }
 
@@ -323,11 +346,12 @@ public class LangChain4JToolBridge implements ToolProvider {
      * @return 桥接器实例
      */
     public static LangChain4JToolBridge forAll(ToolRegistry toolRegistry,
-                                               ToolInvocationInterceptor interceptor,ApplicationContext applicationContext) {
+                                               ToolInvocationInterceptor interceptor,ApplicationContext applicationContext,List<String> mcpCodes) {
         return LangChain4JToolBridge.builder()
                 .toolRegistry(toolRegistry)
                 .interceptor(interceptor)
                 .applicationContext(applicationContext)
+                .mcpCodes(mcpCodes)
                 .build();
     }
 

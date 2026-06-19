@@ -1,13 +1,17 @@
 package com.xiaomizhou.dpsk.db.dao;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.xiaomizhou.dpsk.db.mapper.ToolMapper;
 import com.xiaomizhou.dpsk.db.model.ToolDO;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.collections.CollectionUtils;
 import org.springframework.stereotype.Component;
 
+import java.util.Collections;
 import java.util.Date;
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * 工具元数据 DAO。
@@ -90,6 +94,42 @@ public class ToolDao extends ServiceImpl<ToolMapper, ToolDO> {
                 .eq(ToolDO::getStatus, "ENABLED")
                 .eq(ToolDO::getIsDeleted, 0)
                 .list();
+    }
+
+    /**
+     * 根据 sourceRef 前缀查询所有工具（用于绑定删除时清理关联工具）。
+     */
+    public List<ToolDO> findBySourceRefPrefix(String bindingCode) {
+        return lambdaQuery()
+                .likeRight(ToolDO::getSourceRef, bindingCode + ":")
+                .list();
+    }
+
+    /**
+     * 批量硬删除（物理删除，绕过 @TableLogic）。
+     */
+    public boolean hardDeleteByIds(List<Long> ids) {
+        if (CollectionUtils.isEmpty(ids)) {
+            return false;
+        }
+        return baseMapper.deleteByIds(ids) > 0;
+    }
+
+    /**
+     * 批量更新状态（先查出来再逐个 updateById，避免 likeRight 更新到不该更新的数据）。
+     */
+    public boolean batchUpdateStatusBySourceRefPrefix(String bindingCode, String status) {
+        List<ToolDO> tools = findBySourceRefPrefix(bindingCode);
+        if (CollectionUtils.isEmpty(tools)) {
+            return false;
+        }
+        Date now = new Date();
+        for (ToolDO tool : tools) {
+            tool.setStatus(status);
+            tool.setUpdateTime(now);
+            super.updateById(tool);
+        }
+        return true;
     }
 
     /**

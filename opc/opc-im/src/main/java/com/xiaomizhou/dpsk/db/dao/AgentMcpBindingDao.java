@@ -80,6 +80,13 @@ public class AgentMcpBindingDao extends ServiceImpl<AgentMcpBindingMapper, Agent
                 .update();
     }
 
+    /**
+     * 物理删除（绕过 @TableLogic），用于删除绑定时彻底清理。
+     */
+    public boolean hardDeleteById(Long id) {
+        return baseMapper.deleteById(id) > 0;
+    }
+
     public List<AgentMcpBindingDO> findEnabledByAgentCode(String agentCode) {
         return lambdaQuery()
                 .eq(AgentMcpBindingDO::getAgentCode, agentCode)

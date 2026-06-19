@@ -37,6 +37,11 @@ public class McpCallPayload {
     @JsonProperty("toolName")
     private String toolName;
 
+    /** MCP 工具参数（仅工具自身参数，不含上下文） */
     @JsonProperty("arguments")
     private Object arguments;
+
+    /** 执行上下文（agentCode / userCode / conversationCode / traceId 等） */
+    @JsonProperty("context")
+    private Object context;
 }

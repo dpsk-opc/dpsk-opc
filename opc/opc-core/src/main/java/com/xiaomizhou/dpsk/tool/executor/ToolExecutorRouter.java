@@ -63,7 +63,7 @@ public class ToolExecutorRouter {
         ToolExecutor executor = select(metadata.getSourceType());
         log.debug("Routing tool '{}' (sourceType={}) to executor {}", 
                 call.getName(), metadata.getSourceType(), executor.getClass().getSimpleName());
-        return executor.execute(call, context);
+        return executor.execute(call, context, metadata);
     }
 
     /**

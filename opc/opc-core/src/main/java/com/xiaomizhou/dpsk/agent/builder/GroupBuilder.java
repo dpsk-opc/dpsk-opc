@@ -105,7 +105,7 @@ public class GroupBuilder implements AgentBuilder {
                             }
                         })
                         .chatMemory(groupChatMemory)
-                        .toolProviders(factory.getToolProviders(agentDef.getCode(), spec.getUserCode(), spec.getConversationCode()))
+                        .toolProviders(factory.getToolProviders(agentDef.getCode(), spec.getUserCode(), spec.getConversationCode(), spec.getMcpCodes()))
                         .systemMessage(enrichedPersona)
                         .build();
             }).collect(Collectors.toList());

@@ -74,7 +74,7 @@ public class AgentBridge {
      * @param userId  当前用户编码
      * @param msgCode 用户发送的消息编码
      */
-    public void dispatch(String userId, String msgCode) {
+    public void dispatch(String userId, String msgCode,List<String> mcpCodes) {
         if (StringUtils.isBlank(msgCode)) {
             return;
         }
@@ -98,9 +98,9 @@ public class AgentBridge {
 
         // 3. 判断会话类型并组装 AgentBuildSpec
         if (ConversationType.GROUP.name().equalsIgnoreCase(conversationType)) {
-            dispatchGroup(userId, msg, targetId, conversationCode);
+            dispatchGroup(userId, msg, targetId, conversationCode,mcpCodes);
         } else {
-            dispatchSingle(userId, msg, targetId, conversationCode);
+            dispatchSingle(userId, msg, targetId, conversationCode,mcpCodes);
         }
     }
 
@@ -110,7 +110,8 @@ public class AgentBridge {
     private void dispatchSingle(String userId,
                                 com.xiaomizhou.dpsk.db.model.ChatMessage msg,
                                 String targetId,
-                                String conversationCode) {
+                                String conversationCode,
+                                List<String> mcpCodes) {
         AgentDto agent = agentComponent.getByCode(targetId);
         if (agent == null) {
             return;
@@ -123,6 +124,7 @@ public class AgentBridge {
                 .targetAgentCode(targetId)
                 .userContent(msg.getContent())
                 .conversationCode(conversationCode)
+                .mcpCodes(mcpCodes)
                 .build();
 
         // 生成流式编码
@@ -153,7 +155,8 @@ public class AgentBridge {
     private void dispatchGroup(String userId,
                                com.xiaomizhou.dpsk.db.model.ChatMessage msg,
                                String targetId,
-                               String conversationCode) {
+                               String conversationCode,
+                               List<String> mcpCodes) {
         // 获取群成员
         List<ChatMemberDto> members = chatGroupComponent.getGroupMembers(targetId);
         if (CollectionUtils.isEmpty(members)) {
@@ -180,6 +183,7 @@ public class AgentBridge {
                 .groupCode(targetId)
                 .userContent(msg.getContent())
                 .conversationCode(conversationCode)
+                .mcpCodes(mcpCodes)
                 .build();
 
         // 生成流式编码

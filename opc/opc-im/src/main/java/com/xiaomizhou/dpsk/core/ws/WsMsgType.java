@@ -8,14 +8,27 @@ package com.xiaomizhou.dpsk.core.ws;
 public interface WsMsgType {
 
     // 普通消息（非流式）
-    String MESSAGE = "message";
+    String MESSAGE = "message_start";
+
+    String MESSAGE_CHUNK = "message_chunk";
+
+    String MESSAGE_CHUNK_END = "message_end";
+
+    String MESSAGE_DONE = "done";
 
     // 流式消息开始
-    String STREAM_START = "stream_start";
+    String STREAM_START = "thinking_start";
     // 流式消息块
-    String STREAM_CHUNK = "stream_chunk";
+    String STREAM_CHUNK = "thinking_chunk";
     // 流式消息结束
-    String STREAM_END = "stream_end";
+    String STREAM_END = "thinking_end";
+
+    // 工具调用
+    String TOOL_CALL = "tool_call";
+
+    // 工具调用结果
+    String TOOL_RESULT = "tool_result";
+
 
     // 心跳 ping/pong
     String PING = "ping";

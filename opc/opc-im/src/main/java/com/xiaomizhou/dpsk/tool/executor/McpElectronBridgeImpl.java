@@ -69,6 +69,15 @@ public class McpElectronBridgeImpl implements McpElectronBridge {
                 }
             }
 
+            // context 是 JSON 字符串，需要解析为 Object
+            if (request.getContext() != null) {
+                try {
+                    payload.setContext(MAPPER.readTree(request.getContext()));
+                } catch (Exception e) {
+                    payload.setContext(request.getContext());
+                }
+            }
+
 
 
             WsMessage msg = new WsMessage(WsMsgType.MCP_CALL, payload);

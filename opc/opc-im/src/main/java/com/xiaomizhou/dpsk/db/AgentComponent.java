@@ -164,11 +164,23 @@ public class AgentComponent {
      * @return
      */
     public AgentDto getByCode(String code) {
-        List<AgentDto> list = getByCodes(List.of(code));
-        if (CollectionUtils.isEmpty(list)) {
+        Agent agent = agentDao.getByCode(code);
+        if (agent == null) {
             return null;
         }
-        return list.get(0);
+        AgentDto dto = convertToDto(agent);
+
+        // 填充工具列表
+        Map<String, List<AgentToolRefVO>> tools = agentToolComponent.queryByAgentCodes(List.of(code));
+        dto.setTools(tools.get(code));
+
+        // 填充知识库编码
+        List<KnowledgeLib> libs = knowledgeLibComponent.listByOwnerCodes(List.of(code), OwnerType.AGENT);
+        if (CollectionUtils.isNotEmpty(libs)) {
+            dto.setKnowledgeLibCode(libs.get(0).getCode());
+        }
+
+        return dto;
     }
 
 

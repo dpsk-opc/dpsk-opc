@@ -31,6 +31,13 @@ public record AgentEvent(
         return new AgentEvent(AgentEventType.STREAM_CHUNK, agentCode, delta, null, null, null, Collections.emptyMap());
     }
 
+    /**
+     * 创建流式终止事件
+     */
+    public static AgentEvent streamChunkEnd(String agentCode) {
+        return new AgentEvent(AgentEventType.STREAM_CHUNK_END, agentCode, null, null, null, null, Collections.emptyMap());
+    }
+
     /** 创建 TOOL_CALL 事件 */
     public static AgentEvent toolCall(String agentCode, String name, String input) {
         return new AgentEvent(AgentEventType.TOOL_CALL, agentCode, null, name, input, null, Collections.emptyMap());
