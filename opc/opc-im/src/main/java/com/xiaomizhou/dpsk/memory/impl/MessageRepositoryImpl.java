@@ -2,6 +2,7 @@ package com.xiaomizhou.dpsk.memory.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import com.xiaomizhou.dpsk.db.FileService;
 import com.xiaomizhou.dpsk.db.dto.FileRecordDto;
@@ -214,6 +215,9 @@ public class MessageRepositoryImpl implements MessageRepository {
 
             ToolMsgDto tool = new ToolMsgDto();
 
+            String code = SequenceUtils.generator().next(CHAT_MESSAGE_PREFIX);
+            model.setCode(code);
+
             if (msg instanceof ToolExecutionResultMessage) {
 
                 ToolExecutionResultMessage d = (ToolExecutionResultMessage) msg;
@@ -223,9 +227,13 @@ public class MessageRepositoryImpl implements MessageRepository {
                     return;
                 }
 
+                if (Objects.isNull(attributes)) {
+                    tool.setAttributes(Map.of("code", code));
+                }
+
                 tool.setId(d.id());
                 tool.setToolName(d.toolName());
-                tool.setAttributes(d.attributes());
+
                 tool.setIsError(d.isError());
                 tool.setContents(d.contents().stream().filter(c -> c.type().equals(ContentType.TEXT)).map(t -> {
                     ToolMsgDto.Content c = new ToolMsgDto.Content();
@@ -243,6 +251,9 @@ public class MessageRepositoryImpl implements MessageRepository {
                     return;
                 }
 
+                if (Objects.isNull(attributes)) {
+                    tool.setAttributes(Map.of("code", code));
+                }
 
                 model.setMessageType("THINKING");
 
@@ -267,8 +278,6 @@ public class MessageRepositoryImpl implements MessageRepository {
                 model.setContent(JsonUtils.toJson(thinking));
             }
 
-            model.setCode(SequenceUtils.generator().next(CHAT_MESSAGE_PREFIX));
-
             model.setContentType(0);
             if (memoryKey.isGroupChat()) {
                 model.setSenderCode(conv.getOwnerCode());
@@ -280,6 +289,7 @@ public class MessageRepositoryImpl implements MessageRepository {
             model.setConversationType(memoryKey.isGroupChat() ? "GROUP" : "SINGLE");
             model.setCreateTime(new Date());
             model.setUpdateTime(new Date());
+            model.setConversationCode(conv.getCode());
 
             chatMessageDao.save(model);
         });
@@ -328,6 +338,9 @@ public class MessageRepositoryImpl implements MessageRepository {
         // 获取最后一条消息的 code
         int size = messages.size();
         com.xiaomizhou.dpsk.db.model.ChatMessage last = messages.get(size - 1);
+        if (!last.getMessageType().equals(MessageType.USER.getValue())) {
+            return;
+        }
 
         // 去掉最后一个 UserMessage（如果存在），原因是Langchain4j在构建UserMessage()会append一个消息，同一条数据也会从db查出来，导致有两条一模一样的消息发给LLM
         messages.remove(size - 1);
