@@ -1,11 +1,17 @@
 package com.xiaomizhou.dpsk.tool;
 
+import com.microsoft.playwright.Browser;
+import com.microsoft.playwright.BrowserType;
+import com.microsoft.playwright.Playwright;
+import com.xiaomizhou.dpsk.tool.buildin.CommandTools;
 import com.xiaomizhou.dpsk.tool.buildin.DateTimeTools;
 import com.xiaomizhou.dpsk.tool.buildin.FileTools;
 import com.xiaomizhou.dpsk.tool.buildin.SearchTools;
 import com.xiaomizhou.dpsk.tool.executor.ToolExecutorRouter;
 import com.xiaomizhou.dpsk.tool.repository.ToolAuditLogRepository;
 import com.xiaomizhou.dpsk.tool.repository.ToolRepository;
+import dev.langchain4j.community.browser.playwright.PlaywrightBrowserExecutionEngine;
+import dev.langchain4j.community.tool.browseruse.BrowserUseTool;
 import dev.langchain4j.community.tool.webscraper.WebScraperTool;
 import dev.langchain4j.web.search.WebSearchTool;
 import lombok.extern.slf4j.Slf4j;
@@ -59,6 +65,26 @@ public class ToolConfiguration {
         public WebScraperTool webScraperTool() {
             return new WebScraperTool();
         }
+
+        @Bean
+        @ConditionalOnMissingBean
+        public CommandTools commandTools() {
+            return new CommandTools();
+        }
+
+//        @Bean("playwright")
+//        @ConditionalOnMissingBean
+//        public BrowserUseTool playwright() {
+//            Playwright playwright = Playwright.create();
+//            BrowserType.LaunchOptions options = new BrowserType.LaunchOptions()
+//                    .setHeadless(false)
+//                    .setChannel("chrome")
+//                    .setChromiumSandbox(true)
+//                    .setSlowMo(500);
+//            Browser browser = playwright.chromium().launch(options);
+//
+//            return BrowserUseTool.from(PlaywrightBrowserExecutionEngine.builder().browser(browser).build());
+//        }
 
     }
 

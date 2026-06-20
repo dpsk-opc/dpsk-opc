@@ -127,6 +127,11 @@
         </dependency>
 
         <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-community-browser-execution-engine-playwright</artifactId>
+        </dependency>
+
+        <dependency>
             <groupId>com.github.kagkarlsson</groupId>
             <artifactId>db-scheduler</artifactId>
             <version>16.11.0</version>

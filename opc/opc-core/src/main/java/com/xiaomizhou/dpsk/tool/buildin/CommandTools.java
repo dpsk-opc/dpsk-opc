@@ -1,5 +1,6 @@
 package com.xiaomizhou.dpsk.tool.buildin;
 
+import com.xiaomizhou.dpsk.tool.CommandSafetyChecker;
 import com.xiaomizhou.dpsk.tool.ToolMeta;
 import dev.langchain4j.agent.tool.P;
 
@@ -40,52 +41,56 @@ public class CommandTools {
             @P(description = "完整的命令行字符串。请根据操作系统自行拼接，Windows 用 cmd /c <命令>，Linux/Mac 用 sh -c '<命令>'。例如 Windows: cmd /c dir, Linux: sh -c 'ls -la'") String command,
             @P(description = "工作目录（可选），默认为当前工作目录") String workingDir, @P(description = "超时时间（秒），默认30秒，最大300秒") Integer timeoutSeconds) {
 
+        CommandSafetyChecker.SafetyResult check = CommandSafetyChecker.check(command);
+
+        if (check.isBlocked()) {
+            return "危险命令执行被阻止，原因：" + check.getReason();
+        }
+
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("command", command);
 
-        return "执行成功(mock)";
+        long timeout = (timeoutSeconds != null && timeoutSeconds > 0)
+                ? Math.min(timeoutSeconds, MAX_TIMEOUT_SECONDS)
+                : DEFAULT_TIMEOUT_SECONDS;
 
-//        long timeout = (timeoutSeconds != null && timeoutSeconds > 0)
-//                ? Math.min(timeoutSeconds, MAX_TIMEOUT_SECONDS)
-//                : DEFAULT_TIMEOUT_SECONDS;
-//
-//        try {
-//            ProcessBuilder processBuilder = buildProcess(command, workingDir);
-//            Process process = processBuilder.start();
-//
-//            // 并行读取 stdout 和 stderr
-//            String stdout = readStream(process.getInputStream());
-//            String stderr = readStream(process.getErrorStream());
-//
-//            boolean finished = process.waitFor(timeout, TimeUnit.SECONDS);
-//            if (!finished) {
-//                process.destroyForcibly();
-//                result.put("success", false);
-//                result.put("message", "命令执行超时（" + timeout + "秒），已强制终止");
-//                result.put("exitCode", -1);
-//                result.put("stdout", truncate(stdout, 2000));
-//                result.put("stderr", truncate(stderr, 2000));
-//                return toJson(result);
-//            }
-//
-//            int exitCode = process.exitValue();
-//            result.put("success", exitCode == 0);
-//            result.put("exitCode", exitCode);
-//            result.put("stdout", truncate(stdout, 4000));
-//            result.put("stderr", truncate(stderr, 2000));
-//
-//            if (exitCode != 0 && !stderr.isEmpty()) {
-//                result.put("message", "命令执行失败，退出码: " + exitCode);
-//            }
-//
-//            return toJson(result);
-//
-//        } catch (Exception e) {
-//            result.put("success", false);
-//            result.put("message", "命令执行异常: " + e.getMessage());
-//            result.put("exitCode", -1);
-//            return toJson(result);
-//        }
+        try {
+            ProcessBuilder processBuilder = buildProcess(command, workingDir);
+            Process process = processBuilder.start();
+
+            // 并行读取 stdout 和 stderr
+            String stdout = readStream(process.getInputStream());
+            String stderr = readStream(process.getErrorStream());
+
+            boolean finished = process.waitFor(timeout, TimeUnit.SECONDS);
+            if (!finished) {
+                process.destroyForcibly();
+                result.put("success", false);
+                result.put("message", "命令执行超时（" + timeout + "秒），已强制终止");
+                result.put("exitCode", -1);
+                result.put("stdout", truncate(stdout, 2000));
+                result.put("stderr", truncate(stderr, 2000));
+                return toJson(result);
+            }
+
+            int exitCode = process.exitValue();
+            result.put("success", exitCode == 0);
+            result.put("exitCode", exitCode);
+            result.put("stdout", truncate(stdout, 4000));
+            result.put("stderr", truncate(stderr, 2000));
+
+            if (exitCode != 0 && !stderr.isEmpty()) {
+                result.put("message", "命令执行失败，退出码: " + exitCode);
+            }
+
+            return toJson(result);
+
+        } catch (Exception e) {
+            result.put("success", false);
+            result.put("message", "命令执行异常: " + e.getMessage());
+            result.put("exitCode", -1);
+            return toJson(result);
+        }
     }
 
     /**

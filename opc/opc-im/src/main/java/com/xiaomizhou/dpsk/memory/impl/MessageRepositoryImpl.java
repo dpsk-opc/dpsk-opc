@@ -338,7 +338,7 @@ public class MessageRepositoryImpl implements MessageRepository {
         // 获取最后一条消息的 code
         int size = messages.size();
         com.xiaomizhou.dpsk.db.model.ChatMessage last = messages.get(size - 1);
-        if (!last.getMessageType().equals(MessageType.USER.getValue())) {
+        if (!MessageType.USER.getValue().equalsIgnoreCase(last.getMessageType())) {
             return;
         }
 
