@@ -2,7 +2,10 @@ package com.xiaomizhou.dpsk.db.dto;
 
 
 import com.baomidou.mybatisplus.annotation.TableField;
+import com.fasterxml.jackson.annotation.JsonFormat;
 import lombok.Data;
+
+import java.util.Date;
 
 @Data
 public class FileRecordDto {
@@ -39,4 +42,10 @@ public class FileRecordDto {
      * 下载链接
      */
     private String accessUrl;
+
+    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss", timezone = "GMT+8")
+    private Date updateTime;
+
+    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss", timezone = "GMT+8")
+    private Date createTime;
 }

@@ -260,6 +260,7 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
         // 保存消息到 DB
         String msgCode = saveMessageToDb(agentCode, content);
 
+
         // 发送 stream_end
         try {
 //            if (streamCode != null) {

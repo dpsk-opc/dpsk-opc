@@ -1,8 +1,6 @@
 package com.xiaomizhou.dpsk.db;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.core.metadata.IPage;
-import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.xiaomizhou.dpsk.db.dao.TaskDao;
 import com.xiaomizhou.dpsk.db.dao.TaskExecutionLogDao;
 import com.xiaomizhou.dpsk.db.dto.*;
@@ -17,11 +15,15 @@ import com.xiaomizhou.dpsk.utils.SequenceUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import static com.xiaomizhou.dpsk.utils.SequenceUtils.UUIDSequenceGenerator.TASK_PREFIX;
@@ -40,6 +42,7 @@ public class TaskComponent {
     private final TaskDao taskDao;
     private final TaskExecutionLogDao taskExecutionLogDao;
 
+    private final AgentComponent agentComponent;
     /**
      * 创建任务。
      */
@@ -151,13 +154,23 @@ public class TaskComponent {
      */
     public TaskDto getByCode(String code) {
         Task task = taskManager.getTask(code);
-        return convertToDto(task);
+        TaskDto dto = convertToDto(task);
+        if (Objects.isNull(dto)) {
+            return null;
+        }
+
+        AgentDto agent = agentComponent.getByCode(dto.getAgentCode());
+        if (Objects.nonNull(agent)) {
+            agent.setLlmConfig("");
+        }
+        dto.setAgent(agent);
+        return dto;
     }
 
     /**
      * 分页查询任务。
      */
-    public IPage<TaskDto> queryPage(TaskQueryParam param) {
+    public ImmutablePair<Long, List<TaskDto>> queryPage(TaskQueryParam param) {
         LambdaQueryWrapper<TaskDO> wrapper = new LambdaQueryWrapper<>();
 
         if (StringUtils.isNotBlank(param.getTaskType())) {
@@ -177,18 +190,39 @@ public class TaskComponent {
         }
         // 排除已删除
         wrapper.eq(TaskDO::getIsDeleted, 0);
-        wrapper.orderByDesc(TaskDO::getCreateTime);
 
-        Page<TaskDO> page = new Page<>(param.getPageNo(), param.getPageSize());
-        IPage<TaskDO> doPage = taskDao.page(page, wrapper);
+        long cnt = taskDao.count(wrapper);
+        if (cnt == 0) {
+            return ImmutablePair.of(0L, List.of());
+        }
 
-        return doPage.convert(this::convertToDto);
+        int pageNo = param.getPageNo() != null && param.getPageNo() > 0 ? param.getPageNo() : 1;
+        int pageSize = param.getPageSize() != null && param.getPageSize() > 0 ? param.getPageSize() : 10;
+
+        List<TaskDO> list = taskDao.list(
+                wrapper.last("limit %s,%s".formatted((pageNo - 1) * pageSize, pageSize))
+                        .orderByDesc(TaskDO::getCreateTime));
+
+        Set<String> agentCodes = list.stream().map(TaskDO::getAgentCode).collect(Collectors.toSet());
+        Map<String, AgentDto> agentMap = agentComponent.getByCodes(agentCodes).stream().collect(Collectors.toMap(AgentDto::getCode, Function.identity()));
+
+        List<TaskDto> dtos = list.stream().map(this::convertToDto).toList();
+        dtos.forEach(dto -> {
+            if (agentMap.containsKey(dto.getAgentCode())) {
+                AgentDto agent = agentMap.get(dto.getAgentCode());
+                if (Objects.nonNull(agent)) {
+                    agent.setLlmConfig("");
+                }
+                dto.setAgent(agent);
+            }
+        });
+        return ImmutablePair.of(cnt, dtos);
     }
 
     /**
      * 分页查询执行日志。
      */
-    public IPage<TaskExecutionLogDto> queryExecutionLogPage(TaskExecutionLogQueryParam param) {
+    public ImmutablePair<Long, List<TaskExecutionLogDto>> queryExecutionLogPage(TaskExecutionLogQueryParam param,int pageNo,int pageSize) {
         LambdaQueryWrapper<TaskExecutionLogDO> wrapper = new LambdaQueryWrapper<>();
 
         if (StringUtils.isNotBlank(param.getTaskCode())) {
@@ -201,12 +235,19 @@ public class TaskComponent {
             wrapper.eq(TaskExecutionLogDO::getStatus, param.getStatus());
         }
         wrapper.eq(TaskExecutionLogDO::getIsDeleted, 0);
-        wrapper.orderByDesc(TaskExecutionLogDO::getStartTime);
 
-        Page<TaskExecutionLogDO> page = new Page<>(param.getPageNo(), param.getPageSize());
-        IPage<TaskExecutionLogDO> doPage = taskExecutionLogDao.page(page, wrapper);
+        long cnt = taskExecutionLogDao.count(wrapper);
+        if (cnt == 0) {
+            return ImmutablePair.of(0L, List.of());
+        }
 
-        return doPage.convert(this::convertLogToDto);
+
+        List<TaskExecutionLogDO> list = taskExecutionLogDao.list(
+                wrapper.last("limit %s,%s".formatted((pageNo - 1) * pageSize, pageSize))
+                        .orderByDesc(TaskExecutionLogDO::getStartTime));
+
+        List<TaskExecutionLogDto> dtos = list.stream().map(this::convertLogToDto).toList();
+        return ImmutablePair.of(cnt, dtos);
     }
 
     // ---- 模型转换 ----
@@ -238,6 +279,8 @@ public class TaskComponent {
         dto.setParameters(entity.getParameters());
         dto.setAgentCode(entity.getAgentCode());
         dto.setConversationCode(entity.getConversationCode());
+        dto.setUpdateTime(entity.getUpdateTime());
+        dto.setCreateTime(entity.getCreateTime());
         return dto;
     }
 

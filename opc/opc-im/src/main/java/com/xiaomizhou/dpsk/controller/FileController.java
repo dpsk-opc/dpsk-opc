@@ -2,12 +2,16 @@ package com.xiaomizhou.dpsk.controller;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.xiaomizhou.dpsk.core.model.Results;
+import com.xiaomizhou.dpsk.core.model.request.Request;
+import com.xiaomizhou.dpsk.core.model.response.PageResponse;
 import com.xiaomizhou.dpsk.core.model.response.Response;
+import com.xiaomizhou.dpsk.db.FileRecordComponent;
 import com.xiaomizhou.dpsk.db.FileService;
 import com.xiaomizhou.dpsk.db.dto.FileRecordDto;
+import com.xiaomizhou.dpsk.db.dto.FileRecordPageCmd;
+import com.xiaomizhou.dpsk.db.dto.FileRecordUpdateCmd;
 import com.xiaomizhou.dpsk.db.model.FileRecord;
 import com.xiaomizhou.dpsk.utils.AuthContext;
-import com.xiaomizhou.dpsk.utils.SequenceUtils;
 import jakarta.annotation.PostConstruct;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -52,6 +56,8 @@ public class FileController {
     private String host;
 
     private final FileService fileService;
+
+    private final FileRecordComponent fileRecordComponent;
 
     private File uploadDir;
 
@@ -255,5 +261,57 @@ public class FileController {
 
         Page<FileRecordDto> page = fileService.pageFilesByConversationCode(conversationCode, pageNo, pageSize);
         return Results.page(page.getRecords(), pageNo, pageSize, page.getTotal());
+    }
+
+    // ==================== 管理端接口 ====================
+
+    /**
+     * 管理端 - 分页查询文件记录
+     */
+    @PostMapping(value = "admin/page")
+    public Response<PageResponse<FileRecordDto>> adminPage(@RequestBody Request<FileRecordPageCmd> request) {
+        FileRecordPageCmd cmd = request.getParam();
+        var pair = fileRecordComponent.pageFiles(cmd);
+        return Results.page(pair.getRight(), cmd.getPageNo(), cmd.getPageSize(), pair.getLeft());
+    }
+
+    /**
+     * 管理端 - 根据编码查询文件记录
+     */
+    @PostMapping(value = "admin/get")
+    public Response<FileRecordDto> adminGet(@RequestBody Request<String> request) {
+        FileRecordDto dto = fileRecordComponent.getByCode(request.getParam());
+        if (dto == null) {
+            return Results.fail(404, "文件记录不存在");
+        }
+        return Results.ok(dto);
+    }
+
+    /**
+     * 管理端 - 更新文件记录
+     */
+    @PostMapping(value = "admin/update")
+    public Response<Object> adminUpdate(@RequestBody Request<FileRecordUpdateCmd> cmd) {
+        boolean ok = fileRecordComponent.update(cmd.getParam());
+        return ok ? Results.ok() : Results.fail(500, "更新失败");
+    }
+
+    /**
+     * 管理端 - 删除文件记录（逻辑删除）
+     */
+    @PostMapping(value = "admin/delete")
+    public Response<Object> adminDelete(@RequestBody Request<String> request) {
+        String code = request.getParam();
+        // 删除磁盘文件
+        try {
+            java.io.File diskFile = fileService.getDiskFileByCode(code);
+            if (diskFile != null && diskFile.exists()) {
+                java.nio.file.Files.delete(diskFile.toPath());
+            }
+        } catch (IOException e) {
+            log.warn("删除磁盘文件失败: code={}", code, e);
+        }
+        boolean ok = fileRecordComponent.deleteByCode(code);
+        return ok ? Results.ok() : Results.fail(404, "文件记录不存在");
     }
 }

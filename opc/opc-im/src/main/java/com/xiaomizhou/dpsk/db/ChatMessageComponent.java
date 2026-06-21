@@ -172,7 +172,7 @@ public class ChatMessageComponent {
         usage.setInputTokens(token.inputTokenCount());
         usage.setOutputTokens(token.outputTokenCount());
 
-        usage.setAgentCode(dto.getTargetId());
+        usage.setAgentCode(dto.getSendId());
         usage.setCode(SequenceUtils.generator().next("TKU"));
         usage.setConversationCode(dto.getConversationCode());
         usage.setMessageCode(msg.getCode());
@@ -271,7 +271,7 @@ public class ChatMessageComponent {
         usage.setInputTokens(token.inputTokenCount());
         usage.setOutputTokens(token.outputTokenCount());
 
-        usage.setAgentCode(dto.getTargetId());
+        usage.setAgentCode(dto.getSendId());
         usage.setCode(SequenceUtils.generator().next("TKU"));
         usage.setConversationCode(dto.getConversationCode());
         usage.setMessageCode(msg.getCode());

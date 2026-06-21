@@ -287,6 +287,9 @@ public class FileService {
         return filename.substring(dotIndex);
     }
 
+    public String getDownloadUrl(String filePath){
+        return host + "uploads/" + filePath;
+    }
 
     public String getDownloadUrl(FileRecord file){
         return host + "uploads/" + file.getFilePath();

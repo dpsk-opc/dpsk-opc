@@ -1,6 +1,9 @@
 package com.xiaomizhou.dpsk.db.dto;
 
+import com.fasterxml.jackson.annotation.JsonFormat;
 import lombok.Data;
+
+import java.util.Date;
 
 /**
  * 任务响应 DTO。
@@ -26,5 +29,13 @@ public class TaskDto {
 
     private String agentCode;
 
+    private AgentDto agent;
+
     private String conversationCode;
+
+    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss", timezone = "GMT+8")
+    private Date createTime;
+
+    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss", timezone = "GMT+8")
+    private Date updateTime;
 }

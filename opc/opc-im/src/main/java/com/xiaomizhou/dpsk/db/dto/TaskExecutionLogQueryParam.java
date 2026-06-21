@@ -15,8 +15,4 @@ public class TaskExecutionLogQueryParam {
     private String consumerKey;
 
     private String status;
-
-    private Integer pageNo = 1;
-
-    private Integer pageSize = 10;
 }

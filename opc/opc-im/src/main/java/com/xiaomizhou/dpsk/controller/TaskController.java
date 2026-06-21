@@ -1,6 +1,5 @@
 package com.xiaomizhou.dpsk.controller;
 
-import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.xiaomizhou.dpsk.core.model.Results;
 import com.xiaomizhou.dpsk.core.model.request.Request;
 import com.xiaomizhou.dpsk.core.model.response.PageResponse;
@@ -11,10 +10,13 @@ import com.xiaomizhou.dpsk.task.model.TaskConsumeResult;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 /**
  * 任务控制器。
@@ -70,12 +72,12 @@ public class TaskController {
      */
     @PostMapping(value = "page")
     public Response<PageResponse<TaskDto>> page(@RequestBody TaskQueryParam param) {
-        IPage<TaskDto> page = taskComponent.queryPage(param);
+        ImmutablePair<Long, List<TaskDto>> pair = taskComponent.queryPage(param);
         return Results.page(
-                page.getRecords(),
+                pair.getRight(),
                 param.getPageNo(),
                 param.getPageSize(),
-                page.getTotal());
+                pair.getLeft());
     }
 
     /**
@@ -109,12 +111,12 @@ public class TaskController {
      * 分页查询执行日志。
      */
     @PostMapping(value = "execution-log/page")
-    public Response<PageResponse<TaskExecutionLogDto>> executionLogPage(@RequestBody TaskExecutionLogQueryParam param) {
-        IPage<TaskExecutionLogDto> page = taskComponent.queryExecutionLogPage(param);
+    public Response<PageResponse<TaskExecutionLogDto>> executionLogPage(@RequestBody Request<TaskExecutionLogQueryParam> param) {
+        ImmutablePair<Long, List<TaskExecutionLogDto>> pair = taskComponent.queryExecutionLogPage(param.getParam(), param.pageNo(), param.pageSize());
         return Results.page(
-                page.getRecords(),
-                param.getPageNo(),
-                param.getPageSize(),
-                page.getTotal());
+                pair.getRight(),
+                param.getPage().getPageNo(),
+                param.getPage().getPageSize(),
+                pair.getLeft());
     }
 }
