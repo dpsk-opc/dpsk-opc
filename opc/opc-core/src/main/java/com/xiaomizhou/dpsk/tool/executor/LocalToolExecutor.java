@@ -65,10 +65,10 @@ public class LocalToolExecutor implements ToolExecutor {
                     try {
                         return method.invoke(bean, args);
                     } catch (Exception e) {
-                        throw new RuntimeException(e);
+                        log.error("Invoke local tool failed: {}.{}", beanName, methodName, e);
+                        return "工具执行失败";
                     }
-                })
-                .get(metadata.getTimeoutMs(), TimeUnit.MINUTES);
+                }).get(metadata.getTimeoutMs(), TimeUnit.MINUTES);
 
         if (result == null) {
             return "";

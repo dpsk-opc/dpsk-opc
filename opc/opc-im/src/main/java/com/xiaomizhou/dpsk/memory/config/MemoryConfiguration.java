@@ -1,5 +1,6 @@
 package com.xiaomizhou.dpsk.memory.config;
 
+import com.xiaomizhou.dpsk.agent.data.AgentDefProvider;
 import com.xiaomizhou.dpsk.memory.MemorySystem;
 import com.xiaomizhou.dpsk.memory.PersonaProvider;
 import com.xiaomizhou.dpsk.memory.assembler.ContextAssembler;
@@ -12,6 +13,7 @@ import com.xiaomizhou.dpsk.memory.repository.LongTermFactRepository;
 import com.xiaomizhou.dpsk.memory.repository.MemorySummaryRepository;
 import com.xiaomizhou.dpsk.memory.repository.MessageRepository;
 import com.xiaomizhou.dpsk.memory.store.EmbeddingStore;
+import com.xiaomizhou.dpsk.tool.ToolRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -74,7 +76,8 @@ public class MemoryConfiguration {
                                      SummaryGenerator summaryGenerator,
                                      EmbeddingStore embeddingStore,
                                      FactManager.EmbeddingClient embeddingClient,
-                                     PersonaProvider personaProvider,
+                                     ToolRegistry toolRegistry,
+                                     AgentDefProvider agentDefProvider,
                                      ExecutorService executorService) {
         log.info("Building MemorySystem with L0+L1+L2 (full stack, pure RAG)");
         return MemorySystem.builder()
@@ -84,6 +87,8 @@ public class MemoryConfiguration {
                 .embeddingStore(embeddingStore)
                 .embeddingClient(embeddingClient)
                 .executorService(executorService)
+                .agentDefProvider(agentDefProvider)
+                .toolRegistry(toolRegistry)
                 .build();
     }
 

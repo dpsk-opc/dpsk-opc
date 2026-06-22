@@ -59,6 +59,7 @@ public class TaskComponent {
                 .parameters(cmd.getParameters())
                 .agentCode(cmd.getAgentCode())
                 .conversationCode(cmd.getConversationCode())
+                .source(cmd.getSource())
                 .build();
 
         String createdCode = taskManager.createTask(task);
@@ -118,6 +119,11 @@ public class TaskComponent {
         if (task == null) {
             return;
         }
+
+        if (Task.SOURCE_SYSTEM.equals(task.getSource())) {
+            throw BusinessException.notFound("系统任务不允许删除, code=" + code);
+        }
+
         taskManager.deleteTask(code);
         log.info("删除任务成功, code={}", code);
     }
@@ -215,6 +221,7 @@ public class TaskComponent {
                 }
                 dto.setAgent(agent);
             }
+
         });
         return ImmutablePair.of(cnt, dtos);
     }
@@ -281,6 +288,7 @@ public class TaskComponent {
         dto.setConversationCode(entity.getConversationCode());
         dto.setUpdateTime(entity.getUpdateTime());
         dto.setCreateTime(entity.getCreateTime());
+        dto.setSource(entity.getSource());
         return dto;
     }
 

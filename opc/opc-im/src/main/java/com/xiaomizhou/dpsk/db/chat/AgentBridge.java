@@ -22,6 +22,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.ImmutablePair;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -54,6 +55,9 @@ public class AgentBridge {
     private final ChatGroupComponent chatGroupComponent;
     private final TokenUsageDao tokenUsageDao;
 
+    @Value("${com.xiaomizhou.dpsk.opc.skill.path:~/skills}")
+    private String skillPathPrefix;
+
     public AgentBridge(AgentOrchestrator orchestrator,
                        AgentDefProvider agentDefProvider,
                        AgentComponent agentComponent,
@@ -74,7 +78,7 @@ public class AgentBridge {
      * @param userId  当前用户编码
      * @param msgCode 用户发送的消息编码
      */
-    public void dispatch(String userId, String msgCode,List<String> mcpCodes) {
+    public void dispatch(String userId, String msgCode,List<String> mcpCodes,List<String> skillPaths) {
         if (StringUtils.isBlank(msgCode)) {
             return;
         }
@@ -96,11 +100,16 @@ public class AgentBridge {
         }
         String conversationCode = conv.left;
 
+        if (CollectionUtils.isNotEmpty(skillPaths)) {
+            String template = "%s/%s/skills/%s/";
+            skillPaths = skillPaths.stream().map(path -> template.formatted(skillPathPrefix, targetId, path)).toList();
+        }
+
         // 3. 判断会话类型并组装 AgentBuildSpec
         if (ConversationType.GROUP.name().equalsIgnoreCase(conversationType)) {
-            dispatchGroup(userId, msg, targetId, conversationCode,mcpCodes);
+            dispatchGroup(userId, msg, targetId, conversationCode, mcpCodes);
         } else {
-            dispatchSingle(userId, msg, targetId, conversationCode,mcpCodes);
+            dispatchSingle(userId, msg, targetId, conversationCode, mcpCodes, skillPaths);
         }
     }
 
@@ -111,7 +120,8 @@ public class AgentBridge {
                                 com.xiaomizhou.dpsk.db.model.ChatMessage msg,
                                 String targetId,
                                 String conversationCode,
-                                List<String> mcpCodes) {
+                                List<String> mcpCodes,
+                                List<String> skillPaths) {
         AgentDto agent = agentComponent.getByCode(targetId);
         if (agent == null) {
             return;
@@ -125,6 +135,7 @@ public class AgentBridge {
                 .userContent(msg.getContent())
                 .conversationCode(conversationCode)
                 .mcpCodes(mcpCodes)
+                .skillPaths(skillPaths)
                 .build();
 
         // 生成流式编码

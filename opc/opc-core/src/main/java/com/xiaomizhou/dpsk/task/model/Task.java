@@ -16,6 +16,7 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class Task {
 
+
     /** 主键 */
     private Long id;
 
@@ -43,6 +44,8 @@ public class Task {
     /** 所属会话编码 */
     private String conversationCode;
 
+    private Integer source;
+
     // ---- 便捷常量 ----
 
     public static final String TYPE_SCHEDULED = "SCHEDULED";
@@ -53,6 +56,12 @@ public class Task {
     public static final String STATUS_ENABLED = "ENABLED";
     public static final String STATUS_DISABLED = "DISABLED";
     public static final String STATUS_PAUSED = "PAUSED";
+
+    public static final Integer SOURCE_USER = 1;
+
+    public static final Integer SOURCE_SYSTEM = 2;
+
+    public static final Integer SOURCE_AGENT = 3;
 
     /**
      * 任务是否可用。

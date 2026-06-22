@@ -109,6 +109,7 @@ public class TaskRepositoryImpl implements TaskRepository {
                 .parameters(entity.getParameters())
                 .agentCode(entity.getAgentCode())
                 .conversationCode(entity.getConversationCode())
+                .source(entity.getSource())
                 .build();
     }
 
@@ -123,6 +124,7 @@ public class TaskRepositoryImpl implements TaskRepository {
         entity.setParameters(model.getParameters());
         entity.setAgentCode(model.getAgentCode());
         entity.setConversationCode(model.getConversationCode());
+        entity.setSource(model.getSource());
         return entity;
     }
 }

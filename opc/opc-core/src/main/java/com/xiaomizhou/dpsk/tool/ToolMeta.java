@@ -28,7 +28,7 @@ public @interface ToolMeta {
      *
      * @return
      */
-    String category() default "";
+    String category() default ToolCategory.BUILD_IN;
 
 
     boolean cacheable() default false;

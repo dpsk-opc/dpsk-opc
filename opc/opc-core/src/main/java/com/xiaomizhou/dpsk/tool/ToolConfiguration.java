@@ -1,19 +1,12 @@
 package com.xiaomizhou.dpsk.tool;
 
-import com.microsoft.playwright.Browser;
-import com.microsoft.playwright.BrowserType;
-import com.microsoft.playwright.Playwright;
 import com.xiaomizhou.dpsk.tool.buildin.CommandTools;
-import com.xiaomizhou.dpsk.tool.buildin.DateTimeTools;
 import com.xiaomizhou.dpsk.tool.buildin.FileTools;
-import com.xiaomizhou.dpsk.tool.buildin.SearchTools;
+import com.xiaomizhou.dpsk.tool.buildin.LoadSkillTools;
 import com.xiaomizhou.dpsk.tool.executor.ToolExecutorRouter;
 import com.xiaomizhou.dpsk.tool.repository.ToolAuditLogRepository;
 import com.xiaomizhou.dpsk.tool.repository.ToolRepository;
-import dev.langchain4j.community.browser.playwright.PlaywrightBrowserExecutionEngine;
-import dev.langchain4j.community.tool.browseruse.BrowserUseTool;
 import dev.langchain4j.community.tool.webscraper.WebScraperTool;
-import dev.langchain4j.web.search.WebSearchTool;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.ApplicationContext;
@@ -44,20 +37,8 @@ public class ToolConfiguration {
 
         @Bean
         @ConditionalOnMissingBean
-        public SearchTools searchTools(ToolRegistry toolRegistry) {
-            return new SearchTools(toolRegistry);
-        }
-
-        @Bean
-        @ConditionalOnMissingBean
         public FileTools fileTools(ToolRegistry toolRegistry) {
             return new FileTools();
-        }
-
-        @Bean
-        @ConditionalOnMissingBean
-        public DateTimeTools dateTimeTools() {
-            return new DateTimeTools();
         }
 
         @Bean
@@ -70,6 +51,12 @@ public class ToolConfiguration {
         @ConditionalOnMissingBean
         public CommandTools commandTools() {
             return new CommandTools();
+        }
+
+        @Bean
+        @ConditionalOnMissingBean
+        public LoadSkillTools loadSkillTools() {
+            return new LoadSkillTools();
         }
 
 //        @Bean("playwright")

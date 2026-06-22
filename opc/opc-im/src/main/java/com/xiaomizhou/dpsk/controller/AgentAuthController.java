@@ -1,4 +1,4 @@
-package com.xiaomizhou.dpsk.controller.agent;
+package com.xiaomizhou.dpsk.controller;
 
 import com.xiaomizhou.dpsk.core.model.Results;
 import com.xiaomizhou.dpsk.core.model.response.Response;

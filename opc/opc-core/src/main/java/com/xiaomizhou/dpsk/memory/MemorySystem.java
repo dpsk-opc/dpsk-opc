@@ -1,5 +1,6 @@
 package com.xiaomizhou.dpsk.memory;
 
+import com.xiaomizhou.dpsk.agent.data.AgentDefProvider;
 import com.xiaomizhou.dpsk.memory.assembler.ContextAssembler;
 import com.xiaomizhou.dpsk.memory.generator.SummaryGenerator;
 import com.xiaomizhou.dpsk.memory.manager.FactManager;
@@ -10,6 +11,7 @@ import com.xiaomizhou.dpsk.memory.repository.MemorySummaryRepository;
 import com.xiaomizhou.dpsk.memory.repository.MessageRepository;
 import com.xiaomizhou.dpsk.memory.store.DatabaseChatMemoryStore;
 import com.xiaomizhou.dpsk.memory.store.EmbeddingStore;
+import com.xiaomizhou.dpsk.tool.ToolRegistry;
 
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
@@ -92,7 +94,7 @@ public class MemorySystem {
         }
 
         // 构建 ContextAssembler（传入 L3 KnowledgeManager）
-        this.contextAssembler = new ContextAssembler(builder.messageRepository, sm, fm, km);
+        this.contextAssembler = new ContextAssembler(builder.messageRepository, sm, fm, km, builder.agentDefProvider, builder.toolRegistry);
         this.summaryManager = sm;
         this.factManager = fm;
         this.knowledgeManager = km;
@@ -149,32 +151,44 @@ public class MemorySystem {
         private EmbeddingStore knowledgeEmbeddingStore;
         private FactManager.EmbeddingClient knowledgeEmbeddingClient;
         private ExecutorService executorService;
+        private ToolRegistry toolRegistry;
+        private AgentDefProvider agentDefProvider;
 
-        /** 必填：消息仓储 */
+        /**
+         * 必填：消息仓储
+         */
         public Builder messageRepository(MessageRepository repo) {
             this.messageRepository = repo;
             return this;
         }
 
-        /** L1：摘要仓储 */
+        /**
+         * L1：摘要仓储
+         */
         public Builder summaryRepository(MemorySummaryRepository repo) {
             this.summaryRepository = repo;
             return this;
         }
 
-        /** L1：摘要生成器 */
+        /**
+         * L1：摘要生成器
+         */
         public Builder summaryGenerator(SummaryGenerator gen) {
             this.summaryGenerator = gen;
             return this;
         }
 
-        /** L2：向量存储（可选） */
+        /**
+         * L2：向量存储（可选）
+         */
         public Builder embeddingStore(EmbeddingStore store) {
             this.embeddingStore = store;
             return this;
         }
 
-        /** L2/L3：向量化客户端（可选） */
+        /**
+         * L2/L3：向量化客户端（可选）
+         */
         public Builder embeddingClient(FactManager.EmbeddingClient client) {
             this.embeddingClient = client;
             return this;
@@ -200,9 +214,22 @@ public class MemorySystem {
             return this;
         }
 
-        /** 自定义异步线程池（可选） */
+        /**
+         * 自定义异步线程池（可选）
+         */
         public Builder executorService(ExecutorService executor) {
             this.executorService = executor;
+            return this;
+        }
+
+
+        public Builder toolRegistry(ToolRegistry registry) {
+            this.toolRegistry = registry;
+            return this;
+        }
+
+        public Builder agentDefProvider(AgentDefProvider provider) {
+            this.agentDefProvider = provider;
             return this;
         }
 

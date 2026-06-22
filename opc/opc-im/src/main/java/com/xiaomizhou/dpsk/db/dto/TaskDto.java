@@ -33,6 +33,8 @@ public class TaskDto {
 
     private String conversationCode;
 
+    private Integer source;
+
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss", timezone = "GMT+8")
     private Date createTime;
 

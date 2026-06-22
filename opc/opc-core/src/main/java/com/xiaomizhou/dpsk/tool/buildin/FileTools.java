@@ -18,7 +18,7 @@ import java.util.stream.Stream;
  * @date 2026/6/1 13:56
  * @description
  */
-@ToolMeta(value = "文件工具",level = "normal",category = "文件操作")
+@ToolMeta(value = "文件工具", level = "normal")
 public class FileTools {
 
     // 可根据需要设置基础工作目录，防止路径穿越，默认不做限制

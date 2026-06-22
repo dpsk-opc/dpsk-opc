@@ -6,6 +6,7 @@ import com.xiaomizhou.dpsk.core.model.response.PageResponse;
 import com.xiaomizhou.dpsk.core.model.response.Response;
 import com.xiaomizhou.dpsk.db.TaskComponent;
 import com.xiaomizhou.dpsk.db.dto.*;
+import com.xiaomizhou.dpsk.task.model.Task;
 import com.xiaomizhou.dpsk.task.model.TaskConsumeResult;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -36,6 +37,7 @@ public class TaskController {
      */
     @PostMapping(value = "create")
     public Response<TaskDto> create(@Valid @RequestBody TaskCreateCmd cmd) {
+        cmd.setSource(Task.SOURCE_USER);
         TaskDto dto = taskComponent.create(cmd);
         return Results.ok(dto);
     }

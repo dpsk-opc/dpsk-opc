@@ -39,4 +39,10 @@ public class TaskDO extends BaseModel {
 
     @TableField("conversation_code")
     private String conversationCode;
+
+    /**
+     * 来源：1-user，2-系统，3-agent
+     */
+    @TableField("source")
+    private Integer source;
 }

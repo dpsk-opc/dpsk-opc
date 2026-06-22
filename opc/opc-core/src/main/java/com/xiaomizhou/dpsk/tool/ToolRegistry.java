@@ -1,19 +1,14 @@
 package com.xiaomizhou.dpsk.tool;
 
-import com.google.common.collect.Lists;
 import com.xiaomizhou.dpsk.tool.executor.ToolExecutorRouter;
-import com.xiaomizhou.dpsk.tool.model.ToolCall;
-import com.xiaomizhou.dpsk.tool.model.ToolContext;
 import com.xiaomizhou.dpsk.tool.model.ToolMetadata;
 import com.xiaomizhou.dpsk.tool.repository.ToolRepository;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.StringUtils;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.stream.Collectors;
 
 /**
  * 工具注册中心。
@@ -26,10 +21,14 @@ import java.util.stream.Collectors;
 @Slf4j
 public class ToolRegistry {
 
-    /** 工具元数据缓存：key = tool name */
+    /**
+     * 工具元数据缓存：key = tool name
+     */
     private final Map<String, ToolMetadata> toolsByName = new ConcurrentHashMap<>();
 
-    /** 工具元数据缓存：key = tool code */
+    /**
+     * 工具元数据缓存：key = tool code
+     */
     private final Map<String, ToolMetadata> toolsByCode = new ConcurrentHashMap<>();
 
     private final ToolRepository toolRepository;
@@ -37,7 +36,9 @@ public class ToolRegistry {
     private final ToolExecutorRouter executorRouter;
 
 
-    /** 是否已初始化 */
+    /**
+     * 是否已初始化
+     */
     private volatile boolean initialized = false;
 
     public ToolRegistry(ToolRepository toolRepository, ToolExecutorRouter executorRouter) {
@@ -51,10 +52,10 @@ public class ToolRegistry {
     public void reload() {
         log.info("Reloading tool registry from database...");
         List<ToolMetadata> enabledTools = toolRepository.findAllEnabled();
-        
+
         toolsByName.clear();
         toolsByCode.clear();
-        
+
         for (ToolMetadata tool : enabledTools) {
             toolsByName.put(tool.getName(), tool);
             toolsByCode.put(tool.getCode(), tool);
@@ -117,36 +118,14 @@ public class ToolRegistry {
      */
     public List<ToolMetadata> getToolsForAgent(String ownerAgentCode) {
         ensureInitialized();
-        return toolRepository.findByOwnerAgent(ownerAgentCode);
+        List<ToolMetadata> tools = toolRepository.findByOwnerAgent(ownerAgentCode);
+        tools.addAll(getBuildInTools());
+        return tools;
     }
 
-    public List<ToolMetadata> getMetaTools(){
+    public List<ToolMetadata> getBuildInTools() {
         ensureInitialized();
-        return toolRepository.findByCategory("meta");
-    }
-
-    /**
-     * 关键词搜索工具。
-     *
-     * @param keyword 关键词
-     * @return 匹配的工具元数据列表
-     */
-    public List<ToolMetadata> searchTools(String keyword,String agentCode) {
-
-        if (StringUtils.isBlank(agentCode)) {
-            return List.of();
-        }
-
-        // local & mcp tools
-        List<ToolMetadata> localTools = toolRepository.findByOwnerAgent(agentCode);
-
-        String lowerKeyword = keyword.toLowerCase();
-        return localTools.stream()
-                .filter(t -> t.getName().toLowerCase().contains(lowerKeyword)
-                        || t.getDescription().toLowerCase().contains(lowerKeyword)
-                        || (t.getCategory() != null && t.getCategory().toLowerCase().contains(lowerKeyword))
-                        || (t.getTags() != null && t.getTags().toLowerCase().contains(lowerKeyword)))
-                .collect(Collectors.toList());
+        return toolRepository.findByCategory(ToolCategory.BUILD_IN);
     }
 
     /**

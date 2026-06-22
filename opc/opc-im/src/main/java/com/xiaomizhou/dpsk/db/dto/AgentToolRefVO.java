@@ -34,4 +34,9 @@ public class AgentToolRefVO {
      * 工具描述
      */
     private String toolDescription;
+
+    /**
+     * 工具分类
+     */
+    private String toolCategory;
 }

@@ -133,13 +133,13 @@ public class ConversationController {
         if (ConversationType.SINGLE.getCode().equals(type)) {
             dto.setMessageType("USER");
             String code = chatMessageComponent.newSingleChatMsg(sendCode, dto, null, "");
-            chatService.doChat(sendCode, code, dto.getMcpCodes());
+            chatService.doChat(sendCode, code, dto.getMcpCodes(), dto.getSkillPaths());
             return Results.ok(code);
         } else if (ConversationType.GROUP.getCode().equals(type)) {
             dto.setMessageType("USER");
             String code = chatMessageComponent.newGroupChatMsg(sendCode, dto, null, null);
             Executors.newSingleThreadExecutor().submit(() -> {
-                chatService.doChat(sendCode, code, dto.getMcpCodes());
+                chatService.doChat(sendCode, code, dto.getMcpCodes(), dto.getSkillPaths());
             });
             return Results.ok(code);
         } else {

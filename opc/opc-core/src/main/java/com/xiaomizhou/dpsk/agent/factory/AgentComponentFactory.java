@@ -10,7 +10,13 @@ import com.xiaomizhou.dpsk.memory.config.MemoryConfig;
 import com.xiaomizhou.dpsk.tool.LangChain4JToolBridge;
 import com.xiaomizhou.dpsk.tool.ToolInvocationInterceptor;
 import com.xiaomizhou.dpsk.tool.ToolRegistry;
+import com.xiaomizhou.dpsk.utils.ToolUtils;
+import com.xiaomizhou.dpsk.tool.model.ToolCall;
+import com.xiaomizhou.dpsk.tool.model.ToolContext;
+import com.xiaomizhou.dpsk.tool.model.ToolExecutionResult;
 import com.xiaomizhou.dpsk.utils.JsonUtils;
+import dev.langchain4j.agent.tool.ToolExecutionRequest;
+import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import dev.langchain4j.memory.ChatMemory;
 import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import dev.langchain4j.model.openai.OpenAiChatModel;
@@ -22,7 +28,7 @@ import org.springframework.context.ApplicationContext;
 
 import java.util.Collections;
 import java.util.List;
-import java.util.Map;
+import java.util.function.Function;
 
 /**
  * Agent 组件工厂，提供 Builder 共享的零件。
@@ -184,7 +190,7 @@ public class AgentComponentFactory {
     }
 
     /** 构建 ChatMemory（L0 工作记忆） */
-    public ChatMemory createChatMemory(AgentDef def,AgentBuildSpec spec) {
+    public ChatMemory createChatMemory(AgentBuildSpec spec) {
         Object memoryId;
 
         String conversationCode = spec.getConversationCode();
@@ -197,7 +203,7 @@ public class AgentComponentFactory {
             memoryId = MemoryConfig.buildMemoryId(conversationCode, agentCode);
         }
 
-        ContextAssembler.AssembledPrompt prompt = assembleSystemPrompt(def, spec);
+        ContextAssembler.AssembledPrompt prompt = assembleSystemPrompt(spec);
 
 
         return MessageWindowChatMemory.builder()
@@ -216,30 +222,36 @@ public class AgentComponentFactory {
         return Collections.singletonList(bridge);
     }
 
+    public Function<ToolExecutionRequest, ToolExecutionResultMessage> getToolExecutionResultMessageFunction() {
+        return new ToolExecutionResultMessageFunction(toolInvocationInterceptor);
+    }
+
+    public static class ToolExecutionResultMessageFunction implements Function<ToolExecutionRequest, ToolExecutionResultMessage> {
+
+        private final ToolInvocationInterceptor toolInvocationInterceptor;
+
+        public ToolExecutionResultMessageFunction(ToolInvocationInterceptor toolInvocationInterceptor) {
+            this.toolInvocationInterceptor = toolInvocationInterceptor;
+        }
+
+
+        @Override
+        public ToolExecutionResultMessage apply(ToolExecutionRequest toolExecutionRequest) {
+            ToolCall toolCall = ToolUtils.toToolCall(toolExecutionRequest);
+            ToolExecutionResult result = toolInvocationInterceptor.execute(toolCall, ToolContext.builder().build());
+            return ToolExecutionResultMessage.toolExecutionResultMessage(toolExecutionRequest, null == result.getResult() ? "未知异常" : result.getResult());
+        }
+
+
+    }
+
     /**
      * 组装完整 System Prompt（人设 + L2 长期事实 + L1 摘要 + @引用 + 历史）
      */
-    public ContextAssembler.AssembledPrompt assembleSystemPrompt(AgentDef def,
+    public ContextAssembler.AssembledPrompt assembleSystemPrompt(/*AgentDef def,*/
                                                                  AgentBuildSpec spec) {
         ContextAssembler assembler = memorySystem.getContextAssembler();
-
-        String basePersona = def.toPersonaText();
-
-        String conversationCode = spec.getConversationCode();
-        String quoteMessageCode = spec.getQuoteMessageCode();
-        String userContent = spec.getUserContent();
-        String userCode = spec.getUserCode();
-
-        ContextAssembler.AssembledPrompt assemble = assembler.assemble(basePersona, userContent, userCode,
-                def.getCode(), conversationCode, quoteMessageCode);
-
-        // 5.1 注入定时任务锚点上下文（如果有）
-        String systemMessage = assemble.getSystemPart();
-        if (spec.getTaskContext() != null && !spec.getTaskContext().isEmpty()) {
-            systemMessage = systemMessage + "\n\n" + spec.getTaskContext();
-        }
-
-        return new ContextAssembler.AssembledPrompt(systemMessage, assemble.getHistoryPart());
+        return assembler.assemble(spec);
     }
 
     /** 注入 L2 长期事实到 System Prompt（群聊使用） */

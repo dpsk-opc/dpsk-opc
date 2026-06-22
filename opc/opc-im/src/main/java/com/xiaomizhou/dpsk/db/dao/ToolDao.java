@@ -70,6 +70,7 @@ public class ToolDao extends ServiceImpl<ToolMapper, ToolDO> {
     public List<ToolDO> findByCategory(String category) {
         return lambdaQuery()
                 .eq(ToolDO::getCategory, category)
+                .eq(ToolDO::getStatus, "ENABLED")
                 .eq(ToolDO::getIsDeleted, 0)
                 .list();
     }

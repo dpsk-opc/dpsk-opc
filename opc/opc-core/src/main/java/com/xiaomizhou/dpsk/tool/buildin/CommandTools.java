@@ -1,6 +1,7 @@
 package com.xiaomizhou.dpsk.tool.buildin;
 
 import com.xiaomizhou.dpsk.tool.CommandSafetyChecker;
+import com.xiaomizhou.dpsk.tool.ToolCategory;
 import com.xiaomizhou.dpsk.tool.ToolMeta;
 import dev.langchain4j.agent.tool.P;
 
@@ -23,7 +24,7 @@ import static com.xiaomizhou.dpsk.utils.JsonUtils.toJson;
  * @author eason - vipzhsh@163.com
  * @date 2026/6/19
  */
-@ToolMeta(value = "执行系统命令", level = RISK_DANGEROUS, category = "系统", tags = {"命令执行", "系统操作"})
+@ToolMeta(value = "执行系统命令", level = RISK_DANGEROUS, category = ToolCategory.BUILD_IN, tags = {"命令执行", "系统操作"})
 public class CommandTools {
 
     /**
@@ -76,7 +77,7 @@ public class CommandTools {
             int exitCode = process.exitValue();
             result.put("success", exitCode == 0);
             result.put("exitCode", exitCode);
-            result.put("stdout", truncate(stdout, 4000));
+            result.put("stdout", truncate(stdout, 2000));
             result.put("stderr", truncate(stderr, 2000));
 
             if (exitCode != 0 && !stderr.isEmpty()) {

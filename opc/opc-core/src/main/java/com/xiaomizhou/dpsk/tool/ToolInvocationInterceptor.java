@@ -37,6 +37,11 @@ public class ToolInvocationInterceptor {
     public ToolExecutionResult execute(ToolCall call, ToolContext context) {
         long startTime = System.currentTimeMillis();
 
+        String toolName = call.getName();
+        if(LangChain4JToolBridge.ADD_TOOLS_TOOL_NAME.equalsIgnoreCase(toolName)){
+            return ToolExecutionResult.success("成功添加工具到工具列表", System.currentTimeMillis() - startTime);
+        }
+
         // 1. 查找工具元数据
         ToolMetadata metadata = registry.getMetadata(call.getName());
         if (metadata == null) {

@@ -71,6 +71,11 @@ public class ChatMsgDto {
     private List<String> mcpCodes;
 
     /**
+     * 技能路径列表
+     */
+    private List<String> skillPaths;
+
+    /**
      * 消息状态
      */
     private String status;

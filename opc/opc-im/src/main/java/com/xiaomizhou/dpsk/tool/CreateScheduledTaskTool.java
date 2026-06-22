@@ -119,6 +119,7 @@ public class CreateScheduledTaskTool {
             cmd.setParameters(parameters);
             cmd.setAgentCode(agentCode);
             cmd.setConversationCode(conversationCode);
+            cmd.setSource(Task.SOURCE_AGENT);
 
             String taskCode = taskComponent.create(cmd).getCode();
             log.info("CreateScheduledTaskTool 创建任务成功: code={}, consumerKey={}, cron={}",

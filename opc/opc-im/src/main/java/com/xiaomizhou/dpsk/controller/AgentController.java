@@ -1,4 +1,4 @@
-package com.xiaomizhou.dpsk.controller.agent;
+package com.xiaomizhou.dpsk.controller;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.xiaomizhou.dpsk.db.dto.AgentCreateCmd;

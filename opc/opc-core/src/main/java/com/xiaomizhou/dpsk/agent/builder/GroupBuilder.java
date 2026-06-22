@@ -64,7 +64,7 @@ public class GroupBuilder implements AgentBuilder {
             // 3. 为每个 Sub-Agent 构建 AgenticServices Agent
             var subAgents = agentDefs.stream().map(agentDef -> {
                 // 群聊记忆：每个 Agent 在群聊中有独立的记忆空间
-                ChatMemory groupChatMemory = factory.createChatMemory(agentDef, spec);
+                ChatMemory groupChatMemory = factory.createChatMemory(spec);
 
                 // 注入 L2 长期事实
                 String enrichedPersona = factory.enrichSystemPrompt(agentDef, spec.getGroupCode());

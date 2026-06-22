@@ -4,9 +4,11 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.google.common.collect.Lists;
 import com.xiaomizhou.dpsk.db.AgentToolComponent;
 import com.xiaomizhou.dpsk.db.dao.AgentMcpBindingDao;
+import com.xiaomizhou.dpsk.db.dao.AgentToolRefDao;
 import com.xiaomizhou.dpsk.db.dao.ToolDao;
 import com.xiaomizhou.dpsk.db.dto.AgentToolRefVO;
 import com.xiaomizhou.dpsk.db.model.AgentMcpBindingDO;
+import com.xiaomizhou.dpsk.db.model.AgentToolRefDO;
 import com.xiaomizhou.dpsk.db.model.ToolDO;
 import com.xiaomizhou.dpsk.tool.model.ToolMetadata;
 import com.xiaomizhou.dpsk.tool.repository.ToolRepository;
@@ -36,9 +38,9 @@ public class ToolRepositoryImpl implements ToolRepository {
 
     private final ToolDao toolDao;
 
-    private final AgentToolComponent agentToolComponent;
-
     private final AgentMcpBindingDao agentMcpBindingDao;
+
+    private final AgentToolRefDao agentToolRefDao;
 
     @Override
     public List<ToolMetadata> findAllEnabled() {
@@ -77,13 +79,13 @@ public class ToolRepositoryImpl implements ToolRepository {
     public List<ToolMetadata> findByOwnerAgent(String ownerAgentCode) {
 
         // 本地工具
-        Map<String, List<AgentToolRefVO>> tools = agentToolComponent.queryByAgentCodes(List.of(ownerAgentCode));
+
+        List<AgentToolRefDO> agentTools = agentToolRefDao.findByAgentCode(ownerAgentCode);
 
         List<ToolDO> result = Lists.newArrayList();
-        if (MapUtils.isNotEmpty(tools)) {
-            List<AgentToolRefVO> refs = tools.get(ownerAgentCode);
+        if (CollectionUtils.isNotEmpty(agentTools)) {
 
-            var toolCodes = refs.stream().map(AgentToolRefVO::getToolCode).collect(Collectors.toSet());
+            var toolCodes = agentTools.stream().map(AgentToolRefDO::getToolCode).collect(Collectors.toSet());
 
             if (CollectionUtils.isNotEmpty(toolCodes)) {
                 result.addAll(toolDao.lambdaQuery().in(ToolDO::getCode, toolCodes)
@@ -94,13 +96,21 @@ public class ToolRepositoryImpl implements ToolRepository {
         }
 
         // mcp工具
-        List<ToolDO> mcps = toolDao.list(Wrappers.<ToolDO>lambdaQuery().eq(ToolDO::getOwnerAgentCode, ownerAgentCode).eq(ToolDO::getSourceType, SourceType.MCP));
+        List<ToolDO> mcps = toolDao.list(Wrappers.<ToolDO>lambdaQuery().eq(ToolDO::getOwnerAgentCode, ownerAgentCode)
+                .eq(ToolDO::getSourceType, SourceType.MCP)
+                .eq(ToolDO::getStatus, "ENABLED"));
 
         if (CollectionUtils.isNotEmpty(mcps)) {
             result.addAll(mcps);
         }
 
-        return result.stream().map(this::toCoreModel).collect(Collectors.toList());
+        // build-in
+        List<ToolDO> buildInTools = toolDao.findByCategory(ToolCategory.BUILD_IN);
+        if (CollectionUtils.isNotEmpty(buildInTools)) {
+            result.addAll(buildInTools);
+        }
+
+        return result.stream().map(this::toCoreModel).distinct().collect(Collectors.toList());
     }
 
     @Override

@@ -25,4 +25,6 @@ public class TaskCreateCmd {
     private String agentCode;
 
     private String conversationCode;
+
+    private Integer source;
 }

@@ -1,6 +1,7 @@
 package com.xiaomizhou.dpsk.tool;
 
 import com.google.common.base.Joiner;
+import com.xiaomizhou.dpsk.tool.buildin.LoadSkillTools;
 import com.xiaomizhou.dpsk.tool.model.ToolMetadata;
 import com.xiaomizhou.dpsk.tool.repository.ToolRepository;
 import dev.langchain4j.agent.tool.P;
@@ -55,7 +56,7 @@ public class ToolAutoRegistrar {
         beans.putAll(applicationContext.getBeansWithAnnotation(ToolMeta.class));
 
         WebScraperTool scraperTool = applicationContext.getBean(WebScraperTool.class);
-        beans.put("webScraperTool",scraperTool);
+        beans.put("webScraperTool", scraperTool);
 
         for (Map.Entry<String, Object> entry : beans.entrySet()) {
             String beanName = entry.getKey();
@@ -119,7 +120,6 @@ public class ToolAutoRegistrar {
                     .description(description)
                     .parametersSchema(parametersSchema)
                     .sourceType(SourceType.LOCAL)
-//                    .sourceRef(clazz.getCanonicalName() + "." + method.getName())
                     .sourceRef(sourceRef)
                     .riskLevel(ToolMetadata.RISK_NORMAL)
                     .status(ToolMetadata.STATUS_ENABLED)

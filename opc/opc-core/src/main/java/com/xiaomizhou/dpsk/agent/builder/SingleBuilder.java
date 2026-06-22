@@ -7,6 +7,7 @@ import com.xiaomizhou.dpsk.agent.data.AgentDefProvider;
 import com.xiaomizhou.dpsk.agent.event.AgentEvent;
 import com.xiaomizhou.dpsk.agent.event.AgentEventType;
 import com.xiaomizhou.dpsk.agent.factory.AgentComponentFactory;
+import com.xiaomizhou.dpsk.tool.model.ToolExecutionResult;
 import dev.langchain4j.agentic.AgenticServices;
 import dev.langchain4j.agentic.UntypedAgent;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
@@ -14,12 +15,10 @@ import dev.langchain4j.memory.ChatMemory;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 import dev.langchain4j.model.output.TokenUsage;
 import dev.langchain4j.service.TokenStream;
-import dev.langchain4j.service.tool.HallucinatedToolNameStrategy;
-import dev.langchain4j.service.tool.ToolProvider;
+import dev.langchain4j.service.tool.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
-import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.HashMap;
 import java.util.List;
@@ -63,7 +62,7 @@ public class SingleBuilder implements AgentBuilder {
         OpenAiStreamingChatModel model = factory.createStreamingModel(agentDef.getLlmConfig());
 
         // 3. 构建 ChatMemory
-        ChatMemory chatMemory = factory.createChatMemory(agentDef,spec);
+        ChatMemory chatMemory = factory.createChatMemory(spec);
 
         // 4. 获取工具
         List<ToolProvider> toolProviders = factory.getToolProviders(targetAgentCode, spec.getUserCode(), spec.getConversationCode(),spec.getMcpCodes());
@@ -79,6 +78,15 @@ public class SingleBuilder implements AgentBuilder {
 //            systemMessage = systemMessage + "\n\n" + spec.getTaskContext();
 //        }
 
+        // 构建 AiServices是因为AgenticServices不支持tool search. 这种方式不太行：会导致llm变笨
+//        Assistant assistant = AiServices.builder(Assistant.class)
+//                .streamingChatModel(model)
+//                .toolProvider(toolProviders.get(0))
+//                .toolSearchStrategy(new SimpleToolSearchStrategy())
+//                .chatMemory(chatMemory)
+//                .maxToolCallingRoundTrips(25)
+//                .build();
+
         // 6. 构建 AgenticServices Agent
         UntypedAgent agent = AgenticServices.agentBuilder()
                 .streamingChatModel(model)
@@ -86,15 +94,23 @@ public class SingleBuilder implements AgentBuilder {
                 //.systemMessage("")
                 .toolProviders(toolProviders)
                 .userMessage(spec.getUserContent())
+                .toolExecutionErrorHandler(new ToolExecutionErrorHandler() {
+                    @Override
+                    public ToolErrorHandlerResult handle(Throwable error, ToolErrorContext context) {
+                        log.error("tool execution error:", error);
+                        return ToolErrorHandlerResult.text("llm返回错误.");
+                    }
+                })
+                .toolArgumentsErrorHandler(new ToolArgumentsErrorHandler() {
+                    @Override
+                    public ToolErrorHandlerResult handle(Throwable error, ToolErrorContext context) {
+                        log.error("tool arguments error:", error);
+                        return ToolErrorHandlerResult.text("llm执行错误.");
+                    }
+                })
 
                 // 幻觉情况 => 从上下文的信息找工具执行，但工具已经不再工具列表
-                .hallucinatedToolNameStrategy((r) -> {
-                    return ToolExecutionResultMessage.builder()
-                            .toolName(r.name())
-                            .isError(true)
-                            .text("出现幻觉了，请严格使用我给你的工具!!")
-                            .build();
-                })
+                .hallucinatedToolNameStrategy(factory.getToolExecutionResultMessageFunction())
                 .chatMemory(chatMemory)
                 .returnType(TokenStream.class)
                 .maxToolCallingRoundTrips(25)
@@ -112,10 +128,12 @@ public class SingleBuilder implements AgentBuilder {
         private final UntypedAgent agent;
         private final AgentDef agentDef;
 
+
         SinglePipeline(UntypedAgent agent, AgentDef agentDef) {
             this.agent = agent;
             this.agentDef = agentDef;
         }
+
 
         @Override
         public PipelineResult execute(AgentCallback callback) {
@@ -221,5 +239,9 @@ public class SingleBuilder implements AgentBuilder {
                 throw new RuntimeException("Failed to invoke AgenticServices agent", e);
             }
         }
+    }
+
+    interface Assistant {
+        TokenStream chat(String message);
     }
 }

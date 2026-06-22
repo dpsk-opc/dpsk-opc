@@ -1,16 +1,33 @@
 package com.xiaomizhou.dpsk.memory.assembler;
 
+import com.google.common.base.Joiner;
+import com.xiaomizhou.dpsk.agent.AgentBuildSpec;
+import com.xiaomizhou.dpsk.agent.data.AgentDef;
+import com.xiaomizhou.dpsk.agent.data.AgentDefProvider;
+import com.xiaomizhou.dpsk.memory.PersonaProvider;
 import com.xiaomizhou.dpsk.memory.config.MemoryConfig;
 import com.xiaomizhou.dpsk.memory.manager.FactManager;
 import com.xiaomizhou.dpsk.memory.manager.KnowledgeManager;
 import com.xiaomizhou.dpsk.memory.manager.SummaryManager;
 import com.xiaomizhou.dpsk.memory.model.MemoryFragment;
 import com.xiaomizhou.dpsk.memory.repository.MessageRepository;
+import com.xiaomizhou.dpsk.tool.SourceType;
+import com.xiaomizhou.dpsk.tool.ToolRegistry;
+import com.xiaomizhou.dpsk.tool.model.ToolMetadata;
 import com.xiaomizhou.dpsk.utils.MemoryUtils;
 import dev.langchain4j.data.message.*;
+import dev.langchain4j.skills.FileSystemSkill;
+import dev.langchain4j.skills.FileSystemSkillLoader;
+import dev.langchain4j.skills.Skills;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.collections.CollectionUtils;
 
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Objects;
+import java.util.stream.Collectors;
+
+import static com.xiaomizhou.dpsk.tool.LangChain4JToolBridge.ADD_TOOLS_TOOL_NAME;
 
 /**
  * 上下文组装引擎。
@@ -26,58 +43,112 @@ import java.util.Objects;
  * @author eason - vipzhsh@163.com
  * @date 2026/5/29
  */
+@Slf4j
 public class ContextAssembler {
 
     private final MessageRepository messageRepository;
     private final SummaryManager summaryManager;
     private final FactManager factManager;
     private final KnowledgeManager knowledgeManager;
+    private final AgentDefProvider agentDefProvider;
+    private final ToolRegistry toolRegistry;
 
     public ContextAssembler(MessageRepository messageRepository,
                             SummaryManager summaryManager,
                             FactManager factManager,
-                            KnowledgeManager knowledgeManager) {
+                            KnowledgeManager knowledgeManager,
+                            AgentDefProvider provider,
+                            ToolRegistry toolRegistry) {
         this.messageRepository = Objects.requireNonNull(messageRepository, "messageRepository must not be null");
         this.summaryManager = summaryManager;
         this.factManager = factManager;
         this.knowledgeManager = knowledgeManager;
+        this.agentDefProvider = provider;
+        this.toolRegistry = toolRegistry;
     }
 
 
     /**
      * 组装完整上下文 Prompt。
      *
-     * @param systemPrompt     Agent 人设（system prompt）
-     * @param userContent      用户当前消息内容
-     * @param userCode         用户编码
-     * @param agentCode        Agent 编码
-     * @param conversationCode 会话编码
-     * @param quoteMessageCode 引用消息编码（可为 null）
+     * @param spec 构建规范
      * @return 组装后的 Prompt 文本
      */
-    public AssembledPrompt assemble(String systemPrompt,
-                                    String userContent,
-                                    String userCode,
-                                    String agentCode,
-                                    String conversationCode,
-                                    String quoteMessageCode) {
-        StringBuilder systemPart = new StringBuilder();
+    public AssembledPrompt assemble(AgentBuildSpec spec) {
+
         StringBuilder historyPart = new StringBuilder();
 
         // === System 部分 ===
 
+        String targetAgentCode = spec.getTargetAgentCode();
         // 1. Agent 人设
-        if (systemPrompt != null && !systemPrompt.isEmpty()) {
-            systemPart.append(systemPrompt).append("\n");
+        List<AgentDef> agents = agentDefProvider.getByCodes(List.of(targetAgentCode, spec.getUserCode()));
+
+        StringBuffer sb = new StringBuffer();
+        if (CollectionUtils.isNotEmpty(agents)) {
+
+            AgentDef user = agents.stream().filter(a -> a.getCode().equals(spec.getUserCode())).findFirst().orElse(null);
+            AgentDef target = agents.stream().filter(a -> a.getCode().equals(targetAgentCode)).findFirst().orElse(null);
+
+            // ai的信息
+            if (Objects.nonNull(target)) {
+                sb.append("[你的信息] 名字:%s,性别:%s,昵称:%s,prompt:%s".formatted(target.getName(), 1 == target.getSex() ? "男" : "女", target.getNickname(), target.getPrompt()));
+            }
+
+            // 对话的人的信息
+            if (Objects.nonNull(user)) {
+                sb.append("[跟你对话的人的信息] 名字:%s,性别:%s,昵称:%s".formatted(user.getName(), 1 == user.getSex() ? "男" : "女", user.getNickname()));
+            }
         }
+
+        // 工具信息
+        List<ToolMetadata> tools = toolRegistry.getToolsForAgent(spec.getTargetAgentCode());
+        if (CollectionUtils.isNotEmpty(tools)) {
+            if (CollectionUtils.isNotEmpty(spec.getMcpCodes())) {
+                tools = tools.stream().filter(t -> SourceType.MCP.equalsIgnoreCase(t.getSourceType())).filter(t -> {
+                    return spec.getMcpCodes().contains(t.getSourceRef().split(":")[0]);
+                }).collect(Collectors.toList());
+            }
+            if (CollectionUtils.isNotEmpty(tools)) {
+                sb.append("[Tools] 你有这些工具可以用。注意：这些工具只是摘要，是没有办法直接使用的，需要先使用%s方法将工具添加到工具列表中才可以使用！！\n".formatted(ADD_TOOLS_TOOL_NAME));
+                sb.append(tools.stream().map(t -> t.getName() + ":" + t.getDescription()).collect(Collectors.joining("\n")));
+            }
+        }
+
+        // skills
+        if (CollectionUtils.isNotEmpty(spec.getSkillPaths())) {
+            sb.append("[Skills] 你有这些技能可以用。注意：这些技能只是摘要，是没有办法直接使用的，要使用工具加载！！\n");
+            for (String skillPath : spec.getSkillPaths()) {
+                try {
+                    FileSystemSkill skill = FileSystemSkillLoader.loadSkill(Path.of(skillPath));
+                    sb.append("skillPath:%s,description:%s".formatted(skillPath, skill.description()));
+                    if (CollectionUtils.isNotEmpty(skill.resources())) {
+                        List<String> resources = skill.resources().stream().map(r -> "reletivepath:%s,content:%s".formatted(r.relativePath(), r.content())).collect(Collectors.toList());
+                        sb.append("resources:%s".formatted(Joiner.on(",").join(resources)) + "\n");
+                    } else {
+                        sb.append("\n");
+                    }
+                } catch (Exception e) {
+                    log.warn("load skills error!", e);
+                }
+            }
+        }
+
+
+        String userContent = spec.getUserContent();
+        String userCode = spec.getUserCode();
+        String conversationCode = spec.getConversationCode();
+        String quoteMessageCode = spec.getQuoteMessageCode();
+        String agentCode = spec.getTargetAgentCode();
 
         // 2. L3 知识库记忆（向量检索 + 分级注入）
         if (knowledgeManager != null) {
             KnowledgeManager.L3Result l3Result = knowledgeManager.retrieve(userContent, agentCode);
             if (l3Result.shouldInject()) {
-                systemPart.append(l3Result.getInjectText());
+                sb.append(l3Result.getInjectText());
             }
         }
+
 
         // === History 部分 ===
 
@@ -116,18 +187,14 @@ public class ContextAssembler {
             }
         }
 
-//        // 6. L0 工作记忆（最近 N 轮对话）
-//        List<ChatMessage> recentMessages = messageRepository.findTopByConversationAndAgent(
-//                conversationCode, agentCode, MemoryConfig.L0_MAX_MESSAGES);
-//        for (ChatMessage m : recentMessages) {
-//            historyPart.append(formatChatMessage(m)).append("\n");
-//        }
+        // 5.1 注入定时任务锚点上下文（如果有）
+        if (spec.getTaskContext() != null && !spec.getTaskContext().isEmpty()) {
+            sb.append(spec.getTaskContext());
+        }
 
-//        // 7. 当前用户消息
-//        historyPart.append("用户: ").append(userContent);
-
-        return new AssembledPrompt(systemPart.toString(), historyPart.toString());
+        return new AssembledPrompt(sb.toString(), historyPart.toString());
     }
+
 
 
     /**

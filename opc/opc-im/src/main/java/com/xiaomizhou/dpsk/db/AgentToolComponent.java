@@ -1,6 +1,8 @@
 package com.xiaomizhou.dpsk.db;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 import com.xiaomizhou.dpsk.db.dao.AgentDao;
 import com.xiaomizhou.dpsk.db.dao.AgentMcpBindingDao;
 import com.xiaomizhou.dpsk.db.dao.AgentToolRefDao;
@@ -13,6 +15,8 @@ import com.xiaomizhou.dpsk.db.model.AgentToolRefDO;
 import com.xiaomizhou.dpsk.db.model.ToolDO;
 import com.xiaomizhou.dpsk.core.exceptions.BusinessException;
 import com.xiaomizhou.dpsk.tool.SourceType;
+import com.xiaomizhou.dpsk.tool.ToolRegistry;
+import com.xiaomizhou.dpsk.tool.model.ToolMetadata;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections.CollectionUtils;
@@ -40,6 +44,7 @@ public class AgentToolComponent {
     private final ToolDao toolDao;
     private final AgentDao agentDao;
 
+    private final ToolRegistry toolRegistry;
 
     /**
      * 查询 Agent 绑定的工具列表。
@@ -49,34 +54,48 @@ public class AgentToolComponent {
      * @return 工具绑定 VO 列表
      */
     public List<AgentToolRefVO> queryByAgentCode(String agentCode) {
+
+
         if (StringUtils.isBlank(agentCode)) {
-            // 查询所有在用的工具绑定
-            List<ToolDO> tools = toolDao.list(Wrappers.<ToolDO>lambdaQuery().eq(ToolDO::getSourceType, SourceType.LOCAL).ne(ToolDO::getCategory, "meta"));
-            List<AgentToolRefDO> allRefs = tools.stream().map(tool -> {
-                AgentToolRefDO ref = new AgentToolRefDO();
-                ref.setToolCode(tool.getCode());
-                return ref;
-            }).collect(Collectors.toList());
-            return toVOList(allRefs);
+            return toolDao.list(Wrappers.<ToolDO>lambdaQuery().eq(ToolDO::getSourceType, SourceType.LOCAL).eq(ToolDO::getStatus, "ENABLED")).stream().map(t -> {
+                AgentToolRefVO vo = new AgentToolRefVO();
+
+                vo.setAgentCode(agentCode);
+                vo.setToolCode(t.getCode());
+                vo.setToolCategory(t.getCategory());
+                vo.setToolDescription(t.getDescription());
+                vo.setToolName(t.getName());
+                return vo;
+            }).toList();
         }
 
-        // 按 agent_code 查询
-        List<AgentToolRefDO> refs = agentToolRefDao.findByAgentCode(agentCode);
-        return toVOList(refs);
+        List<ToolMetadata> tools = toolRegistry.getToolsForAgent(agentCode);
+
+        return tools.stream().filter(t -> SourceType.LOCAL.equalsIgnoreCase(t.getSourceType())).map(t -> {
+            AgentToolRefVO vo = new AgentToolRefVO();
+
+            vo.setAgentCode(agentCode);
+            vo.setToolCode(t.getCode());
+            vo.setToolCategory(t.getCategory());
+            vo.setToolDescription(t.getDescription());
+            vo.setToolName(t.getName());
+            return vo;
+        }).toList();
     }
 
     public Map<String, List<AgentToolRefVO>> queryByAgentCodes(List<String> agentCodes) {
+
         if (CollectionUtils.isEmpty(agentCodes)) {
             return Map.of();
         }
 
-        // 本地工具
-        List<AgentToolRefDO> refs = agentToolRefDao.lambdaQuery()
-                .in(AgentToolRefDO::getAgentCode, agentCodes)
-                .list();
+        Map<String, List<AgentToolRefVO>> result = Maps.newHashMap();
 
-        return toVOList(refs).stream()
-                .collect(Collectors.groupingBy(AgentToolRefVO::getAgentCode));
+        agentCodes.forEach(agentCode -> {
+            result.put(agentCode, queryByAgentCode(agentCode));
+        });
+
+        return result;
     }
 
     /**
@@ -151,37 +170,37 @@ public class AgentToolComponent {
     }
 
     /**
-     * 将 DO 列表转为 VO 列表，附带工具名称和描述。
-     */
-    private List<AgentToolRefVO> toVOList(List<AgentToolRefDO> refs) {
-        if (CollectionUtils.isEmpty(refs)) {
-            return List.of();
-        }
-
-        // 收集所有 tool_code，批量查询工具信息
-        Set<String> toolCodes = refs.stream()
-                .map(AgentToolRefDO::getToolCode)
-                .collect(Collectors.toSet());
-
-        Map<String, ToolDO> toolMap = toolDao.lambdaQuery()
-                .in(ToolDO::getCode, toolCodes)
-                .eq(ToolDO::getIsDeleted, 0)
-                .list()
-                .stream()
-                .collect(Collectors.toMap(ToolDO::getCode, Function.identity(), (a, b) -> a));
-
-        return refs.stream()
-                .map(ref -> {
-                    ToolDO tool = toolMap.get(ref.getToolCode());
-                    return new AgentToolRefVO(
-                            ref.getAgentCode(),
-                            ref.getToolCode(),
-                            tool != null ? tool.getName() : "",
-                            tool != null ? tool.getDescription() : ""
-                    );
-                })
-                .collect(Collectors.toList());
-    }
+//     * 将 DO 列表转为 VO 列表，附带工具名称和描述。
+//     */
+//    private List<AgentToolRefVO> toVOList(List<AgentToolRefDO> refs) {
+//        if (CollectionUtils.isEmpty(refs)) {
+//            return List.of();
+//        }
+//
+//        // 收集所有 tool_code，批量查询工具信息
+//        Set<String> toolCodes = refs.stream()
+//                .map(AgentToolRefDO::getToolCode)
+//                .collect(Collectors.toSet());
+//
+//        Map<String, ToolDO> toolMap = toolDao.lambdaQuery()
+//                .in(ToolDO::getCode, toolCodes)
+//                .eq(ToolDO::getIsDeleted, 0)
+//                .list()
+//                .stream()
+//                .collect(Collectors.toMap(ToolDO::getCode, Function.identity(), (a, b) -> a));
+//
+//        return refs.stream()
+//                .map(ref -> {
+//                    ToolDO tool = toolMap.get(ref.getToolCode());
+//                    return new AgentToolRefVO(
+//                            ref.getAgentCode(),
+//                            ref.getToolCode(),
+//                            tool != null ? tool.getName() : "",
+//                            tool != null ? tool.getDescription() : ""
+//                    );
+//                })
+//                .collect(Collectors.toList());
+//    }
 
     public void unbindTools(AgentToolBindCmd cmd) {
 

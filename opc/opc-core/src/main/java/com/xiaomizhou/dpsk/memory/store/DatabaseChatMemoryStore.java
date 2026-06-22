@@ -87,6 +87,10 @@ public class DatabaseChatMemoryStore implements ChatMemoryStore {
         // 裁剪到 L0_MAX_MESSAGES，但不切断 THINKING-TOOL 工具调用组
         dbMessages = trimKeepLatest(dbMessages, MemoryConfig.L0_MAX_MESSAGES);
 
+        // 修正：如果裁剪后第一条消息是 THINKING/TOOL，说明前面的 UserMessage 被淘汰了。
+        // LangChain4j 框架后续需要找到最近的一条 UserMessage，找不到会报错。
+        // 此时应主动淘汰最早的一组 THINKING+TOOL 对，腾出空间让 UserMessage 能保留下来。
+        dbMessages = ensureStartsWithUserMessage(dbMessages, MemoryConfig.L0_MAX_MESSAGES);
 
         List<ChatMessage> result = new ArrayList<>();
 
@@ -307,5 +311,76 @@ public class DatabaseChatMemoryStore implements ChatMemoryStore {
         }
 
         return new ArrayList<>(messages.subList(actualStart, messages.size()));
+    }
+
+    /**
+     * 确保裁剪后的消息列表以 UserMessage 开头，避免 LangChain4j 框架因找不到最近的
+     * UserMessage 而报错。
+     * <p>
+     * 场景：消息序列为 {@code [UserMsg, THINKING, TOOL, ..., THINKING, TOOL]}，
+     * 当消息总数超过窗口限制时，{@link #trimKeepLatest} 会保留最新的 N 条消息，
+     * 导致 UserMessage 被淘汰，列表以 THINKING/TOOL 开头。
+     * <p>
+     * 修正策略：从列表头部开始，持续移除开头的 THINKING+TOOL 对，
+     * 直到列表以 UserMessage（或纯文本 AiMessage）开头为止。
+     *
+     * @param messages 已裁剪的消息列表（时间正序）
+     * @param maxCount 窗口最大消息数
+     * @return 修正后的消息列表
+     */
+    static List<ChatMessage> ensureStartsWithUserMessage(List<ChatMessage> messages, int maxCount) {
+        if (messages.isEmpty()) {
+            return messages;
+        }
+
+        int cursor = 0;
+
+        while (cursor < messages.size()) {
+            ChatMessage first = messages.get(cursor);
+
+            // 以 UserMessage 或纯文本 AiMessage（非工具调用）开头 → 符合预期，停止
+            if (first instanceof UserMessage) {
+                break;
+            }
+            if (first instanceof AiMessage ai && !ai.hasToolExecutionRequests()) {
+                break;
+            }
+
+            // 开头是 THINKING 或 TOOL，找到第一组完整的 THINKING+TOOL 对
+            Set<String> pendingToolIds = new HashSet<>();
+            int groupEnd = -1;
+
+            for (int i = cursor; i < messages.size(); i++) {
+                ChatMessage msg = messages.get(i);
+                if (msg instanceof AiMessage ai2 && ai2.hasToolExecutionRequests()) {
+                    for (ToolExecutionRequest req : ai2.toolExecutionRequests()) {
+                        pendingToolIds.add(req.id());
+                    }
+                } else if (msg instanceof ToolExecutionResultMessage toolMsg) {
+                    pendingToolIds.remove(toolMsg.id());
+                    if (pendingToolIds.isEmpty()) {
+                        groupEnd = i;
+                        break;
+                    }
+                } else {
+                    // 遇到 UserMessage 或纯文本 AiMessage，THINKING/TOOL 组不完整
+                    break;
+                }
+            }
+
+            if (groupEnd > cursor && groupEnd < messages.size() - 1) {
+                log.debug("Removing leading THINKING-TOOL group [{}-{}] to keep UserMessage in window",
+                        cursor, groupEnd);
+                cursor = groupEnd + 1;
+            } else {
+                // 无法安全移除（例如只剩一组 THINKING+TOOL 或组不完整）
+                break;
+            }
+        }
+
+        if (cursor > 0) {
+            return new ArrayList<>(messages.subList(cursor, messages.size()));
+        }
+        return messages;
     }
 }
