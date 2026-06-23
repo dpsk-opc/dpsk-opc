@@ -1,7 +1,6 @@
 package com.xiaomizhou.dpsk.agent.factory;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.xiaomizhou.dpsk.agent.AgentBuildSpec;
 import com.xiaomizhou.dpsk.agent.data.AgentDef;
 import com.xiaomizhou.dpsk.memory.MemorySystem;
@@ -10,11 +9,11 @@ import com.xiaomizhou.dpsk.memory.config.MemoryConfig;
 import com.xiaomizhou.dpsk.tool.LangChain4JToolBridge;
 import com.xiaomizhou.dpsk.tool.ToolInvocationInterceptor;
 import com.xiaomizhou.dpsk.tool.ToolRegistry;
-import com.xiaomizhou.dpsk.utils.ToolUtils;
 import com.xiaomizhou.dpsk.tool.model.ToolCall;
 import com.xiaomizhou.dpsk.tool.model.ToolContext;
 import com.xiaomizhou.dpsk.tool.model.ToolExecutionResult;
 import com.xiaomizhou.dpsk.utils.JsonUtils;
+import com.xiaomizhou.dpsk.utils.ToolUtils;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import dev.langchain4j.memory.ChatMemory;
@@ -218,7 +217,7 @@ public class AgentComponentFactory {
      */
     public List<ToolProvider> getToolProviders(String agentCode, String userCode, String conversationCode,List<String> mcpCodes) {
         LangChain4JToolBridge bridge = LangChain4JToolBridge.forAgent(
-                toolRegistry, toolInvocationInterceptor, applicationContext, agentCode, userCode, conversationCode,mcpCodes);
+                toolRegistry, toolInvocationInterceptor, applicationContext, agentCode, userCode, conversationCode, mcpCodes);
         return Collections.singletonList(bridge);
     }
 
@@ -281,9 +280,6 @@ public class AgentComponentFactory {
     }
 
     // ---- 私有辅助方法 ----
-
-    private static final ObjectMapper MAPPER = new ObjectMapper();
-
     /**
      * 解析 JSON 字符串为 LlmConfigOverride，解析失败或为空时返回 null。
      */

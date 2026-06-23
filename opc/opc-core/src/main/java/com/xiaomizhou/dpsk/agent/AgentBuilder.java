@@ -14,7 +14,4 @@ public interface AgentBuilder {
 
     /** 根据构建规范产出 AgentPipeline */
     AgentPipeline build(AgentBuildSpec spec);
-
-
-    String SPECIAL_MSG = "XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX";
 }

@@ -38,8 +38,8 @@ public class ToolInvocationInterceptor {
         long startTime = System.currentTimeMillis();
 
         String toolName = call.getName();
-        if(LangChain4JToolBridge.ADD_TOOLS_TOOL_NAME.equalsIgnoreCase(toolName)){
-            return ToolExecutionResult.success("成功添加工具到工具列表", System.currentTimeMillis() - startTime);
+        if (LangChain4JToolBridge.ADD_TOOLS_TOOL_NAME.equalsIgnoreCase(toolName)) {
+            return ToolExecutionResult.success("成功添加%s到工具列表".formatted(toolName), System.currentTimeMillis() - startTime);
         }
 
         // 1. 查找工具元数据
@@ -53,18 +53,6 @@ public class ToolInvocationInterceptor {
             log.warn("Tool is disabled: {}", call.getName());
             return ToolExecutionResult.fail("Tool is disabled: " + call.getName());
         }
-
-//        // 2. 检查权限
-//        if (metadata.isDangerous() && !call.isConfirmed()) {
-//            log.warn("⚠ DANGEROUS tool '{}' (riskLevel={}) called but not confirmed. " +
-//                            "Proceeding with execution but this should require user confirmation in production.",
-//                    call.getName(), metadata.getRiskLevel());
-//
-//            // 生成确认请求（当前不阻塞，仅记录日志）
-//            confirmationManager.requestConfirmation(call, metadata);
-//            // 注意：当前版本危险操作不阻塞，直接继续执行。后续版本在此 return ToolExecutionResult.pending(requestId)
-//        }
-
         // 3. 动态补全参数
         enrichParameters(call, context, metadata);
 

@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 
 /**
  * 单聊模式 Builder。
@@ -76,6 +77,7 @@ public class SingleBuilder implements AgentBuilder {
 //                .chatMemory(chatMemory)
 //                .maxToolCallingRoundTrips(25)
 //                .build();
+
 
         // 6. 构建 AgenticServices Agent
         UntypedAgent agent = AgenticServices.agentBuilder()
@@ -198,7 +200,10 @@ public class SingleBuilder implements AgentBuilder {
                     }
                     log.debug("before tool execution: {}", handle.request().name());
                     callback.onEvent(new AgentEvent(AgentEventType.TOOL_CALL, agentDef.getCode(), handle.request().id(), handle.request().name(), handle.request().arguments(), null, null));
-                }).onPartialToolCall(toolCall -> {
+                }).onPartialToolCallWithContext((toolCall,context) -> {
+
+                    context.streamingHandle().cancel();
+
                     // 检查取消
                     if (callback.isCancelled()) {
                         return;
