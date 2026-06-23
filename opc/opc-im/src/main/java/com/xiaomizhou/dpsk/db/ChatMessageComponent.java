@@ -136,7 +136,8 @@ public class ChatMessageComponent {
 
         // save or update the conversation
         String conversationCode = Optional.ofNullable(conversationDao.getOne(sendId, targetId, ConversationType.GROUP.getCode())).map(conversation -> {
-            conversationDao.last(conversation.getCode(), msgCode, dto.getMessage(), sendId);
+
+            conversationDao.last(conversation.getCode(), msgCode, dto.getMessage(), sendId, isUser);
 
             // 非真实用户，填充关联用户消息编码
             if (!isUser) {
@@ -250,8 +251,8 @@ public class ChatMessageComponent {
 
         // save or update the conversation
         String conversationCode = Optional.ofNullable(conversationDao.getOne(sendId, targetId, dto.getConversationType())).map(conversation -> {
-            conversationDao.last(conversation.getCode(), msg.getCode(), dto.getMessage(), sendId);
 
+            conversationDao.last(conversation.getCode(), msg.getCode(), dto.getMessage(), sendId, isUser);
             // 非真实用户，填充关联用户消息编码
             if (!isUser) {
                 // 更新消息编码

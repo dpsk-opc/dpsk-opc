@@ -162,7 +162,7 @@ public class ConversationDao extends ServiceImpl<ConversationMapper, Conversatio
      * @param sendCode
      * @return
      */
-    public boolean last(String code, String lastMessageCode, String message, String sendCode) {
+    public boolean last(String code, String lastMessageCode, String message, String sendCode,boolean isUser) {
 
         if (StringUtils.isAnyBlank(code, sendCode)) {
             return false;
@@ -180,6 +180,9 @@ public class ConversationDao extends ServiceImpl<ConversationMapper, Conversatio
         model.setLastSenderCode(sendCode);
         model.setLastMessageTime(new Date());
         model.setUpdateTime(new Date());
+        if (isUser) {
+            model.setLastUserMessageCode(sendCode);
+        }
 
         return updateById(model);
 
