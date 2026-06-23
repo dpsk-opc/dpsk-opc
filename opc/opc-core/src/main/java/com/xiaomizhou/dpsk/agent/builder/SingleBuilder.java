@@ -67,16 +67,6 @@ public class SingleBuilder implements AgentBuilder {
         // 4. 获取工具
         List<ToolProvider> toolProviders = factory.getToolProviders(targetAgentCode, spec.getUserCode(), spec.getConversationCode(),spec.getMcpCodes());
 
-        // 5. 组装 System Prompt
-//        com.xiaomizhou.dpsk.memory.assembler.ContextAssembler.AssembledPrompt enrichedPrompt = factory.assembleSystemPrompt(
-//                agentDef, spec.getUserContent(), spec.getUserCode(),
-//                spec.getConversationCode(), spec.getQuoteMessageCode(),spec);
-
-//        // 5.1 注入定时任务锚点上下文（如果有）
-//        String systemMessage = enrichedPrompt.getSystemPart();
-//        if (spec.getTaskContext() != null && !spec.getTaskContext().isEmpty()) {
-//            systemMessage = systemMessage + "\n\n" + spec.getTaskContext();
-//        }
 
         // 构建 AiServices是因为AgenticServices不支持tool search. 这种方式不太行：会导致llm变笨
 //        Assistant assistant = AiServices.builder(Assistant.class)
@@ -91,7 +81,6 @@ public class SingleBuilder implements AgentBuilder {
         UntypedAgent agent = AgenticServices.agentBuilder()
                 .streamingChatModel(model)
                 .name(agentDef.getName())
-                //.systemMessage("")
                 .toolProviders(toolProviders)
                 .userMessage(spec.getUserContent())
                 .toolExecutionErrorHandler(new ToolExecutionErrorHandler() {

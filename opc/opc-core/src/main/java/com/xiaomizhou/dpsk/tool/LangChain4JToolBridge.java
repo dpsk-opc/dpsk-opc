@@ -113,7 +113,7 @@ public class LangChain4JToolBridge implements ToolProvider {
 
     public static class AddTools {
 
-        @Tool(name = ADD_TOOLS_TOOL_NAME, value = "添加工具到工具列表"/*, returnBehavior = ReturnBehavior.IMMEDIATE*/)
+        @Tool(name = ADD_TOOLS_TOOL_NAME, value = "添加工具到工具列表", returnBehavior = ReturnBehavior.IMMEDIATE)
         public String addTools(@P(name = TOOL_ARGUMENT, required = true) List<String> toolNames) {
             return "成功添加工具到工具列表";
         }
