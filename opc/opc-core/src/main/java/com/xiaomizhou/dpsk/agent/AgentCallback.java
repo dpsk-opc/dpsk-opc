@@ -21,4 +21,14 @@ public interface AgentCallback {
     /** 执行异常终止 */
     default void onError(Throwable error) {
     }
+
+    /**
+     * 检查当前会话是否已被取消。
+     * Pipeline 在执行循环中应定期轮询此方法，若返回 true 则终止执行。
+     *
+     * @return true 表示已取消，应终止当前会话
+     */
+    default boolean isCancelled() {
+        return false;
+    }
 }

@@ -21,6 +21,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.collections.MapUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -49,6 +50,21 @@ public class AgentComponent {
 
     private final AgentToolComponent agentToolComponent;
     private final KnowledgeLibComponent knowledgeLibComponent;
+
+    /**
+     * 是否是真实用户
+     *
+     * @param agentCode
+     * @return
+     */
+    public boolean isUser(String agentCode) {
+        if (StringUtils.isBlank(agentCode)) {
+            return false;
+        }
+
+        Agent agent = agentDao.getByCode(agentCode);
+        return Objects.nonNull(agent) && Strings.CI.equals(agent.getType(), "USER");
+    }
 
     /**
      * 分页查询（仅查询好友列表中的 Agent）

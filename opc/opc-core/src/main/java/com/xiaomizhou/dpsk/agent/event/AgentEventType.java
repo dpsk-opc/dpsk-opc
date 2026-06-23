@@ -48,6 +48,8 @@ public enum AgentEventType {
     /** 执行异常 */
     ERROR,
 
+    /** 取消执行 */
+    CANCELLED,
     /**
      * 消息已读
      */

@@ -45,4 +45,7 @@ public interface WsMsgType {
     String MCP_CALL = "mcp_call";
     // MCP 工具调用结果（前端 Electron -> 后端）
     String MCP_CALL_RESULT = "mcp_call_result";
+
+    // 会话取消通知
+    String CANCEL = "cancel";
 }

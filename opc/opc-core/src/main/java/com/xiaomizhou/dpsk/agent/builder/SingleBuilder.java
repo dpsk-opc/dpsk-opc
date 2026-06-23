@@ -146,7 +146,15 @@ public class SingleBuilder implements AgentBuilder {
 
                 AtomicBoolean firstPartialMsg = new AtomicBoolean(true);
 
-                stream.onPartialThinking(response -> {
+                stream.onPartialThinkingWithContext((response,context) -> {
+                    if (callback.isCancelled()) {
+                        if (context.streamingHandle().isCancelled()) {
+                            return;
+                        }
+                        context.streamingHandle().cancel();
+                        callback.onEvent(new AgentEvent(AgentEventType.CANCELLED, agentDef.getCode(), null, null, null, null, null));
+                    }
+
                     // 首次 thinking 发送 THINKING 事件
                     if (index.get() == 0) {
                         callback.onEvent(new AgentEvent(AgentEventType.THINKING, agentDef.getCode(), null, null, null, null, null));
@@ -158,9 +166,19 @@ public class SingleBuilder implements AgentBuilder {
                     // 后续 thinking 作为 STREAM_CHUNK
                     callback.onEvent(AgentEvent.streamChunk(agentDef.getCode(), response.text()));
 
-                }).onPartialResponse(response -> {
+                }).onPartialResponseWithContext((response, context) -> {
 
                     log.debug("partial response: {}", response);
+
+                    if (callback.isCancelled()) {
+                        if (context.streamingHandle().isCancelled()) {
+                            return;
+                        }
+                        context.streamingHandle().cancel();
+                        callback.onEvent(new AgentEvent(AgentEventType.CANCELLED, agentDef.getCode(), null, null, null, null, null));
+
+                    }
+
                     if (firstPartialMsg.get()) {
 
                         // 有些模型没有返回 thinking 信息，需要在第一个 partial response 时发送 THINKING 事件
@@ -175,28 +193,45 @@ public class SingleBuilder implements AgentBuilder {
                         callback.onEvent(new AgentEvent(AgentEventType.MESSAGE, agentDef.getCode(), null, null, null, null, null));
 
                         // 发送第一个字符
-                        callback.onEvent(new AgentEvent(AgentEventType.MESSAGE_CHUNK, agentDef.getCode(), response, null, null, null, null));
+                        callback.onEvent(new AgentEvent(AgentEventType.MESSAGE_CHUNK, agentDef.getCode(), response.text(), null, null, null, null));
                         firstPartialMsg.set(false);
                         return;
                     }
 
-                    callback.onEvent(new AgentEvent(AgentEventType.MESSAGE_CHUNK, agentDef.getCode(), response, null, null, null, null));
+                    callback.onEvent(new AgentEvent(AgentEventType.MESSAGE_CHUNK, agentDef.getCode(), response.text(), null, null, null, null));
                 }).onError(error -> {
                     log.error("SinglePipeline stream error for agent={}", agentDef.getCode(), error);
-                    callback.onEvent(AgentEvent.error(agentDef.getCode(), error.getMessage()));
+//                    callback.onEvent(AgentEvent.error(agentDef.getCode(), error.getMessage()));
                 }).beforeToolExecution(handle -> {
+                    // 检查取消
+                    if (callback.isCancelled()) {
+                        return;
+                    }
                     log.debug("before tool execution: {}", handle.request().name());
                     callback.onEvent(new AgentEvent(AgentEventType.TOOL_CALL, agentDef.getCode(), handle.request().id(), handle.request().name(), handle.request().arguments(), null, null));
                 }).onPartialToolCall(toolCall -> {
+                    // 检查取消
+                    if (callback.isCancelled()) {
+                        return;
+                    }
                     log.debug("onPartialToolCall: {}", toolCall);
 //                    callback.onEvent(new AgentEvent(AgentEventType.TOOL_CALL, agentDef.getCode(), toolCall., toolCall.name(), toolCall.arguments(), null, null));
                 }).onToolExecuted(toolExecution -> {
+                    // 检查取消
+                    if (callback.isCancelled()) {
+                        return;
+                    }
                     log.debug("onToolExecuted: {}", toolExecution.resultContents());
                     Map<String,Object> meta = Maps.newHashMap();
                     meta.put("startTime", toolExecution.startTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli());
                     meta.put("finishTime", toolExecution.finishTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli());
                     callback.onEvent(new AgentEvent(AgentEventType.TOOL_RESULT, agentDef.getCode(), toolExecution.request().id(), toolExecution.request().name(), toolExecution.request().arguments(), toolExecution.result(), meta));
                 }).onCompleteResponse(response -> {
+                    // 如果已取消，不发送完成事件
+                    if (callback.isCancelled()) {
+                        log.info("SinglePipeline cancelled, skip complete response for agent={}", agentDef.getCode());
+                        return;
+                    }
 
                     callback.onEvent(new AgentEvent(AgentEventType.MESSAGE_CHUNK_END, agentDef.getCode(), null, null, null, null, null));
 
@@ -215,8 +250,9 @@ public class SingleBuilder implements AgentBuilder {
 
                 stream.start();
 
+                boolean cancelled = callback.isCancelled();
                 return PipelineResult.builder()
-                        .success(true)
+                        .success(!cancelled)
                         .outputText(contentHolder[0])
                         .tokenUsage(tokenHolder[0])
                         .build();

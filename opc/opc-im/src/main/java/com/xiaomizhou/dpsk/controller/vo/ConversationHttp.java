@@ -44,4 +44,9 @@ public class ConversationHttp {
      */
     private Integer type;
 
+    /**
+     * 消息编码（用于取消会话等操作）
+     */
+    private String msgCode;
+
 }

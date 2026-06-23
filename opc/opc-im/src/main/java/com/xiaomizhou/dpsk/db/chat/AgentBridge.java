@@ -26,7 +26,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 /**
@@ -58,6 +61,12 @@ public class AgentBridge {
     @Value("${com.xiaomizhou.dpsk.opc.skill.path:~/skills}")
     private String skillPathPrefix;
 
+    /**
+     * 取消标记映射：msgCode -> 取消标记。
+     * 前端调用 cancel 接口时设置，Pipeline 在执行循环中轮询。
+     */
+    private final Map<String, AtomicBoolean> cancelFlags = new ConcurrentHashMap<>();
+
     public AgentBridge(AgentOrchestrator orchestrator,
                        AgentDefProvider agentDefProvider,
                        AgentComponent agentComponent,
@@ -70,6 +79,46 @@ public class AgentBridge {
         this.chatMessageComponent = chatMessageComponent;
         this.chatGroupComponent = chatGroupComponent;
         this.tokenUsageDao = tokenUsageDao;
+    }
+
+    /**
+     * 取消指定消息对应的 Agent 会话。
+     *
+     * @param msgCode 用户发送的消息编码
+     * @return true 表示成功设置取消标记，false 表示该消息不存在或已完成
+     */
+    public boolean cancel(String msgCode) {
+        AtomicBoolean flag = cancelFlags.get(msgCode);
+        if (flag == null) {
+            log.warn("Cancel failed: no active session for msgCode={}", msgCode);
+            return false;
+        }
+        boolean wasCancelled = flag.compareAndSet(false, true);
+        if (wasCancelled) {
+            log.info("Session cancelled: msgCode={}", msgCode);
+            // 通知前端会话已取消
+            try {
+                WsUtils.send(new WsMessage(WsMsgType.CANCEL, Map.of("msgCode", msgCode)));
+            } catch (Exception e) {
+                log.warn("Failed to send cancel WS notification for msgCode={}", msgCode, e);
+            }
+        }
+        return wasCancelled;
+    }
+
+    /**
+     * 获取或创建 msgCode 对应的取消标记。
+     * dispatch 时调用，dispatch 结束后由 finally 清理。
+     */
+    private AtomicBoolean getOrCreateCancelFlag(String msgCode) {
+        return cancelFlags.computeIfAbsent(msgCode, k -> new AtomicBoolean(false));
+    }
+
+    /**
+     * 清理取消标记（会话结束后调用）。
+     */
+    private void clearCancelFlag(String msgCode) {
+        cancelFlags.remove(msgCode);
     }
 
     /**
@@ -127,37 +176,44 @@ public class AgentBridge {
             return;
         }
 
-        // 组装 AgentBuildSpec
-        AgentBuildSpec spec = AgentBuildSpec.builder()
-                .mode(AgentBuildSpec.MODE_SINGLE)
-                .userCode(userId)
-                .targetAgentCode(targetId)
-                .userContent(msg.getContent())
-                .conversationCode(conversationCode)
-                .mcpCodes(mcpCodes)
-                .skillPaths(skillPaths)
-                .build();
+        String msgCode = msg.getCode();
+        AtomicBoolean cancelFlag = getOrCreateCancelFlag(msgCode);
 
-        // 生成流式编码
-        String streamCode = SequenceUtils.generator().next("STM");
+        try {
+            // 组装 AgentBuildSpec
+            AgentBuildSpec spec = AgentBuildSpec.builder()
+                    .mode(AgentBuildSpec.MODE_SINGLE)
+                    .userCode(userId)
+                    .targetAgentCode(targetId)
+                    .userContent(msg.getContent())
+                    .conversationCode(conversationCode)
+                    .mcpCodes(mcpCodes)
+                    .skillPaths(skillPaths)
+                    .build();
 
-        // 创建回调
-        SenderInfo senderInfo = new SenderInfo(agent.getCode(), agent.getName(), agent.getAvatar());
-        ImAgentCallback callback = new ImAgentCallback(
-                userId, conversationCode,
-                ConversationType.SINGLE.name(), targetId, msg.getTaskId(),
-                chatMessageComponent, tokenUsageDao, agentDefProvider);
-        callback.setStreamCode(streamCode);
-        callback.setSenderInfo(senderInfo);
+            // 生成流式编码
+            String streamCode = SequenceUtils.generator().next("STM");
 
-        callback.onEvent(AgentEvent.msgRead(agent.getCode(), msg.getCode()));
+            // 创建回调，注入取消标记
+            SenderInfo senderInfo = new SenderInfo(agent.getCode(), agent.getName(), agent.getAvatar());
+            ImAgentCallback callback = new ImAgentCallback(
+                    userId, conversationCode,
+                    ConversationType.SINGLE.name(), targetId, msg.getTaskId(),
+                    chatMessageComponent, tokenUsageDao, agentDefProvider);
+            callback.setStreamCode(streamCode);
+            callback.setSenderInfo(senderInfo);
+            callback.setCancelFlag(cancelFlag);
 
-        PipelineResult result = orchestrator.execute(spec, callback);
+            callback.onEvent(AgentEvent.msgRead(agent.getCode(), msg.getCode()));
 
+            PipelineResult result = orchestrator.execute(spec, callback);
 
-        log.info("Single chat completed: agent={}, success={}, contentLen={}",
-                targetId, result.isSuccess(),
-                result.getOutputText() != null ? result.getOutputText().length() : 0);
+            log.info("Single chat completed: agent={}, success={}, contentLen={}",
+                    targetId, result.isSuccess(),
+                    result.getOutputText() != null ? result.getOutputText().length() : 0);
+        } finally {
+            clearCancelFlag(msgCode);
+        }
     }
 
     /**
@@ -168,50 +224,58 @@ public class AgentBridge {
                                String targetId,
                                String conversationCode,
                                List<String> mcpCodes) {
-        // 获取群成员
-        List<ChatMemberDto> members = chatGroupComponent.getGroupMembers(targetId);
-        if (CollectionUtils.isEmpty(members)) {
-            return;
+        String msgCode = msg.getCode();
+        AtomicBoolean cancelFlag = getOrCreateCancelFlag(msgCode);
+
+        try {
+            // 获取群成员
+            List<ChatMemberDto> members = chatGroupComponent.getGroupMembers(targetId);
+            if (CollectionUtils.isEmpty(members)) {
+                return;
+            }
+
+            // 排除发言用户
+            members = members.stream()
+                    .filter(member -> !member.getCode().equalsIgnoreCase(userId))
+                    .collect(Collectors.toList());
+            if (CollectionUtils.isEmpty(members)) {
+                return;
+            }
+
+            List<String> agentCodes = members.stream()
+                    .map(ChatMemberDto::getCode)
+                    .collect(Collectors.toList());
+
+            // 组装 AgentBuildSpec
+            AgentBuildSpec spec = AgentBuildSpec.builder()
+                    .mode(AgentBuildSpec.MODE_GROUP)
+                    .userCode(userId)
+                    .targetAgentCodes(agentCodes)
+                    .groupCode(targetId)
+                    .userContent(msg.getContent())
+                    .conversationCode(conversationCode)
+                    .mcpCodes(mcpCodes)
+                    .build();
+
+            // 生成流式编码
+            String streamCode = SequenceUtils.generator().next("STM");
+
+            // 创建回调（群聊用 group 信息），注入取消标记
+            ImAgentCallback callback = new ImAgentCallback(
+                    userId, conversationCode,
+                    ConversationType.GROUP.name(), targetId, msg.getTaskId(),
+                    chatMessageComponent, tokenUsageDao, agentDefProvider);
+            callback.setStreamCode(streamCode);
+            callback.setSenderInfo(new SenderInfo(userId, userId, ""));
+            callback.setCancelFlag(cancelFlag);
+
+            callback.onEvent(AgentEvent.msgRead(userId, msg.getCode()));
+
+            PipelineResult result = orchestrator.execute(spec, callback);
+            log.info("Group chat completed: group={}, agentCount={}, success={}",
+                    targetId, agentCodes.size(), result.isSuccess());
+        } finally {
+            clearCancelFlag(msgCode);
         }
-
-        // 排除发言用户
-        members = members.stream()
-                .filter(member -> !member.getCode().equalsIgnoreCase(userId))
-                .collect(Collectors.toList());
-        if (CollectionUtils.isEmpty(members)) {
-            return;
-        }
-
-        List<String> agentCodes = members.stream()
-                .map(ChatMemberDto::getCode)
-                .collect(Collectors.toList());
-
-        // 组装 AgentBuildSpec
-        AgentBuildSpec spec = AgentBuildSpec.builder()
-                .mode(AgentBuildSpec.MODE_GROUP)
-                .userCode(userId)
-                .targetAgentCodes(agentCodes)
-                .groupCode(targetId)
-                .userContent(msg.getContent())
-                .conversationCode(conversationCode)
-                .mcpCodes(mcpCodes)
-                .build();
-
-        // 生成流式编码
-        String streamCode = SequenceUtils.generator().next("STM");
-
-        // 创建回调（群聊用 group 信息）
-        ImAgentCallback callback = new ImAgentCallback(
-                userId, conversationCode,
-                ConversationType.GROUP.name(), targetId, msg.getTaskId(),
-                chatMessageComponent, tokenUsageDao, agentDefProvider);
-        callback.setStreamCode(streamCode);
-        callback.setSenderInfo(new SenderInfo(userId, userId, ""));
-
-        callback.onEvent(AgentEvent.msgRead(userId, msg.getCode()));
-
-        PipelineResult result = orchestrator.execute(spec, callback);
-        log.info("Group chat completed: group={}, agentCount={}, success={}",
-                targetId, agentCodes.size(), result.isSuccess());
     }
 }

@@ -194,6 +194,22 @@ public class MessageRepositoryImpl implements MessageRepository {
         // 消息已在 ChatService 中保存，此处仅记录日志
         log.debug("saveMessages called with {} messages (skipped, already saved by ChatService)", messages.size());
 
+        UserMessage lastUserMsg = null;
+        for (int i = messages.size() - 1; i > 0; i--) {
+            ChatMessage last = messages.get(i);
+            if (last instanceof UserMessage) {
+                lastUserMsg = (UserMessage) last;
+                break;
+            }
+        }
+
+        if (Objects.isNull(lastUserMsg)) {
+            log.warn("can not find any last user message from message.");
+        }
+
+        String userMsgCode = Objects.isNull(lastUserMsg) || Objects.isNull(lastUserMsg.attributes()) ? "" : MapUtils.getString(lastUserMsg.attributes(),"code");
+
+
         // 用户消息在ChatService已经保存过了
         messages = messages.stream()
                 .filter(Objects::nonNull)
@@ -290,6 +306,7 @@ public class MessageRepositoryImpl implements MessageRepository {
             model.setCreateTime(new Date());
             model.setUpdateTime(new Date());
             model.setConversationCode(conv.getCode());
+            model.setRelateUserMessageCode(userMsgCode);
 
             chatMessageDao.save(model);
         });

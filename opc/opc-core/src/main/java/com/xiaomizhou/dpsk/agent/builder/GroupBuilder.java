@@ -88,6 +88,12 @@ public class GroupBuilder implements AgentBuilder {
                                     return;
                                 }
 
+                                // 检查取消
+                                if (callback.isCancelled()) {
+                                    log.info("GroupPipeline cancelled, skip agent={}", agentDef.getCode());
+                                    return;
+                                }
+
                                 synchronized (lock) {
                                     groupAgentCallback.setStreamCode(UUID.randomUUID().toString().replace("-", ""));
                                     groupAgentCallback.setSenderInfo(agentDef.getCode());
@@ -146,6 +152,15 @@ public class GroupBuilder implements AgentBuilder {
 
                     String response = supervisor.invoke(userContent);
 
+                    // 检查取消
+                    if (callback.isCancelled()) {
+                        log.info("GroupPipeline cancelled after supervisor invoke");
+                        return PipelineResult.builder()
+                                .success(false)
+                                .outputText(null)
+                                .build();
+                    }
+
                     Map<String, Object> meta = new HashMap<>();
                     meta.put("content", response);
                     meta.put("agentCount", agentDefs.size());
@@ -162,8 +177,10 @@ public class GroupBuilder implements AgentBuilder {
                 } else {
                     SupervisorAgent apply = agentCallback.apply(callback);
                     String response = apply.invoke(userContent);
+
+                    boolean cancelled = callback.isCancelled();
                     return PipelineResult.builder()
-                            .success(true)
+                            .success(!cancelled)
                             .outputText(response)
                             .build();
                 }

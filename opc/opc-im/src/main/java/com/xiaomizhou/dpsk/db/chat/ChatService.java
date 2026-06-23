@@ -1,5 +1,6 @@
 package com.xiaomizhou.dpsk.db.chat;
 
+import com.xiaomizhou.dpsk.db.ChatMessageComponent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -19,6 +20,8 @@ public class ChatService {
 
     private final AgentBridge agentBridge;
 
+    private final ChatMessageComponent chatMessageComponent;
+
     /**
      * 聊天入口
      *
@@ -31,5 +34,17 @@ public class ChatService {
             return;
         }
         agentBridge.dispatch(userId, msgCode, mcpCodes,skillPaths);
+    }
+
+    /**
+     * 取消指定消息对应的 Agent 会话。
+     *
+     * @param msgCode 用户发送的消息编码
+     * @return true 表示成功设置取消标记
+     */
+    public boolean cancel(String msgCode) {
+        agentBridge.cancel(msgCode);
+        chatMessageComponent.cancel(msgCode);
+        return true;
     }
 }

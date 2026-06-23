@@ -69,6 +69,12 @@ public class Conversation extends BaseModel {
     private String lastSenderCode;
 
     /**
+     * 最后一条用户消息ID
+     */
+    @TableField("last_user_message_code")
+    private String lastUserMessageCode;
+
+    /**
      * 是否置顶: 0=否, 1=是
      */
     @TableField("is_top")

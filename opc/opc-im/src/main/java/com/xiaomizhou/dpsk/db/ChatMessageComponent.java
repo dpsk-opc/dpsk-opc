@@ -44,6 +44,8 @@ public class ChatMessageComponent {
 
     private final TokenUsageDao tokenUsageDao;
 
+    private final AgentComponent agentComponent;
+
 
     /**
      * 获取会话code
@@ -129,12 +131,23 @@ public class ChatMessageComponent {
 
         chatMessageDao.save(msg);
 
+        boolean isUser = agentComponent.isUser(sendId);
+
 
         // save or update the conversation
         String conversationCode = Optional.ofNullable(conversationDao.getOne(sendId, targetId, ConversationType.GROUP.getCode())).map(conversation -> {
             conversationDao.last(conversation.getCode(), msgCode, dto.getMessage(), sendId);
+
+            // 非真实用户，填充关联用户消息编码
+            if (!isUser) {
+                // 更新消息编码
+                chatMessageDao.update(null, Wrappers.<ChatMessage>lambdaUpdate().set(ChatMessage::getRelateUserMessageCode, conversation.getLastUserMessageCode()).eq(ChatMessage::getCode, msg.getCode()));
+            }
             return conversation.getCode();
         }).orElseGet(() -> {
+
+            String code = SequenceUtils.generator().next(CONVERSATION_PREFIX);
+
             Conversation model = new Conversation();
             model.setOwnerCode(sendId);
             model.setTargetCode(targetId);
@@ -145,15 +158,18 @@ public class ChatMessageComponent {
             model.setLastMessageContent(dto.getMessage());
             model.setCreateTime(new Date());
             model.setUpdateTime(new Date());
-            model.setCode(SequenceUtils.generator().next(CONVERSATION_PREFIX));
+            model.setCode(code);
+            model.setLastUserMessageCode(isUser ? msg.getCode() : null);
             conversationDao.save(model);
+
+            // 更新消息编码
+            chatMessageDao.update(null, Wrappers.<ChatMessage>lambdaUpdate().set(ChatMessage::getConversationCode, code).eq(ChatMessage::getCode, msg.getCode()));
 
             return model.getCode();
         });
 
 
-        // 更新消息编码
-        chatMessageDao.update(null, Wrappers.<ChatMessage>lambdaUpdate().set(ChatMessage::getConversationCode, conversationCode).eq(ChatMessage::getCode, msg.getCode()));
+
 
         // 更新消息编码
         List<String> fileCodes = dto.getFileCodes();
@@ -230,12 +246,22 @@ public class ChatMessageComponent {
 
         chatMessageDao.save(msg);
 
+        boolean isUser = agentComponent.isUser(sendId);
 
         // save or update the conversation
         String conversationCode = Optional.ofNullable(conversationDao.getOne(sendId, targetId, dto.getConversationType())).map(conversation -> {
             conversationDao.last(conversation.getCode(), msg.getCode(), dto.getMessage(), sendId);
+
+            // 非真实用户，填充关联用户消息编码
+            if (!isUser) {
+                // 更新消息编码
+                chatMessageDao.update(null, Wrappers.<ChatMessage>lambdaUpdate().set(ChatMessage::getRelateUserMessageCode, conversation.getLastUserMessageCode()).eq(ChatMessage::getCode, msg.getCode()));
+            }
+
             return conversation.getCode();
         }).orElseGet(() -> {
+
+            String code = SequenceUtils.generator().next(CONVERSATION_PREFIX);
             Conversation model = new Conversation();
             model.setOwnerCode(sendId);
             model.setTargetCode(targetId);
@@ -246,14 +272,17 @@ public class ChatMessageComponent {
             model.setLastMessageContent(dto.getMessage());
             model.setCreateTime(new Date());
             model.setUpdateTime(new Date());
-            model.setCode(SequenceUtils.generator().next(CONVERSATION_PREFIX));
+            model.setCode(code);
+            model.setLastUserMessageCode(isUser ? msg.getCode() : null);
             conversationDao.save(model);
+
+            // 更新消息编码
+            chatMessageDao.update(null, Wrappers.<ChatMessage>lambdaUpdate().set(ChatMessage::getConversationCode, code).eq(ChatMessage::getCode, msg.getCode()));
 
             return model.getCode();
         });
 
-        // 更新消息编码
-        chatMessageDao.update(null, Wrappers.<ChatMessage>lambdaUpdate().set(ChatMessage::getConversationCode, conversationCode).eq(ChatMessage::getCode, msg.getCode()));
+
 
 
         // 更新消息编码
@@ -346,5 +375,27 @@ public class ChatMessageComponent {
                 .in(ChatMessage::getCode, msgCodes);
 
         return chatMessageDao.update(wrapper);
+    }
+
+
+    public boolean cancel(String msgCode) {
+        if (StringUtils.isBlank(msgCode)) {
+            return true;
+        }
+
+        while (true) {
+            List<ChatMessage> list = chatMessageDao.list(Wrappers.<ChatMessage>lambdaQuery().eq(ChatMessage::getRelateUserMessageCode, msgCode)
+                    .select(ChatMessage::getId)
+                    .last("LIMIT 100"));
+
+            if (CollectionUtils.isEmpty(list)) {
+                break;
+            }
+
+            List<Long> ids = list.stream().map(ChatMessage::getId).toList();
+            chatMessageDao.update(null, Wrappers.<ChatMessage>lambdaUpdate().set(ChatMessage::getStatus, MessageStatus.IGNORED).in(ChatMessage::getId, ids));
+        }
+
+        return true;
     }
 }

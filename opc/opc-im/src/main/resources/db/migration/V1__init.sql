@@ -118,6 +118,7 @@ CREATE TABLE IF NOT EXISTS t_chat_message (
     remark VARCHAR(255) NOT NULL DEFAULT '' COMMENT '备注',
     task_id VARCHAR(100) NOT NULL DEFAULT '' COMMENT '关联的任务ID',
     conversation_code VARCHAR(100) NOT NULL DEFAULT '' COMMENT '会话编码',
+    relate_user_message_code varchar(100) NOT NULL DEFAULT '' COMMENT '关联的用户消息编码',
     parent_id BIGINT NOT NULL DEFAULT 0 COMMENT '引用的消息ID',
     mentioned_list TEXT NOT NULL DEFAULT '' COMMENT '@提及列表（JSON数组）',
     status VARCHAR(20) NOT NULL DEFAULT 'SENT' COMMENT '消息状态',
@@ -132,6 +133,7 @@ CREATE INDEX IF NOT EXISTS idx_task ON t_chat_message (task_id);
 CREATE INDEX IF NOT EXISTS idx_parent ON t_chat_message (parent_id);
 CREATE INDEX IF NOT EXISTS idx_status ON t_chat_message (status);
 CREATE INDEX IF NOT EXISTS idx_deleted ON t_chat_message (is_deleted);
+CREATE INDEX IF NOT EXISTS idx_relate_user_message_code ON t_chat_message (relate_user_message_code);
 CREATE INDEX IF NOT EXISTS idx_conversation_code ON t_chat_message (conversation_code);
 CREATE UNIQUE INDEX IF NOT EXISTS udx_code ON t_chat_message (code);
 
@@ -170,6 +172,7 @@ CREATE TABLE IF NOT EXISTS t_conversation (
     last_message_content TEXT NOT NULL DEFAULT '' COMMENT '最后一条消息预览',
     last_message_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '最后一条消息时间',
     last_sender_code VARCHAR(60) NOT NULL DEFAULT '' COMMENT '最后一条消息发送者ID',
+    last_user_message_code VARCHAR(100) NOT NULL DEFAULT '' COMMENT '最后一条用户消息ID',
     is_top TINYINT NOT NULL DEFAULT 0 COMMENT '是否置顶',
     ext_config TEXT NOT NULL DEFAULT '' COMMENT '扩展配置（JSON）',
     create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',

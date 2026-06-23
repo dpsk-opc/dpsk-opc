@@ -26,6 +26,7 @@ import org.apache.commons.lang3.StringUtils;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 
@@ -55,8 +56,10 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
     private SenderInfo senderInfo;
     private final AtomicInteger chunkIndex = new AtomicInteger(0);
 
-
     private final AtomicInteger msgChunkIndex = new AtomicInteger(0);
+
+    // 取消标记（由 AgentBridge 注入）
+    private AtomicBoolean cancelFlag;
 
     // 累计 Token
     private TokenUsage accumulatedToken;
@@ -99,6 +102,18 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
         this.senderInfo = new SenderInfo(agentCode, agent.getNickname(), agent.getAvatar());
     }
 
+    /**
+     * 注入取消标记（由 AgentBridge 在 dispatch 时调用）。
+     */
+    public void setCancelFlag(AtomicBoolean cancelFlag) {
+        this.cancelFlag = cancelFlag;
+    }
+
+    @Override
+    public boolean isCancelled() {
+        return cancelFlag != null && cancelFlag.get();
+    }
+
     @Override
     public void onEvent(AgentEvent event) {
         if (event == null) {
@@ -117,6 +132,18 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
             case TOOL_CALL -> handleToolCall(event);
             case TOOL_RESULT -> handleToolResult(event);
             case MSG_READ -> handleRead(event);
+            case CANCELLED -> handleCancelled(event);
+        }
+    }
+
+    private void handleCancelled(AgentEvent event) {
+        if (StringUtils.isBlank(streamCode)) {
+            return;
+        }
+        try {
+            WsUtils.send(new WsMessage(WsMsgType.CANCEL, new StreamEndPayload(streamCode, null, null)));
+        } catch (Exception e) {
+            log.warn("Failed to send cancel event for stream {}!", streamCode, e);
         }
     }
 
@@ -216,7 +243,6 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
     }
 
     private void handleThinking(AgentEvent event) {
-        String text = event.text();
         if (streamCode == null) {
             return;
         }

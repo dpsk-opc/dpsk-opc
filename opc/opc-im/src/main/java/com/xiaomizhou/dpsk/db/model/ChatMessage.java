@@ -67,6 +67,12 @@ public class ChatMessage extends BaseModel {
     @TableField("mentioned_list")
     private String mentionedList;
 
+    /**
+     * 关联的消息编码
+     */
+    @TableField("relate_user_message_code")
+    private String relateUserMessageCode;
+
     @TableField("status")
     private String status;             // SENDING, SENT, DELIVERED, FAILED
 }

@@ -77,6 +77,17 @@ public class ConversationController {
         return Results.ok(conversationDao.setTop(param.getConversationCode(), param.getTop()));
     }
 
+    @PostMapping(value = "chat/cancel")
+    public Response<Boolean> cancelChat(@RequestBody Request<ConversationHttp> request) {
+        ConversationHttp param = request.getParam();
+        if (param == null || StringUtils.isBlank(param.getMsgCode())) {
+            return Results.fail("msgCode 不能为空");
+        }
+
+        boolean result = chatService.cancel(param.getMsgCode());
+        return Results.ok(result);
+    }
+
     @PostMapping(value = "chat/ignore")
     public Response<Boolean> ignoreChat(@RequestBody Request<ConversationHttp> request) {
         ConversationHttp param = request.getParam();
@@ -91,10 +102,6 @@ public class ConversationController {
     @PostMapping(value = "chat/read")
     public Response<Boolean> delivered(@RequestBody Request<ConversationHttp> request) {
         ConversationHttp param = request.getParam();
-//        if (param == null || StringUtils.isBlank(param.getConversationCode())) {
-//            return Results.fail("会话编码不能为空");
-//        }
-
         boolean result = chatMessageComponent.delivered(param.getDeliveredMsgCodes());
         return Results.ok(result);
     }
