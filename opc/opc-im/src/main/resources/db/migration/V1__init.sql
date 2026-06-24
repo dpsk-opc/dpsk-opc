@@ -522,3 +522,32 @@ CREATE TABLE IF NOT EXISTS t_agent_mcp_binding (
 CREATE INDEX IF NOT EXISTS idx_mcp_binding_template ON t_agent_mcp_binding (template_code, is_deleted);
 CREATE INDEX IF NOT EXISTS idx_mcp_binding_agent ON t_agent_mcp_binding (agent_code, is_deleted);
 CREATE INDEX IF NOT EXISTS idx_mcp_binding_status ON t_agent_mcp_binding (status, is_deleted);
+
+
+-- =============================================
+-- 表名: t_todo_item
+-- 描述: 待办事项表，存储用户创建的待办任务
+-- =============================================
+CREATE TABLE IF NOT EXISTS t_todo_item (
+    id            BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键ID',
+    code          VARCHAR(100)  NOT NULL DEFAULT '' COMMENT '待办编码，唯一标识',
+    agent_code    VARCHAR(100)  NOT NULL DEFAULT '' COMMENT '关联的联系人 Agent Code',
+    owner_code    VARCHAR(100)  NOT NULL DEFAULT '' COMMENT '所属用户 Agent Code（当前登录用户）',
+    title         VARCHAR(500)  NOT NULL DEFAULT '' COMMENT '待办名称',
+    content       TEXT          NOT NULL COMMENT '待办内容',
+    due_time      TIMESTAMP     NULL COMMENT '逾期时间',
+    alarm_sound   VARCHAR(500)  NULL COMMENT '闹铃文件URL，NULL=默认铃声',
+    alarm_enabled TINYINT(1)    NOT NULL DEFAULT 0 COMMENT '是否开启提醒: 0=关闭, 1=开启',
+    task_code     VARCHAR(100)  NOT NULL DEFAULT '' COMMENT '关联的任务编码',
+    conversation_code VARCHAR(100)  NOT NULL DEFAULT '' COMMENT '关联的会话编码',
+    status        TINYINT(2)    NOT NULL DEFAULT 0 COMMENT '状态: 0=pending(待办), 1=in_progress(进行中), 2=done(已完成)',
+    create_time   TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    update_time   TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间',
+    is_deleted    TINYINT(1)    NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0=未删除, 1=已删除',
+    CONSTRAINT uk_todo_item_code UNIQUE (code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_todo_item_agent ON t_todo_item (agent_code, is_deleted);
+CREATE INDEX IF NOT EXISTS idx_todo_item_owner ON t_todo_item (owner_code, is_deleted);
+CREATE INDEX IF NOT EXISTS idx_todo_item_status ON t_todo_item (status, is_deleted);
+CREATE INDEX IF NOT EXISTS idx_todo_item_due_time ON t_todo_item (due_time, is_deleted);

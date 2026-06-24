@@ -52,6 +52,7 @@ public class Task {
     public static final String TYPE_MANUAL = "MANUAL";
     public static final String TYPE_AI_COMMAND = "AI_COMMAND";
     public static final String TYPE_WORKFLOW = "WORKFLOW";
+    public static final String TYPE_TODO = "TODO";
 
     public static final String STATUS_ENABLED = "ENABLED";
     public static final String STATUS_DISABLED = "DISABLED";
