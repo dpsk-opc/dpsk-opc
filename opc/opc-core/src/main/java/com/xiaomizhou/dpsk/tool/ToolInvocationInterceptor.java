@@ -39,7 +39,7 @@ public class ToolInvocationInterceptor {
 
         String toolName = call.getName();
         if (LangChain4JToolBridge.ADD_TOOLS_TOOL_NAME.equalsIgnoreCase(toolName)) {
-            return ToolExecutionResult.success("成功添加%s到工具列表".formatted(toolName), System.currentTimeMillis() - startTime);
+            return ToolExecutionResult.success("工具已添加到列表", System.currentTimeMillis() - startTime);
         }
 
         // 1. 查找工具元数据

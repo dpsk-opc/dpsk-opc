@@ -199,10 +199,12 @@ public class SingleBuilder implements AgentBuilder {
                     callback.onEvent(new AgentEvent(AgentEventType.TOOL_CALL, agentDef.getCode(), handle.request().id(), handle.request().name(), handle.request().arguments(), null, null));
                 }).onPartialToolCallWithContext((toolCall,context) -> {
 
-                    context.streamingHandle().cancel();
-
                     // 检查取消
                     if (callback.isCancelled()) {
+                        if (context.streamingHandle().isCancelled()) {
+                            return;
+                        }
+                        context.streamingHandle().cancel();
                         return;
                     }
                     log.debug("onPartialToolCall: {}", toolCall);

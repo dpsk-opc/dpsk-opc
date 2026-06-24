@@ -136,6 +136,34 @@
             <artifactId>langchain4j-skills</artifactId>
         </dependency>
 
+<!--        <dependency>-->
+<!--            <groupId>dev.langchain4j</groupId>-->
+<!--            <artifactId>langchain4j-document-parser-apache-pdfbox</artifactId>-->
+<!--            <exclusions>-->
+<!--                <exclusion>-->
+<!--                    <groupId>org.apache.pdfbox</groupId>-->
+<!--                    <artifactId>pdfbox</artifactId>-->
+<!--                </exclusion>-->
+<!--            </exclusions>-->
+<!--        </dependency>-->
+
+        <dependency>
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>pdfbox</artifactId>
+            <version>3.0.7</version>
+        </dependency>
+
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-document-parser-apache-poi</artifactId>
+        </dependency>
+
+
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-document-parser-apache-tika</artifactId>
+        </dependency>
+
         <dependency>
             <groupId>com.github.kagkarlsson</groupId>
             <artifactId>db-scheduler</artifactId>

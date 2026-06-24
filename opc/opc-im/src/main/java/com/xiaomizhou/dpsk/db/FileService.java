@@ -22,7 +22,6 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.text.SimpleDateFormat;
 import java.util.*;
@@ -148,6 +147,14 @@ public class FileService {
             return null;
         }
         return file;
+    }
+
+    public String getDiskFilePath(String code) {
+        FileRecord record = getByCode(code);
+        if (record == null) {
+            return null;
+        }
+        return Path.of(uploadPath, record.getFilePath()).toString();
     }
 
 

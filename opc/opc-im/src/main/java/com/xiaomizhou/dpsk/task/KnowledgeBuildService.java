@@ -2,7 +2,6 @@ package com.xiaomizhou.dpsk.task;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.google.common.collect.Maps;
-import com.google.common.collect.Sets;
 import com.xiaomizhou.dpsk.constant.KnowledgeLibStatus;
 import com.xiaomizhou.dpsk.db.FileService;
 import com.xiaomizhou.dpsk.db.dao.KnowledgeLibDao;
@@ -12,16 +11,17 @@ import com.xiaomizhou.dpsk.db.model.KnowledgeLib;
 import com.xiaomizhou.dpsk.db.model.KnowledgeNode;
 import com.xiaomizhou.dpsk.memory.manager.FactManager;
 import com.xiaomizhou.dpsk.memory.store.EmbeddingStore;
+import dev.langchain4j.data.document.Document;
+import dev.langchain4j.data.document.DocumentSplitter;
+import dev.langchain4j.data.document.loader.FileSystemDocumentLoader;
+import dev.langchain4j.data.document.parser.apache.tika.ApacheTikaDocumentParser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Service;
 
-import java.io.File;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -86,33 +86,31 @@ public class KnowledgeBuildService {
                 return BuildResult.ok(0, 0, 0);
             }
 
-            Set<String> unsupportNodes = Sets.newHashSet();
+//            Set<String> unsupportNodes = Sets.newHashSet();
 
             // 2. 过滤：只处理支持的文件类型 + 文件存在 + 大小合法
             List<FileNodeInfo> pendingFiles = fileNodes.stream()
                     .map(this::resolveFileInfo)
-                    .filter(Objects::nonNull)
-                    .filter(node -> {
+                    .filter(Objects::nonNull).toList();
+//                    .filter(node -> {
+//
+//                        if (isSupportedFile(node)) {
+//                            return true;
+//                        }
+//
+//                        unsupportNodes.add(node.node.getCode());
+//                        return false;
+//                    }).toList();
 
-                        if (isSupportedFile(node)) {
-                            return true;
-                        }
-
-                        unsupportNodes.add(node.node.getCode());
-                        return false;
-                    }).toList();
-
-            // 不支持类型标记为 UNSUPPORT
-            if (CollectionUtils.isNotEmpty(unsupportNodes)) {
-                unsupportNodes.forEach(nodeCode -> {
-                    knowledgeNodeDao.casUpdateStatus(nodeCode, KnowledgeLibStatus.UPLOADED, KnowledgeLibStatus.UNSUPPORT);
-                });
-            }
+//            // 不支持类型标记为 UNSUPPORT
+//            if (CollectionUtils.isNotEmpty(unsupportNodes)) {
+//                unsupportNodes.forEach(nodeCode -> {
+//                    knowledgeNodeDao.casUpdateStatus(nodeCode, KnowledgeLibStatus.UPLOADED, KnowledgeLibStatus.UNSUPPORT);
+//                });
+//            }
 
             if (pendingFiles.isEmpty()) {
                 // 所有文件都不支持或无法处理，标记知识库为 LEARNED
-//                knowledgeLibDao.casUpdateStatus(libCode, KnowledgeLibStatus.ANALYZING, KnowledgeLibStatus.LEARNED);
-//                log.info("知识库 {} 无可处理的文件节点，标记为 LEARNED", libCode);
                 return BuildResult.ok(0, 0, fileNodes.size());
             }
 
@@ -173,12 +171,21 @@ public class KnowledgeBuildService {
                             KnowledgeLib lib,
                             FactManager.EmbeddingClient embeddingClient,
                             EmbeddingStore l3EmbeddingStore) throws IOException {
-        File diskFile = fileService.getDiskFileByCode(info.fileRecord.getCode());
-        if (diskFile == null) {
+
+        String path = fileService.getDiskFilePath(info.fileRecord.getCode());
+        if (StringUtils.isBlank(path)) {
             throw new IOException("磁盘文件不存在: " + info.fileRecord.getCode());
         }
 
-        String content = Files.readString(diskFile.toPath(), StandardCharsets.UTF_8);
+        Document document;
+        try {
+            document = FileSystemDocumentLoader.loadDocument(path, new ApacheTikaDocumentParser());
+        } catch (Exception e) {
+            log.warn("知识库文件加载失败!", e);
+            return 0;
+        }
+
+        String content = document.text();
         if (StringUtils.isBlank(content)) {
             log.info("文件内容为空: {}", info.fileRecord.getOriginalName());
             return 0;
@@ -226,6 +233,8 @@ public class KnowledgeBuildService {
         if (content == null || content.isEmpty()) {
             return Collections.emptyList();
         }
+
+        content = content.replace("\n", "").replace("\r", "").replace("\t", "");
         if (content.length() <= CHUNK_SIZE) {
             return Collections.singletonList(content);
         }

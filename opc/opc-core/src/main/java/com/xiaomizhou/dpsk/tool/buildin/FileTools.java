@@ -24,7 +24,6 @@ public class FileTools {
     // 可根据需要设置基础工作目录，防止路径穿越，默认不做限制
     private static final Path BASE_DIR = null; // null 表示不限制
 
-    @Tool(name = "list_files", description = "列出目录下的文件和子目录，支持按文件名关键字过滤和递归搜索")
     @dev.langchain4j.agent.tool.Tool(name = "list_files", value = "列出目录下的文件和子目录，支持按文件名关键字过滤和递归搜索")
     public String listFiles(
             @ToolParam(description = "目录路径，支持相对或绝对路径")

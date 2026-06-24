@@ -137,13 +137,16 @@ public class ChatMessageComponent {
         // save or update the conversation
         String conversationCode = Optional.ofNullable(conversationDao.getOne(sendId, targetId, ConversationType.GROUP.getCode())).map(conversation -> {
 
-            conversationDao.last(conversation.getCode(), msgCode, dto.getMessage(), sendId, isUser);
+            conversationDao.last(conversation.getCode(), msgCode, dto.getMessage(), sendId);
 
             // 非真实用户，填充关联用户消息编码
+            LambdaUpdateWrapper<ChatMessage> wrapper = Wrappers.<ChatMessage>lambdaUpdate().set(ChatMessage::getConversationCode, conversation.getCode()).eq(ChatMessage::getCode, msgCode);
             if (!isUser) {
                 // 更新消息编码
-                chatMessageDao.update(null, Wrappers.<ChatMessage>lambdaUpdate().set(ChatMessage::getRelateUserMessageCode, conversation.getLastUserMessageCode()).eq(ChatMessage::getCode, msg.getCode()));
+                wrapper.set(ChatMessage::getRelateUserMessageCode, conversation.getLastUserMessageCode());
             }
+            chatMessageDao.update(null, wrapper);
+
             return conversation.getCode();
         }).orElseGet(() -> {
 
@@ -252,12 +255,13 @@ public class ChatMessageComponent {
         // save or update the conversation
         String conversationCode = Optional.ofNullable(conversationDao.getOne(sendId, targetId, dto.getConversationType())).map(conversation -> {
 
-            conversationDao.last(conversation.getCode(), msg.getCode(), dto.getMessage(), sendId, isUser);
             // 非真实用户，填充关联用户消息编码
+            LambdaUpdateWrapper<ChatMessage> wrapper = Wrappers.<ChatMessage>lambdaUpdate().set(ChatMessage::getConversationCode, conversation.getCode()).eq(ChatMessage::getCode, msgCode);
             if (!isUser) {
                 // 更新消息编码
-                chatMessageDao.update(null, Wrappers.<ChatMessage>lambdaUpdate().set(ChatMessage::getRelateUserMessageCode, conversation.getLastUserMessageCode()).eq(ChatMessage::getCode, msg.getCode()));
+                wrapper.set(ChatMessage::getRelateUserMessageCode, conversation.getLastUserMessageCode());
             }
+            chatMessageDao.update(null, wrapper);
 
             return conversation.getCode();
         }).orElseGet(() -> {

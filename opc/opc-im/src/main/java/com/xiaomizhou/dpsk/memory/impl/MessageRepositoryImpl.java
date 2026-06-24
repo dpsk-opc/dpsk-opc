@@ -195,7 +195,7 @@ public class MessageRepositoryImpl implements MessageRepository {
         log.debug("saveMessages called with {} messages (skipped, already saved by ChatService)", messages.size());
 
         UserMessage lastUserMsg = null;
-        for (int i = messages.size() - 1; i > 0; i--) {
+        for (int i = messages.size() - 1; i >= 0; i--) {
             ChatMessage last = messages.get(i);
             if (last instanceof UserMessage) {
                 lastUserMsg = (UserMessage) last;
