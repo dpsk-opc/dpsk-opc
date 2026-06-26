@@ -551,3 +551,100 @@ CREATE INDEX IF NOT EXISTS idx_todo_item_agent ON t_todo_item (agent_code, is_de
 CREATE INDEX IF NOT EXISTS idx_todo_item_owner ON t_todo_item (owner_code, is_deleted);
 CREATE INDEX IF NOT EXISTS idx_todo_item_status ON t_todo_item (status, is_deleted);
 CREATE INDEX IF NOT EXISTS idx_todo_item_due_time ON t_todo_item (due_time, is_deleted);
+
+
+-- =============================================
+-- V2: 工作流模块建表
+-- =============================================
+
+-- =============================================
+-- 表名: t_workflow_template
+-- 描述: 工作流模板表，定义工作流的节点和连线关系
+-- =============================================
+CREATE TABLE IF NOT EXISTS t_workflow_template (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键ID',
+    code VARCHAR(100) NOT NULL DEFAULT '' COMMENT '模板编码，唯一标识',
+    name VARCHAR(200) NOT NULL DEFAULT '' COMMENT '模板名称',
+    description TEXT NOT NULL COMMENT '模板描述',
+    category TINYINT(2) NOT NULL DEFAULT 0 COMMENT '模板分类: 0=通用, 1=编程, 2=运维, 3=办公, 4=其他',
+    node_count INT NOT NULL DEFAULT 0 COMMENT '节点数量',
+    status TINYINT(2) NOT NULL DEFAULT 1 COMMENT '状态: 0=草稿, 1=已发布, 2=已停用',
+    version INT NOT NULL DEFAULT 1 COMMENT '版本号',
+    workflow_json MEDIUMTEXT NOT NULL COMMENT '工作流DAG JSON（节点+连线定义）',
+    input_schema TEXT NOT NULL COMMENT '输入参数JSON Schema',
+    timeout_seconds INT NOT NULL DEFAULT 3600 COMMENT '超时时间（秒）',
+    failure_strategy TINYINT(2) NOT NULL DEFAULT 0 COMMENT '失败策略: 0=终止, 1=跳过继续, 2=重试',
+    max_retry INT NOT NULL DEFAULT 0 COMMENT '最大重试次数',
+    notify_on_complete TINYINT(1) NOT NULL DEFAULT 0 COMMENT '完成时通知: 0=否, 1=是',
+    avatar VARCHAR(500) NOT NULL DEFAULT '' COMMENT '头像URL',
+    owner_code VARCHAR(100) NOT NULL DEFAULT '' COMMENT '创建者编码',
+    create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间',
+    is_deleted TINYINT(1) NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0=未删除, 1=已删除',
+    CONSTRAINT uk_workflow_template_code UNIQUE (code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wf_template_owner ON t_workflow_template(owner_code);
+CREATE INDEX IF NOT EXISTS idx_wf_template_category ON t_workflow_template(category, status, is_deleted);
+CREATE INDEX IF NOT EXISTS idx_wf_template_status ON t_workflow_template(status, is_deleted);
+
+-- =============================================
+-- 表名: t_workflow_task
+-- 描述: 工作流任务实例表，记录每次工作流执行
+-- =============================================
+CREATE TABLE IF NOT EXISTS t_workflow_task (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键ID',
+    code VARCHAR(100) NOT NULL DEFAULT '' COMMENT '任务编码，唯一标识',
+    name VARCHAR(200) NOT NULL DEFAULT '' COMMENT '任务名称',
+    template_code VARCHAR(100) NOT NULL DEFAULT '' COMMENT '关联模板编码',
+    template_version INT NOT NULL DEFAULT 1 COMMENT '锁定模板版本号',
+    status TINYINT(2) NOT NULL DEFAULT 0 COMMENT '状态: 0=待执行, 1=运行中, 2=成功, 3=失败, 4=已取消, 5=审批中',
+    current_node_id VARCHAR(100) NOT NULL DEFAULT '' COMMENT '当前执行节点ID',
+    current_step INT NOT NULL DEFAULT 0 COMMENT '当前步骤序号',
+    workflow_json MEDIUMTEXT NOT NULL COMMENT '执行时锁定的工作流JSON（含节点状态）',
+    input_params TEXT NOT NULL COMMENT '实际输入参数JSON',
+    context_data MEDIUMTEXT NOT NULL COMMENT '运行时上下文数据JSON（节点间传递）',
+    start_time TIMESTAMP NULL DEFAULT NULL COMMENT '任务开始时间',
+    end_time TIMESTAMP NULL DEFAULT NULL COMMENT '任务结束时间',
+    error_message TEXT NOT NULL COMMENT '失败原因',
+    source TINYINT(2) NOT NULL DEFAULT 0 COMMENT '触发来源: 0=用户手动, 1=Agent, 2=系统, 3=定时任务',
+    conversation_code VARCHAR(100) NOT NULL DEFAULT '' COMMENT '关联会话编码',
+    agent_code VARCHAR(100) NOT NULL DEFAULT '' COMMENT '触发Agent编码',
+    avatar VARCHAR(500) NOT NULL DEFAULT '' COMMENT '头像URL',
+    scheduled_task_code VARCHAR(100) NOT NULL DEFAULT '' COMMENT '关联定时任务编码',
+    owner_code VARCHAR(100) NOT NULL DEFAULT '' COMMENT '创建者编码',
+    create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间',
+    is_deleted TINYINT(1) NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0=未删除, 1=已删除',
+    CONSTRAINT uk_workflow_task_code UNIQUE (code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wf_task_template ON t_workflow_task(template_code);
+CREATE INDEX IF NOT EXISTS idx_wf_task_status ON t_workflow_task(status, is_deleted);
+CREATE INDEX IF NOT EXISTS idx_wf_task_owner ON t_workflow_task(owner_code);
+CREATE INDEX IF NOT EXISTS idx_wf_task_conversation ON t_workflow_task(conversation_code);
+
+-- =============================================
+-- 表名: t_workflow_node_log
+-- 描述: 工作流节点执行日志表，记录每个节点的执行详情
+-- =============================================
+CREATE TABLE IF NOT EXISTS t_workflow_node_log (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键ID',
+    task_code VARCHAR(100) NOT NULL DEFAULT '' COMMENT '关联任务编码',
+    node_id VARCHAR(100) NOT NULL DEFAULT '' COMMENT '节点ID（对应workflow_json中的节点）',
+    node_name VARCHAR(200) NOT NULL DEFAULT '' COMMENT '节点名称',
+    node_type TINYINT(2) NOT NULL DEFAULT 0 COMMENT '节点类型: 0=开始, 1=结束, 2=LLM调用, 3=人工审批, 4=条件分支, 5=循环, 6=子工作流',
+    agent_code VARCHAR(100) NOT NULL DEFAULT '' COMMENT '绑定的Agent编码',
+    status TINYINT(2) NOT NULL DEFAULT 0 COMMENT '状态: 0=待执行, 1=运行中, 2=成功, 3=失败, 4=跳过',
+    retry_count INT NOT NULL DEFAULT 0 COMMENT '重试次数',
+    input_data MEDIUMTEXT NOT NULL COMMENT '节点输入JSON',
+    output_data MEDIUMTEXT NOT NULL COMMENT '节点输出JSON',
+    error_message TEXT NOT NULL COMMENT '错误信息',
+    start_time TIMESTAMP NULL DEFAULT NULL COMMENT '节点开始时间',
+    end_time TIMESTAMP NULL DEFAULT NULL COMMENT '节点结束时间',
+    create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    is_deleted TINYINT(1) NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0=未删除, 1=已删除'
+);
+
+CREATE INDEX IF NOT EXISTS idx_wf_node_log_task ON t_workflow_node_log(task_code);
+CREATE INDEX IF NOT EXISTS idx_wf_node_log_status ON t_workflow_node_log(task_code, status);

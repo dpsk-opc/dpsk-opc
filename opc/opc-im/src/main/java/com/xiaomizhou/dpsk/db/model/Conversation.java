@@ -33,13 +33,13 @@ public class Conversation extends BaseModel {
     private String ownerCode;
 
     /**
-     * 会话类型: 0-SINGLE(单聊), 1-GROUP(群聊)
+     * 会话类型: 0-SINGLE(单聊), 1-GROUP(群聊) 2-workflow(流程)
      */
     @TableField("conversation_type")
     private Integer conversationType;
 
     /**
-     * 对方ID: 单聊时为对方agent.code, 群聊时为group.code
+     * 对方ID: 单聊时为对方agent.code, 群聊时为group.code,workflow时为workflowtask.code
      */
     @TableField("target_code")
     private String targetCode;

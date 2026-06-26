@@ -27,6 +27,7 @@
         <spring-shell.version>3.4.2</spring-shell.version>
         <spring-boot.version>3.4.2</spring-boot.version>
         <spring-version>6.2.2</spring-version>
+        <liteflow.version>2.16.0</liteflow.version>
     </properties>
 
 
@@ -220,6 +221,19 @@
 
 
             <!-- langchain4j end -->
+
+
+            <dependency>
+                <groupId>com.yomahub</groupId>
+                <artifactId>liteflow-core</artifactId>
+                <version>${liteflow.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>com.yomahub</groupId>
+                <artifactId>liteflow-el-builder</artifactId>
+                <version>${liteflow.version}</version>
+            </dependency>
 
         </dependencies>
     </dependencyManagement>

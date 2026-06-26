@@ -4,15 +4,14 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.google.common.collect.Maps;
-import com.xiaomizhou.dpsk.agent.factory.AgentComponentFactory;
 import com.xiaomizhou.dpsk.constant.ConversationType;
 import com.xiaomizhou.dpsk.constant.FileRefType;
 import com.xiaomizhou.dpsk.db.FileService;
 import com.xiaomizhou.dpsk.db.chat.ChatProtocol;
+import com.xiaomizhou.dpsk.db.dto.ConversationDto;
 import com.xiaomizhou.dpsk.db.dto.FileRecordDto;
 import com.xiaomizhou.dpsk.db.mapper.ConversationMapper;
 import com.xiaomizhou.dpsk.db.model.*;
-import com.xiaomizhou.dpsk.db.dto.ConversationDto;
 import com.xiaomizhou.dpsk.utils.JsonUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -46,6 +45,8 @@ public class ConversationDao extends ServiceImpl<ConversationMapper, Conversatio
 
     private final FileService fileService;
 
+    private final WorkflowTaskDao workflowTaskDao;
+
 
     public ImmutablePair<Long, List<ConversationDto>> page(int pageNo, int pageSize, Integer type, String name, String ownerCode) {
 
@@ -66,12 +67,15 @@ public class ConversationDao extends ServiceImpl<ConversationMapper, Conversatio
         List<Conversation> list = list(wrapper);
 
 
-        List<String> agentCodes = list.stream().map(Conversation::getTargetCode).collect(Collectors.toList());
+        List<String> agentCodes = list.stream().filter(conversation -> Objects.equals(conversation.getConversationType(), ConversationType.SINGLE.getCode())).map(Conversation::getTargetCode).collect(Collectors.toList());
         List<Agent> agents = CollectionUtils.isEmpty(agentCodes) ? List.of() : agentDao.list(Wrappers.<Agent>lambdaQuery().in(Agent::getCode, agentCodes));
 
 
-        List<String> groupCodes = list.stream().filter(conversation -> conversation.getConversationType() == 1).map(Conversation::getTargetCode).toList();
+        List<String> groupCodes = list.stream().filter(conversation -> conversation.getConversationType().equals(ConversationType.GROUP.getCode())).map(Conversation::getTargetCode).toList();
         List<ChatGroup> groups = CollectionUtils.isEmpty(groupCodes) ? List.of() : chatGroupDao.lambdaQuery().in(ChatGroup::getCode, groupCodes).list();
+
+        List<String> taskCodes = list.stream().filter(conversation -> conversation.getConversationType().equals(ConversationType.WORKFLOW.getCode())).map(Conversation::getTargetCode).toList();
+        List<WorkflowTaskDO> tasks = CollectionUtils.isEmpty(taskCodes) ? List.of() : workflowTaskDao.lambdaQuery().in(WorkflowTaskDO::getCode, taskCodes).list();
 
         return ImmutablePair.of(cnt, list.stream().map(record -> {
 
@@ -82,7 +86,8 @@ public class ConversationDao extends ServiceImpl<ConversationMapper, Conversatio
             dto.setCode(record.getCode());
             dto.setTargetCode(record.getTargetCode());
 
-            if (0 == record.getConversationType()) {
+
+            if (ConversationType.SINGLE.getCode().equals(record.getConversationType())) {
                 Agent at = agents.stream().filter(agent -> agent.getCode().equals(record.getTargetCode())).findFirst().orElse(null);
 
                 if (Objects.nonNull(at)) {
@@ -98,13 +103,22 @@ public class ConversationDao extends ServiceImpl<ConversationMapper, Conversatio
                 }
             }
 
-            if (1 == record.getConversationType()) {
+            if (ConversationType.GROUP.getCode().equals(record.getConversationType())) {
                 ChatGroup group = groups.stream().filter(gp -> gp.getCode().equals(record.getTargetCode())).findFirst().orElse(null);
                 if (Objects.nonNull(group)) {
                     dto.setTargetAvatar(group.getAvatar());
                     dto.setTargetName(group.getName());
                 }
             }
+
+            if (ConversationType.WORKFLOW.getCode().equals(record.getConversationType())) {
+                WorkflowTaskDO task = tasks.stream().filter(t -> t.getCode().equals(record.getTargetCode())).findFirst().orElse(null);
+                if (Objects.nonNull(task)) {
+                    dto.setTargetName(task.getName());
+                    dto.setTargetAvatar(task.getAvatar());
+                }
+            }
+
 
             dto.setLastMessageTime(record.getLastMessageTime());
             dto.setType(record.getConversationType());
@@ -139,10 +153,16 @@ public class ConversationDao extends ServiceImpl<ConversationMapper, Conversatio
         }
 
         // 单聊场景：发送方和接收方互换，查询是否存在会话
-        if (0 == type) {
+        if (ConversationType.SINGLE.getCode().equals(type)) {
             return getOne(Wrappers.<Conversation>lambdaQuery().eq(Conversation::getOwnerCode, receiveId)
                     .eq(Conversation::getTargetCode, sendId)
                     .eq(Conversation::getConversationType, ConversationType.SINGLE.getCode()));
+        }
+
+        // 群聊会话只有只有一个
+        if (ConversationType.WORKFLOW.getCode().equals(type)) {
+            return getOne(Wrappers.<Conversation>lambdaQuery().eq(Conversation::getTargetCode, receiveId)
+                    .eq(Conversation::getConversationType, ConversationType.WORKFLOW.getCode()).last(" limit 1"));
         }
 
         // 群聊会话只有只有一个

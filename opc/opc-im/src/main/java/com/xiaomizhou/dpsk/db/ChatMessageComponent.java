@@ -5,12 +5,13 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.xiaomizhou.dpsk.constant.ConversationType;
 import com.xiaomizhou.dpsk.constant.FileRefType;
 import com.xiaomizhou.dpsk.constant.MessageStatus;
-import com.xiaomizhou.dpsk.utils.JsonUtils;
-import com.xiaomizhou.dpsk.db.dao.*;
+import com.xiaomizhou.dpsk.db.dao.ChatMessageDao;
+import com.xiaomizhou.dpsk.db.dao.ConversationDao;
+import com.xiaomizhou.dpsk.db.dao.TokenUsageDao;
 import com.xiaomizhou.dpsk.db.dto.ChatMsgDto;
-import com.xiaomizhou.dpsk.db.model.ChatGroup;
 import com.xiaomizhou.dpsk.db.model.ChatMessage;
 import com.xiaomizhou.dpsk.db.model.Conversation;
+import com.xiaomizhou.dpsk.utils.JsonUtils;
 import com.xiaomizhou.dpsk.utils.SequenceUtils;
 import dev.langchain4j.model.output.TokenUsage;
 import lombok.RequiredArgsConstructor;
@@ -45,6 +46,8 @@ public class ChatMessageComponent {
     private final TokenUsageDao tokenUsageDao;
 
     private final AgentComponent agentComponent;
+
+    private final WorkflowTaskComponent workflowTaskComponent;
 
 
     /**
@@ -85,6 +88,97 @@ public class ChatMessageComponent {
         }
 
         return chatMessageDao.getOne(Wrappers.<ChatMessage>lambdaQuery().eq(ChatMessage::getCode, code));
+    }
+
+
+    /**
+     * 新建工作流消息
+     *
+     * @param sendId
+     * @param dto
+     * @param token
+     * @param modelName
+     * @return
+     */
+    public String newWorkflowMsg(String sendId, ChatMsgDto dto, TokenUsage token, String modelName) {
+        if (Objects.isNull(dto) || StringUtils.isAnyBlank(sendId, dto.getTargetId())) {
+            return "";
+        }
+
+
+        final String targetId = dto.getTargetId();
+
+        String msgCode = SequenceUtils.generator().next(CHAT_MESSAGE_PREFIX);
+
+        // save the msg first
+        ChatMessage msg = new ChatMessage();
+        msg.setContent(dto.getMessage());
+        msg.setMessageType(dto.getMessageType());
+        msg.setConversationType(ConversationType.WORKFLOW.name());
+        msg.setSenderCode(sendId);
+        msg.setReceiverCode(targetId);
+        msg.setCode(msgCode);
+        msg.setCreateTime(new Date());
+        msg.setUpdateTime(new Date());
+        msg.setStatus(MessageStatus.SENT);
+        msg.setContentType(0);
+        msg.setTaskId(dto.getTaskId());
+        msg.setConversationCode(dto.getConversationCode());
+        msg.setTaskId(dto.getTaskId());
+
+        if (StringUtils.isNotBlank(dto.getStatus())) {
+            msg.setStatus(dto.getStatus());
+        }
+
+        if (StringUtils.isNotBlank(dto.getParentMsgCode())) {
+            ChatMessage chat = getByCode(dto.getParentMsgCode());
+            msg.setParentId(Objects.isNull(chat) ? 0L : chat.getId());
+        }
+
+        msg.setMentionedList(JsonUtils.toJson(dto.getMentionedList()));
+
+        chatMessageDao.save(msg);
+
+        boolean isUser = agentComponent.isUser(sendId);
+
+
+        Conversation conv = conversationDao.getOneByCode(dto.getConversationCode());
+        conversationDao.lambdaUpdate().set(Conversation::getLastMessageCode, msgCode)
+                .set(Conversation::getLastMessageContent, dto.getMessage())
+                .set(Conversation::getLastMessageTime, new Date())
+                .set(Conversation::getLastUserMessageCode, isUser ? msgCode : null)   // 非真实用户，填充关联用户消息编码
+                .set(Conversation::getLastSenderCode, sendId)
+                .set(Conversation::getUpdateTime, new Date())
+                .eq(Conversation::getId, conv.getId());
+
+
+        // 更新消息编码
+        List<String> fileCodes = dto.getFileCodes();
+        if (CollectionUtils.isNotEmpty(fileCodes)) {
+            fileService.updateRefCode(msgCode, FileRefType.CHAT_MESSAGE, fileCodes);
+        }
+
+        if (Objects.isNull(token)) {
+            return msgCode;
+        }
+        // save token
+        com.xiaomizhou.dpsk.db.model.TokenUsage usage = new com.xiaomizhou.dpsk.db.model.TokenUsage();
+        usage.setTotalTokens(token.totalTokenCount());
+        usage.setInputTokens(token.inputTokenCount());
+        usage.setOutputTokens(token.outputTokenCount());
+
+        usage.setAgentCode(dto.getSendId());
+        usage.setCode(SequenceUtils.generator().next("TKU"));
+        usage.setConversationCode(dto.getConversationCode());
+        usage.setMessageCode(msg.getCode());
+        usage.setModelName(modelName);
+        usage.setTaskId(dto.getTaskId());
+        usage.setCreateTime(new Date());
+        usage.setUpdateTime(new Date());
+
+        tokenUsageDao.save(usage);
+
+        return msgCode;
     }
 
 
@@ -173,8 +267,6 @@ public class ChatMessageComponent {
         });
 
 
-
-
         // 更新消息编码
         List<String> fileCodes = dto.getFileCodes();
         if (CollectionUtils.isNotEmpty(fileCodes)) {
@@ -212,7 +304,7 @@ public class ChatMessageComponent {
      * @param dto
      * @return
      */
-    public String newSingleChatMsg(final String sendId, ChatMsgDto dto,TokenUsage token,String modelName) {
+    public String newSingleChatMsg(final String sendId, ChatMsgDto dto, TokenUsage token, String modelName) {
 
         if (Objects.isNull(dto) || StringUtils.isAnyBlank(sendId, dto.getTargetId())) {
             return "";
@@ -288,15 +380,13 @@ public class ChatMessageComponent {
         });
 
 
-
-
         // 更新消息编码
         List<String> fileCodes = dto.getFileCodes();
         if (CollectionUtils.isNotEmpty(fileCodes)) {
             fileService.updateRefCode(msgCode, FileRefType.CHAT_MESSAGE, fileCodes);
         }
 
-        if(Objects.isNull(token)) {
+        if (Objects.isNull(token)) {
             return msgCode;
         }
         // save token

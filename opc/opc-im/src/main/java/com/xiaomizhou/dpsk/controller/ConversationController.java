@@ -2,6 +2,11 @@ package com.xiaomizhou.dpsk.controller;
 
 import com.xiaomizhou.dpsk.constant.ConversationType;
 import com.xiaomizhou.dpsk.controller.vo.ConversationHttp;
+import com.xiaomizhou.dpsk.core.exceptions.BusinessException;
+import com.xiaomizhou.dpsk.core.model.Results;
+import com.xiaomizhou.dpsk.core.model.request.Request;
+import com.xiaomizhou.dpsk.core.model.response.PageResponse;
+import com.xiaomizhou.dpsk.core.model.response.Response;
 import com.xiaomizhou.dpsk.db.ChatMessageComponent;
 import com.xiaomizhou.dpsk.db.chat.ChatProtocol;
 import com.xiaomizhou.dpsk.db.chat.ChatService;
@@ -9,11 +14,6 @@ import com.xiaomizhou.dpsk.db.dao.ConversationDao;
 import com.xiaomizhou.dpsk.db.dto.ChatMsgDto;
 import com.xiaomizhou.dpsk.db.dto.ConversationDto;
 import com.xiaomizhou.dpsk.db.dto.UnreadCountDto;
-import com.xiaomizhou.dpsk.core.model.Results;
-import com.xiaomizhou.dpsk.core.model.request.Request;
-import com.xiaomizhou.dpsk.core.model.response.PageResponse;
-import com.xiaomizhou.dpsk.core.model.response.Response;
-import com.xiaomizhou.dpsk.core.exceptions.BusinessException;
 import com.xiaomizhou.dpsk.utils.AuthContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -26,7 +26,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.Executors;
+import java.util.concurrent.ExecutorService;
 import java.util.stream.Collectors;
 
 /**
@@ -45,6 +45,8 @@ public class ConversationController {
     private final ChatMessageComponent chatMessageComponent;
 
     private final ChatService chatService;
+
+    private final ExecutorService executorService;
 
     @PostMapping(value = "list")
     public Response<PageResponse<ConversationDto>> list(@RequestBody Request<ConversationHttp> request) {
@@ -136,18 +138,19 @@ public class ConversationController {
 
         Integer type = dto.getConversationType();
 
-
+        dto.setMessageType("USER");
         if (ConversationType.SINGLE.getCode().equals(type)) {
-            dto.setMessageType("USER");
             String code = chatMessageComponent.newSingleChatMsg(sendCode, dto, null, "");
             chatService.doChat(sendCode, code, dto.getMcpCodes(), dto.getSkillPaths());
             return Results.ok(code);
         } else if (ConversationType.GROUP.getCode().equals(type)) {
-            dto.setMessageType("USER");
             String code = chatMessageComponent.newGroupChatMsg(sendCode, dto, null, null);
-            Executors.newSingleThreadExecutor().submit(() -> {
+            executorService.submit(() -> {
                 chatService.doChat(sendCode, code, dto.getMcpCodes(), dto.getSkillPaths());
             });
+            return Results.ok(code);
+        } else if (ConversationType.WORKFLOW.getCode().equals(type)) {
+            String code = chatMessageComponent.newWorkflowMsg(sendCode, dto, null, null);
             return Results.ok(code);
         } else {
             throw BusinessException.paramError("不支持的会话类型: " + type);

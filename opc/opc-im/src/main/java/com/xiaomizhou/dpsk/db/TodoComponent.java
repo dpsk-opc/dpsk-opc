@@ -122,23 +122,34 @@ public class TodoComponent {
 
         todoItemDao.updateById(existing);
 
-        if(cmd.getAlarmEnabled()){
-
+        if (cmd.getAlarmEnabled()) {
 
 
             Map<String, Object> map = Maps.newHashMap();
-
             map.put("todo_code", existing.getCode());
             map.put("cron", dateToCron(cmd.getDueTime()));
             map.put("agent_code", existing.getAgentCode());
             map.put("conversation_code", existing.getConversationCode());
 
-            TaskUpdateCmd task = new TaskUpdateCmd();
+            if (StringUtils.isNotBlank(existing.getTaskCode())) {
+                TaskUpdateCmd task = new TaskUpdateCmd();
 
-            task.setCode(existing.getTaskCode());
-            task.setParameters(JsonUtils.toJson(map));
+                task.setCode(existing.getTaskCode());
+                task.setParameters(JsonUtils.toJson(map));
 
-            taskComponent.update(task);
+                taskComponent.update(task);
+            } else {
+                TaskCreateCmd task = new TaskCreateCmd();
+                task.setSource(Task.SOURCE_USER);
+                task.setTaskType(Task.TYPE_TODO);
+                task.setName(cmd.getTitle());
+                task.setParameters(JsonUtils.toJson(map));
+                task.setAgentCode(existing.getAgentCode());
+                task.setConsumerKey(AgentTodoConsumer.CONSUMER_KEY);
+
+                TaskDto dto = taskComponent.create(task);
+                todoItemDao.lambdaUpdate().set(TodoItemDO::getTaskCode, dto.getCode()).eq(TodoItemDO::getCode, existing.getCode()).update();
+            }
         }
 
         log.info("更新待办成功: code={}", cmd.getId());

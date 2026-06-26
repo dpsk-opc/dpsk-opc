@@ -14,7 +14,10 @@ public enum ConversationType {
 
     SINGLE(0, "单聊"),
 
-    GROUP(1, "群聊");
+    GROUP(1, "群聊"),
+
+    WORKFLOW(2, "专家团")
+    ;
 
     private final Integer code;
 
