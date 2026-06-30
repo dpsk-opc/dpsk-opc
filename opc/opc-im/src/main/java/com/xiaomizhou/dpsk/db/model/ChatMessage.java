@@ -17,9 +17,6 @@ public class ChatMessage extends BaseModel {
     @TableField("code")
     private String code;
 
-    @TableField("conversation_type")
-    private String conversationType;   // SINGLE, GROUP
-
     @TableField("sender_code")
     private String senderCode;
 

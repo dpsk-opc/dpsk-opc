@@ -27,6 +27,17 @@ public interface MessageRepository {
      */
     List<ChatMessage> findTopByConversationAndAgent(String conversationCode, String ownerCode, int limit);
 
+
+    /**
+     *
+     * @param conversationCode
+     * @param ownerCode
+     * @param taskId
+     * @param limit
+     * @return
+     */
+    List<ChatMessage> findTopTaskMessagesForAgent(String conversationCode, String ownerCode, String taskId, int limit);
+
     /**
      * 获取群聊中最近 N 条消息（用于 L0 工作记忆）。
      * <p>

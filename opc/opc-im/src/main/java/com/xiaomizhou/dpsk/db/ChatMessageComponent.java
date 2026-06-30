@@ -114,7 +114,6 @@ public class ChatMessageComponent {
         ChatMessage msg = new ChatMessage();
         msg.setContent(dto.getMessage());
         msg.setMessageType(dto.getMessageType());
-        msg.setConversationType(ConversationType.WORKFLOW.name());
         msg.setSenderCode(sendId);
         msg.setReceiverCode(targetId);
         msg.setCode(msgCode);
@@ -124,7 +123,6 @@ public class ChatMessageComponent {
         msg.setContentType(0);
         msg.setTaskId(dto.getTaskId());
         msg.setConversationCode(dto.getConversationCode());
-        msg.setTaskId(dto.getTaskId());
 
         if (StringUtils.isNotBlank(dto.getStatus())) {
             msg.setStatus(dto.getStatus());
@@ -141,16 +139,22 @@ public class ChatMessageComponent {
 
         boolean isUser = agentComponent.isUser(sendId);
 
-
         Conversation conv = conversationDao.getOneByCode(dto.getConversationCode());
         conversationDao.lambdaUpdate().set(Conversation::getLastMessageCode, msgCode)
                 .set(Conversation::getLastMessageContent, dto.getMessage())
                 .set(Conversation::getLastMessageTime, new Date())
-                .set(Conversation::getLastUserMessageCode, isUser ? msgCode : null)   // 非真实用户，填充关联用户消息编码
+                .set(isUser, Conversation::getLastUserMessageCode, msgCode)   // 非真实用户，填充关联用户消息编码
                 .set(Conversation::getLastSenderCode, sendId)
                 .set(Conversation::getUpdateTime, new Date())
-                .eq(Conversation::getId, conv.getId());
+                .eq(Conversation::getId, conv.getId()).update();
 
+        // 非真实用户，填充关联用户消息编码
+        if (!isUser) {
+            LambdaUpdateWrapper<ChatMessage> wrapper = Wrappers.<ChatMessage>lambdaUpdate()
+                    .set(ChatMessage::getRelateUserMessageCode, conv.getLastUserMessageCode())
+                    .eq(ChatMessage::getCode, msgCode);
+            chatMessageDao.update(null, wrapper);
+        }
 
         // 更新消息编码
         List<String> fileCodes = dto.getFileCodes();
@@ -206,7 +210,6 @@ public class ChatMessageComponent {
         ChatMessage msg = new ChatMessage();
         msg.setContent(dto.getMessage());
         msg.setMessageType(dto.getMessageType());
-        msg.setConversationType(ConversationType.GROUP.name());
         msg.setSenderCode(sendId);
         msg.setReceiverCode(targetId);
         msg.setCode(msgCode);
@@ -230,16 +233,17 @@ public class ChatMessageComponent {
 
         // save or update the conversation
         String conversationCode = Optional.ofNullable(conversationDao.getOne(sendId, targetId, ConversationType.GROUP.getCode())).map(conversation -> {
-
-            conversationDao.last(conversation.getCode(), msgCode, dto.getMessage(), sendId);
-
             // 非真实用户，填充关联用户消息编码
-            LambdaUpdateWrapper<ChatMessage> wrapper = Wrappers.<ChatMessage>lambdaUpdate().set(ChatMessage::getConversationCode, conversation.getCode()).eq(ChatMessage::getCode, msgCode);
+            LambdaUpdateWrapper<ChatMessage> wrapper = Wrappers.<ChatMessage>lambdaUpdate()
+                    .set(ChatMessage::getConversationCode, conversation.getCode())
+                    .eq(ChatMessage::getCode, msgCode);
             if (!isUser) {
                 // 更新消息编码
                 wrapper.set(ChatMessage::getRelateUserMessageCode, conversation.getLastUserMessageCode());
             }
             chatMessageDao.update(null, wrapper);
+
+            conversationDao.last(conversation.getCode(), msgCode, dto.getMessage(), sendId);
 
             return conversation.getCode();
         }).orElseGet(() -> {
@@ -319,7 +323,6 @@ public class ChatMessageComponent {
         ChatMessage msg = new ChatMessage();
         msg.setContent(dto.getMessage());
         msg.setMessageType(dto.getMessageType());
-        msg.setConversationType(ConversationType.SINGLE.name());
         msg.setSenderCode(sendId);
         msg.setReceiverCode(targetId);
         msg.setCode(msgCode);
@@ -354,6 +357,8 @@ public class ChatMessageComponent {
                 wrapper.set(ChatMessage::getRelateUserMessageCode, conversation.getLastUserMessageCode());
             }
             chatMessageDao.update(null, wrapper);
+
+            conversationDao.last(conversation.getCode(), msgCode, dto.getMessage(), sendId);
 
             return conversation.getCode();
         }).orElseGet(() -> {

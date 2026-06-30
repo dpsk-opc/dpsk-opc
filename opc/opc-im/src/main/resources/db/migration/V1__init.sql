@@ -109,8 +109,7 @@ CREATE INDEX IF NOT EXISTS idx_group_code ON t_chat_group (code);
 CREATE TABLE IF NOT EXISTS t_chat_message (
     id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '消息ID',
     code VARCHAR(100) NOT NULL DEFAULT '' COMMENT '消息编码',
-    conversation_type VARCHAR(10) NOT NULL DEFAULT 'SINGLE' COMMENT '会话类型: SINGLE, GROUP',
-    sender_code VARCHAR(60) NOT NULL DEFAULT '' COMMENT '发送者 agent.id',
+    sender_code VARCHAR(60) NOT NULL DEFAULT '' COMMENT '发送者 agent.code',
     receiver_code VARCHAR(60) NOT NULL DEFAULT '' COMMENT '接收者ID',
     message_type VARCHAR(20) NOT NULL DEFAULT 'TEXT' COMMENT '消息类型',
     content TEXT NOT NULL DEFAULT '' COMMENT '消息内容',
@@ -127,7 +126,7 @@ CREATE TABLE IF NOT EXISTS t_chat_message (
     is_deleted TINYINT(1) NOT NULL DEFAULT 0 COMMENT '逻辑删除'
 );
 
-CREATE INDEX IF NOT EXISTS idx_conversation ON t_chat_message (conversation_type, receiver_code, create_time);
+CREATE INDEX IF NOT EXISTS idx_conversation ON t_chat_message (receiver_code, create_time);
 CREATE INDEX IF NOT EXISTS idx_sender ON t_chat_message (sender_code, create_time);
 CREATE INDEX IF NOT EXISTS idx_task ON t_chat_message (task_id);
 CREATE INDEX IF NOT EXISTS idx_parent ON t_chat_message (parent_id);
@@ -633,16 +632,17 @@ CREATE TABLE IF NOT EXISTS t_workflow_node_log (
     task_code VARCHAR(100) NOT NULL DEFAULT '' COMMENT '关联任务编码',
     node_id VARCHAR(100) NOT NULL DEFAULT '' COMMENT '节点ID（对应workflow_json中的节点）',
     node_name VARCHAR(200) NOT NULL DEFAULT '' COMMENT '节点名称',
-    node_type TINYINT(2) NOT NULL DEFAULT 0 COMMENT '节点类型: 0=开始, 1=结束, 2=LLM调用, 3=人工审批, 4=条件分支, 5=循环, 6=子工作流',
+    node_type TINYINT(2) NOT NULL DEFAULT 0 COMMENT '节点类型: 0=开始, 1=结束, 2=LLM调用, 3=人工审批, 4=条件分支, 5=循环, 6=子工作流, 7=AI审批',
     agent_code VARCHAR(100) NOT NULL DEFAULT '' COMMENT '绑定的Agent编码',
     status TINYINT(2) NOT NULL DEFAULT 0 COMMENT '状态: 0=待执行, 1=运行中, 2=成功, 3=失败, 4=跳过',
     retry_count INT NOT NULL DEFAULT 0 COMMENT '重试次数',
-    input_data MEDIUMTEXT NOT NULL COMMENT '节点输入JSON',
-    output_data MEDIUMTEXT NOT NULL COMMENT '节点输出JSON',
-    error_message TEXT NOT NULL COMMENT '错误信息',
+    input_data MEDIUMTEXT NOT NULL DEFAULT ''  COMMENT '节点输入JSON',
+    output_data MEDIUMTEXT NOT NULL DEFAULT '' COMMENT '节点输出JSON',
+    error_message TEXT NOT NULL DEFAULT '' COMMENT '错误信息',
     start_time TIMESTAMP NULL DEFAULT NULL COMMENT '节点开始时间',
     end_time TIMESTAMP NULL DEFAULT NULL COMMENT '节点结束时间',
     create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间',
     is_deleted TINYINT(1) NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0=未删除, 1=已删除'
 );
 

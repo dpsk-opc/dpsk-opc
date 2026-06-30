@@ -75,9 +75,10 @@ public class AgentOrchestrationConfiguration {
     }
 
     @Bean
-    public WorkflowBuilder workflowBuilder() {
+    public WorkflowBuilder workflowBuilder(AgentDefProvider agentDefProvider,
+                                           AgentComponentFactory factory) {
         log.info("Creating WorkflowBuilder (reserved)");
-        return new WorkflowBuilder();
+        return new WorkflowBuilder(agentDefProvider, factory);
     }
 
     @Bean

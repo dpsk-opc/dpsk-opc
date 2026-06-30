@@ -1,5 +1,7 @@
 package com.xiaomizhou.dpsk.memory.config;
 
+import lombok.Getter;
+
 import java.util.Objects;
 
 /**
@@ -17,40 +19,39 @@ import java.util.Objects;
 public class MemoryKey {
 
     /** 会话编码 */
+    @Getter
     private final String conversationCode;
 
     /** Agent 编码 */
+    @Getter
     private final String ownerCode;
 
     /** 群组编码（群聊场景，单聊为 null） */
+    @Getter
     private final String groupCode;
 
+    /** 任务ID（任务聊场景，单聊为 null） */
+    @Getter
+    private final String taskId;
+
     public MemoryKey(String conversationCode, String ownerCode) {
-        this(conversationCode, ownerCode, null);
+        this(conversationCode, ownerCode, null,null);
     }
 
-    public MemoryKey(String conversationCode, String ownerCode, String groupCode) {
+    public MemoryKey(String conversationCode, String ownerCode, String groupCode,String taskId) {
         this.conversationCode = conversationCode;
         this.ownerCode = ownerCode;
         this.groupCode = groupCode;
-    }
-
-    public String getConversationCode() {
-        return conversationCode;
-    }
-
-    public String getOwnerCode() {
-        return ownerCode;
-    }
-
-    /** 群组编码，单聊返回 null */
-    public String getGroupCode() {
-        return groupCode;
+        this.taskId = taskId;
     }
 
     /** 是否为群聊记忆 */
     public boolean isGroupChat() {
         return groupCode != null;
+    }
+
+    public boolean isTaskChat() {
+        return taskId != null;
     }
 
     /**

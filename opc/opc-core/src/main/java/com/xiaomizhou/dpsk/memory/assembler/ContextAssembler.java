@@ -67,6 +67,120 @@ public class ContextAssembler {
         this.toolRegistry = toolRegistry;
     }
 
+    public AssembledPrompt assembledForWorkflow(AgentBuildSpec spec){
+        StringBuilder historyPart = new StringBuilder();
+
+        // === System 部分 ===
+
+        String targetAgentCode = spec.getTargetAgentCode();
+        // 1. Agent 人设
+        List<AgentDef> agents = agentDefProvider.getByCodes(List.of(targetAgentCode, spec.getUserCode()));
+
+        StringBuffer sb = new StringBuffer();
+        if (CollectionUtils.isNotEmpty(agents)) {
+
+            AgentDef target = agents.stream().filter(a -> a.getCode().equals(targetAgentCode)).findFirst().orElse(null);
+
+            // ai的信息
+            if (Objects.nonNull(target)) {
+                sb.append("[你的信息] 名字:%s,你先出处于任务模式，使用客观的描述说明你已经完成的工作，后续节点需要根据你的输出开展后续的工作。prompt:%s\n".formatted(target.getName(), spec.getPrompt()));
+            }
+        }
+
+        // 工具信息
+        List<ToolMetadata> tools = toolRegistry.getToolsForAgent(spec.getTargetAgentCode());
+        if (CollectionUtils.isNotEmpty(tools)) {
+            if (CollectionUtils.isNotEmpty(spec.getMcpCodes())) {
+                tools = tools.stream().filter(t -> SourceType.MCP.equalsIgnoreCase(t.getSourceType())).filter(t -> {
+                    return spec.getMcpCodes().contains(t.getSourceRef().split(":")[0]);
+                }).collect(Collectors.toList());
+            }
+            if (CollectionUtils.isNotEmpty(tools)) {
+                sb.append("[Tools] 你有这些工具可以用。注意：这些工具只是摘要，需要先使用%s方法将工具添加到工具列表中才可以使用！！\n".formatted(ADD_TOOLS_TOOL_NAME));
+                sb.append(tools.stream().map(t -> t.getName() + ":" + t.getDescription()).collect(Collectors.joining("\n")));
+            }
+        }
+
+        // skills
+        if (CollectionUtils.isNotEmpty(spec.getSkillPaths())) {
+            sb.append("[Skills] 你有这些技能可以用。注意：这些技能只是摘要，要使用工具加载！！\n");
+            for (String skillPath : spec.getSkillPaths()) {
+                try {
+                    FileSystemSkill skill = FileSystemSkillLoader.loadSkill(Path.of(skillPath));
+                    sb.append("skillPath:%s,description:%s".formatted(skillPath, skill.description()));
+                    if (CollectionUtils.isNotEmpty(skill.resources())) {
+                        List<String> resources = skill.resources().stream().map(r -> "reletivepath:%s,content:%s".formatted(r.relativePath(), r.content())).collect(Collectors.toList());
+                        sb.append("resources:%s".formatted(Joiner.on(",").join(resources)) + "\n");
+                    } else {
+                        sb.append("\n");
+                    }
+                } catch (Exception e) {
+                    log.warn("load skills error!", e);
+                }
+            }
+        }
+
+
+        String userContent = spec.getUserContent();
+        String userCode = spec.getUserCode();
+        String conversationCode = spec.getConversationCode();
+        String quoteMessageCode = spec.getQuoteMessageCode();
+        String agentCode = spec.getTargetAgentCode();
+
+        // 2. L3 知识库记忆（向量检索 + 分级注入） TODO 替换成项目知识库
+        if (knowledgeManager != null) {
+            KnowledgeManager.L3Result l3Result = knowledgeManager.retrieve(userContent, agentCode);
+            if (l3Result.shouldInject()) {
+                sb.append(l3Result.getInjectText());
+            }
+        }
+
+
+        // === History 部分 ===
+
+        // 3. L1 摘要（若有）
+        if (summaryManager != null) {
+            String summary = summaryManager.getLatestSummary(conversationCode, agentCode);
+            if (summary != null && !summary.isEmpty()) {
+                historyPart.append("[近期往事] ").append(summary).append("\n\n");
+            }
+        }
+
+        // 4. @历史消息引用
+        if (quoteMessageCode != null && !quoteMessageCode.isEmpty()) {
+            ChatMessage quoted = messageRepository.findByCode(quoteMessageCode);
+            if (quoted != null) {
+                List<ChatMessage> context = messageRepository.findContext(
+                        quoteMessageCode, MemoryConfig.QUOTE_CONTEXT_SIZE);
+                historyPart.append("[被引用的对话记录]\n");
+                for (ChatMessage m : context) {
+                    historyPart.append(formatChatMessage(m)).append("\n");
+                }
+                historyPart.append("\n");
+            }
+        }
+
+        // 5. L2 语义检索（纯 RAG，按需检索 Top-K 历史消息）
+        if (factManager != null) {
+            List<MemoryFragment> retrieved = factManager.retrieveMemories(
+                    userContent, agentCode, userCode, MemoryConfig.L2_RETRIEVAL_TOPK);
+            if (!retrieved.isEmpty()) {
+                historyPart.append("[相关历史消息]\n");
+                for (MemoryFragment f : retrieved) {
+                    historyPart.append("- ").append(f.getText()).append("\n");
+                }
+                historyPart.append("\n");
+            }
+        }
+
+        // 5.1 注入定时任务锚点上下文（如果有）
+        if (spec.getTaskContext() != null && !spec.getTaskContext().isEmpty()) {
+            sb.append(spec.getTaskContext());
+        }
+
+        return new AssembledPrompt(sb.toString(), historyPart.toString());
+    }
+
 
     /**
      * 组装完整上下文 Prompt。

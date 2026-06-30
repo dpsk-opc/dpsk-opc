@@ -4,8 +4,11 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
+import com.xiaomizhou.dpsk.constant.ConversationType;
 import com.xiaomizhou.dpsk.db.FileService;
+import com.xiaomizhou.dpsk.db.WorkflowTaskComponent;
 import com.xiaomizhou.dpsk.db.dto.FileRecordDto;
+import com.xiaomizhou.dpsk.db.dto.WorkflowTaskDto;
 import com.xiaomizhou.dpsk.utils.JsonUtils;
 import com.xiaomizhou.dpsk.db.dao.ChatMessageDao;
 import com.xiaomizhou.dpsk.db.dao.ConversationDao;
@@ -53,13 +56,57 @@ public class MessageRepositoryImpl implements MessageRepository {
 
     private final ChatMessageDao chatMessageDao;
 
-
     private final FileService fileService;
+
+    private final WorkflowTaskComponent workflowTaskComponent;
 
     private static final Set<String> ALLOW_SUFFIX = Sets.newHashSet(".txt", ".md", ".log",".java",".py");
 
+
     @Override
-    public synchronized List<ChatMessage> findTopByConversationAndAgent(String conversationCode, String ownerCode, int limit) {
+    public List<ChatMessage> findTopTaskMessagesForAgent(String conversationCode, String ownerCode, String taskId, int limit) {
+
+        Conversation conv = conversationDao.getOneByCode(conversationCode);
+        if (conv == null) {
+            log.debug("Conversation not found: {}", conversationCode);
+            return List.of();
+        }
+
+        List<com.xiaomizhou.dpsk.db.model.ChatMessage> messages = chatMessageDao.list(
+                Wrappers.<com.xiaomizhou.dpsk.db.model.ChatMessage>lambdaQuery()
+                        .ne(com.xiaomizhou.dpsk.db.model.ChatMessage::getStatus, "IGNORE")
+                        .eq(com.xiaomizhou.dpsk.db.model.ChatMessage::getTaskId, taskId)
+                        .eq(com.xiaomizhou.dpsk.db.model.ChatMessage::getConversationCode, conversationCode)
+                        .eq(com.xiaomizhou.dpsk.db.model.ChatMessage::getSenderCode, ownerCode)
+                        .orderByDesc(com.xiaomizhou.dpsk.db.model.ChatMessage::getId)
+                        .last("LIMIT " + limit));
+
+
+        WorkflowTaskDto task = workflowTaskComponent.getByCode(taskId);
+        if (Objects.isNull(task)) {
+            return List.of();
+        }
+
+        if (CollectionUtils.isEmpty(messages)) {
+            return List.of(UserMessage.from(task.getContextData()));
+        }
+
+        // 时间正序
+        Collections.reverse(messages);
+        justMsg(messages);
+
+        List<ChatMessage> result = messages.stream()
+                .map(this::toChatMessage)
+                .filter(Objects::nonNull)
+                .distinct()
+                .collect(Collectors.toList());
+
+        result.add(0, UserMessage.from(task.getContextData()));
+        return result;
+    }
+
+    @Override
+    public List<ChatMessage> findTopByConversationAndAgent(String conversationCode, String ownerCode, int limit) {
         Conversation conv = conversationDao.getOneByCode(conversationCode);
         if (conv == null) {
             log.debug("Conversation not found: {}", conversationCode);
@@ -72,6 +119,7 @@ public class MessageRepositoryImpl implements MessageRepository {
         List<com.xiaomizhou.dpsk.db.model.ChatMessage> messages = chatMessageDao.list(
                 Wrappers.<com.xiaomizhou.dpsk.db.model.ChatMessage>lambdaQuery()
                         .ne(com.xiaomizhou.dpsk.db.model.ChatMessage::getStatus, "IGNORE")
+                        .eq(com.xiaomizhou.dpsk.db.model.ChatMessage::getConversationCode, conversationCode)
                         .and(w -> w.and(w1 -> {
                             w1.eq(com.xiaomizhou.dpsk.db.model.ChatMessage::getSenderCode, userCode);
                             w1.eq(com.xiaomizhou.dpsk.db.model.ChatMessage::getReceiverCode, agentCode);
@@ -98,7 +146,7 @@ public class MessageRepositoryImpl implements MessageRepository {
     }
 
     @Override
-    public synchronized List<ChatMessage> findTopGroupMessages(String groupCode, String agentCode, int limit) {
+    public List<ChatMessage> findTopGroupMessages(String groupCode, String agentCode, int limit) {
         if (StringUtils.isBlank(groupCode)) {
             return List.of();
         }
@@ -106,7 +154,6 @@ public class MessageRepositoryImpl implements MessageRepository {
         List<com.xiaomizhou.dpsk.db.model.ChatMessage> messages = chatMessageDao.list(
                 Wrappers.<com.xiaomizhou.dpsk.db.model.ChatMessage>lambdaQuery()
                         .eq(com.xiaomizhou.dpsk.db.model.ChatMessage::getReceiverCode, groupCode)
-                        .eq(com.xiaomizhou.dpsk.db.model.ChatMessage::getConversationType, "GROUP")
                         .ne(com.xiaomizhou.dpsk.db.model.ChatMessage::getStatus, "IGNORE")
                         .orderByDesc(com.xiaomizhou.dpsk.db.model.ChatMessage::getId)
                         .last("LIMIT " + limit));
@@ -152,7 +199,6 @@ public class MessageRepositoryImpl implements MessageRepository {
         // 通过 sender/receiver 对确定会话范围
         String senderCode = target.getSenderCode();
         String receiverCode = target.getReceiverCode();
-        String conversationType = target.getConversationType();
 
         List<com.xiaomizhou.dpsk.db.model.ChatMessage> allContext = chatMessageDao.list(
                 Wrappers.<com.xiaomizhou.dpsk.db.model.ChatMessage>lambdaQuery()
@@ -164,7 +210,7 @@ public class MessageRepositoryImpl implements MessageRepository {
                             w2.eq(com.xiaomizhou.dpsk.db.model.ChatMessage::getSenderCode, receiverCode);
                             w2.eq(com.xiaomizhou.dpsk.db.model.ChatMessage::getReceiverCode, senderCode);
                         }))
-                        .eq(com.xiaomizhou.dpsk.db.model.ChatMessage::getConversationType, conversationType)
+                        .eq(com.xiaomizhou.dpsk.db.model.ChatMessage::getConversationCode, target.getConversationCode())
                         .orderByAsc(com.xiaomizhou.dpsk.db.model.ChatMessage::getId));
 
         // 找到目标消息的索引
@@ -209,7 +255,6 @@ public class MessageRepositoryImpl implements MessageRepository {
 
         String userMsgCode = Objects.isNull(lastUserMsg) || Objects.isNull(lastUserMsg.attributes()) ? "" : MapUtils.getString(lastUserMsg.attributes(),"code");
 
-
         // 用户消息在ChatService已经保存过了
         messages = messages.stream()
                 .filter(Objects::nonNull)
@@ -220,17 +265,11 @@ public class MessageRepositoryImpl implements MessageRepository {
         if (CollectionUtils.isEmpty(messages) || Objects.isNull(memoryKey)) {
             return;
         }
-
-
         Conversation conv = conversationDao.getOneByCode(memoryKey.getConversationCode());
-
         messages.forEach(msg -> {
 
-
             com.xiaomizhou.dpsk.db.model.ChatMessage model = new com.xiaomizhou.dpsk.db.model.ChatMessage();
-
             ToolMsgDto tool = new ToolMsgDto();
-
             String code = SequenceUtils.generator().next(CHAT_MESSAGE_PREFIX);
             model.setCode(code);
 
@@ -298,15 +337,18 @@ public class MessageRepositoryImpl implements MessageRepository {
             if (memoryKey.isGroupChat()) {
                 model.setSenderCode(conv.getOwnerCode());
                 model.setReceiverCode(conv.getTargetCode());
+            } else if (memoryKey.isTaskChat()) {
+                model.setSenderCode(memoryKey.getOwnerCode());
+                model.setReceiverCode(memoryKey.getTaskId());
             } else {
                 model.setSenderCode(conv.getTargetCode());
                 model.setReceiverCode(conv.getOwnerCode());
             }
-            model.setConversationType(memoryKey.isGroupChat() ? "GROUP" : "SINGLE");
             model.setCreateTime(new Date());
             model.setUpdateTime(new Date());
             model.setConversationCode(conv.getCode());
             model.setRelateUserMessageCode(userMsgCode);
+            model.setTaskId(memoryKey.getTaskId());
 
             chatMessageDao.save(model);
         });

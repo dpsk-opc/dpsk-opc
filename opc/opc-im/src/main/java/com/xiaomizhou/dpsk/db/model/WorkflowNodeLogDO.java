@@ -104,6 +104,11 @@ public class WorkflowNodeLogDO extends BaseModel {
     public static final int STATUS_FAILED = 3;
     public static final int STATUS_SKIPPED = 4;
 
+    // 失败也跳过执行
+    public boolean skip() {
+        return STATUS_SUCCESS == status || STATUS_SKIPPED == status || STATUS_FAILED == status;
+    }
+
     /**
      * 获取节点类型中文名称。
      */

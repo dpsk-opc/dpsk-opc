@@ -1,9 +1,11 @@
 package com.xiaomizhou.dpsk.db.dao;
 
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.xiaomizhou.dpsk.db.mapper.MessageMapper;
 import com.xiaomizhou.dpsk.db.model.ChatMessage;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Component;
 
 /**
@@ -14,4 +16,13 @@ import org.springframework.stereotype.Component;
 @Component
 @Slf4j
 public class ChatMessageDao extends ServiceImpl<MessageMapper, ChatMessage> {
+
+
+    public ChatMessage getByMsgCode(String msgCode) {
+        if (StringUtils.isBlank(msgCode)) {
+            return null;
+        }
+        return getOne(Wrappers.<ChatMessage>lambdaQuery().eq(ChatMessage::getCode, msgCode));
+    }
+
 }

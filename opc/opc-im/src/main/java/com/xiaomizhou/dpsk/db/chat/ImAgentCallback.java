@@ -277,22 +277,18 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
         String content = meta != null ? (String) meta.get("content") : "";
         Object tokenObj = meta != null ? meta.get("tokenUsage") : null;
 
+        TokenUsage usage = null;
         if (tokenObj instanceof TokenUsage) {
-            accumulatedToken = (TokenUsage) tokenObj;
+            usage = (TokenUsage) tokenObj;
         }
 
         String agentCode = event.agentCode();
 
         // 保存消息到 DB
-        String msgCode = saveMessageToDb(agentCode, content);
-
+        String msgCode = saveMessageToDb(agentCode, content, usage);
 
         // 发送 stream_end
         try {
-//            if (streamCode != null) {
-//                WsUtils.send(new WsMessage(WsMsgType.STREAM_END,
-//                        new StreamEndPayload(streamCode, msgCode, null)));
-//            }
 
             // 发送完整消息
             Map<String, Object> fullContent = Maps.newHashMap();
@@ -349,11 +345,10 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
     /**
      * 保存消息到 DB。
      */
-    private String saveMessageToDb(String agentCode, String content) {
+    private String saveMessageToDb(String agentCode, String content,TokenUsage usage) {
         try {
             if (ConversationType.GROUP.name().equalsIgnoreCase(conversationType)) {
                 return chatMessageComponent.newGroupChatMsg(agentCode, ChatMsgDto.builder()
-                        .taskId(targetId)
                         .sendId(agentCode)
                         .targetId(targetId)
                         .conversationType(ConversationType.GROUP.getCode())
@@ -361,9 +356,19 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
                         .messageType("AI")
                         .parentMsgCode("")
                         .taskId(taskId)
-                        .mentionedList(java.util.List.of())
                         .conversationCode(conversationCode)
-                        .build(), accumulatedToken, "deepseek-chat");
+                        .build(), usage, "deepseek-chat");
+            } else if (ConversationType.WORKFLOW.name().equalsIgnoreCase(conversationType)) {
+                return chatMessageComponent.newWorkflowMsg(agentCode, ChatMsgDto.builder()
+                        .taskId(taskId)
+                        .targetId(targetId)
+                        .sendId(agentCode)
+                        .conversationCode(conversationCode)
+                        .conversationType(ConversationType.WORKFLOW.getCode())
+                        .message(content)
+                        .messageType("AI")
+                        .parentMsgCode("")
+                        .build(), usage, "deepseek-chat");
             } else {
                 return chatMessageComponent.newSingleChatMsg(agentCode, ChatMsgDto.builder()
                         .targetId(userId)
@@ -372,7 +377,8 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
                         .messageType("AI")
                         .conversationType(ConversationType.SINGLE.getCode())
                         .conversationCode(conversationCode)
-                        .build(), accumulatedToken, "deepseek-chat");
+                        .taskId(taskId)
+                        .build(), usage, "deepseek-chat");
             }
         } catch (Exception e) {
             log.error("Failed to save message to DB for agent={}", agentCode, e);

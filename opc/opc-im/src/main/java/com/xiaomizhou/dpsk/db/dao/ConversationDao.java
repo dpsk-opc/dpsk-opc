@@ -226,26 +226,14 @@ public class ConversationDao extends ServiceImpl<ConversationMapper, Conversatio
             return ImmutablePair.of(0L, List.of());
         }
 
-        String owner = conversation.getOwnerCode();
-        String target = conversation.getTargetCode();
-
-        Integer conversationType = conversation.getConversationType();
+//        String owner = conversation.getOwnerCode();
+//        String target = conversation.getTargetCode();
+//
+//        Integer conversationType = conversation.getConversationType();
 
         // select * from t_chat_message where
         // 1. 查询消息总数
-        LambdaQueryWrapper<ChatMessage> wrapper;
-        if (0 == conversationType) {
-            wrapper = Wrappers.<ChatMessage>lambdaQuery()
-                    .and(w -> w.eq(ChatMessage::getSenderCode, owner).eq(ChatMessage::getReceiverCode, target)
-                            .or(w1 -> w1.eq(ChatMessage::getSenderCode, target).eq(ChatMessage::getReceiverCode, owner))
-                            .eq(ChatMessage::getConversationType, "SINGLE"))
-                    .in(ChatMessage::getMessageType,List.of("USER","AI"));
-        } else {
-
-            // 群聊时target保存的是群编码
-            wrapper = Wrappers.<ChatMessage>lambdaQuery().eq(ChatMessage::getReceiverCode, target).eq(ChatMessage::getConversationType, "GROUP").in(ChatMessage::getMessageType,List.of("USER","AI"));
-        }
-
+        LambdaQueryWrapper<ChatMessage> wrapper = Wrappers.<ChatMessage>lambdaQuery().eq(ChatMessage::getConversationCode, conversationCode).in(ChatMessage::getMessageType, List.of("USER", "AI"));
         long total = chatMessageDao.count(wrapper);
 
         if (total == 0) {

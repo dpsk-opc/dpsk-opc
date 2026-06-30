@@ -1,6 +1,7 @@
 package com.xiaomizhou.dpsk.workflow;
 
 import com.yomahub.liteflow.core.NodeSwitchComponent;
+import com.yomahub.liteflow.slot.Slot;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.Random;
@@ -20,6 +21,10 @@ public class SwitchNodeProcessor extends NodeSwitchComponent {
             }
             return "a";
         }
+
+//        Slot slot = getSlot();
+//
+//        slot.getChainReqData()
 
         throw new RuntimeException("switch node execute error!");
     }

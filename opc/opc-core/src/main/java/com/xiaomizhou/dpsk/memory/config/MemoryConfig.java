@@ -54,6 +54,10 @@ public final class MemoryConfig {
     /** 群聊 memoryId 格式：conv:{conversation_code}:group:{group_code}:agent:{owner_code} */
     public static final String GROUP_MEMORY_ID_TEMPLATE = "conv:%s:group:%s:agent:%s";
 
+
+    /** 任务模式 memoryId 格式：conv:{conversation_code}:group:{group_code}:agent:{owner_code}:task:{task_id} */
+    public static final String WORKFLOW_MEMORY_ID_TEMPLATE = "conv:%s:task:%s:agent:%s";
+
     // ======================== @引用上下文 ========================
 
     /** @引用消息时前后各取的上下文条数 */
@@ -112,6 +116,10 @@ public final class MemoryConfig {
         return String.format(GROUP_MEMORY_ID_TEMPLATE, conversationCode, groupCode, ownerCode);
     }
 
+    public static String buildWorkflowMemoryId(String conversationCode, String ownerCode, String workflowTaskId) {
+        return String.format(WORKFLOW_MEMORY_ID_TEMPLATE, conversationCode, workflowTaskId, ownerCode);
+    }
+
     /**
      * 从 memoryId 解析出 MemoryKey。
      *
@@ -128,8 +136,14 @@ public final class MemoryConfig {
         if (parts.length >= 4 && "conv".equals(parts[0])) {
             // 群聊格式: conv:{conv_code}:group:{group_code}:agent:{owner_code}
             if (parts.length >= 6 && "group".equals(parts[2]) && "agent".equals(parts[4])) {
-                return new MemoryKey(parts[1], parts[5], parts[3]);
+                return new MemoryKey(parts[1], parts[5], parts[3],null);
             }
+
+            // 工作格式：conv:{conv_code}:task:{task_id}:agent:{owner_code}
+            if (parts.length >= 6 && "task".equals(parts[2]) && "agent".equals(parts[4])) {
+                return new MemoryKey(parts[1], parts[5],null,parts[3]);
+            }
+
             // 单聊格式: conv:{conv_code}:agent:{owner_code}
             if ("agent".equals(parts[2])) {
                 return new MemoryKey(parts[1], parts[3]);

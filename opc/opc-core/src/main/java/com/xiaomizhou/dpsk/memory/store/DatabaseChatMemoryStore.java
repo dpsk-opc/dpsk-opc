@@ -1,8 +1,5 @@
 package com.xiaomizhou.dpsk.memory.store;
 
-import com.google.common.collect.Lists;
-import com.xiaomizhou.dpsk.agent.AgentBuildSpec;
-import com.xiaomizhou.dpsk.memory.PersonaProvider;
 import com.xiaomizhou.dpsk.memory.assembler.ContextAssembler;
 import com.xiaomizhou.dpsk.memory.config.MemoryConfig;
 import com.xiaomizhou.dpsk.memory.config.MemoryKey;
@@ -12,8 +9,6 @@ import com.xiaomizhou.dpsk.utils.MemoryUtils;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.*;
 import dev.langchain4j.store.memory.chat.ChatMemoryStore;
-import org.apache.commons.collections.MapUtils;
-import org.apache.commons.lang3.Strings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -73,6 +68,10 @@ public class DatabaseChatMemoryStore implements ChatMemoryStore {
             // 群聊：按 groupCode 查询所有消息，从当前 Agent 视角区分 User/AI
             dbMessages = messageRepository.findTopGroupMessages(
                     key.getGroupCode(), key.getOwnerCode(), fetchLimit);
+        } else if(key.isTaskChat()){
+            // 专家团：按 taskId 查询所有消息，从当前 Agent 视角区分 User/AI
+            dbMessages = messageRepository.findTopTaskMessagesForAgent(key.getConversationCode(),
+                    key.getOwnerCode(), key.getTaskId(), fetchLimit);
         } else {
             // 单聊：按 conversationCode + ownerCode 查询
             dbMessages = messageRepository.findTopByConversationAndAgent(

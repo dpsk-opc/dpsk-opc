@@ -31,6 +31,11 @@ public class ChatMsgDto {
     private Integer conversationType;
 
     /**
+     * 会话编码
+     */
+    private String conversationCode;
+
+    /**
      * 消息内容
      */
     private String message;
@@ -54,11 +59,6 @@ public class ChatMsgDto {
      * 提及的Agent ID列表
      */
     private List<String> mentionedList;
-
-    /**
-     * 会话code
-     */
-    private String conversationCode;
 
     /**
      * 文件编码列表

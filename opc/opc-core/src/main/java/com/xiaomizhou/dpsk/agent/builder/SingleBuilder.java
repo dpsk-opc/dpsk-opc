@@ -66,16 +66,6 @@ public class SingleBuilder implements AgentBuilder {
         List<ToolProvider> toolProviders = factory.getToolProviders(targetAgentCode, spec.getUserCode(), spec.getConversationCode(),spec.getMcpCodes());
 
 
-        // 构建 AiServices是因为AgenticServices不支持tool search. 这种方式不太行：会导致llm变笨
-//        Assistant assistant = AiServices.builder(Assistant.class)
-//                .streamingChatModel(model)
-//                .toolProvider(toolProviders.get(0))
-//                .toolSearchStrategy(new SimpleToolSearchStrategy())
-//                .chatMemory(chatMemory)
-//                .maxToolCallingRoundTrips(25)
-//                .build();
-
-
         // 6. 构建 AgenticServices Agent
         UntypedAgent agent = AgenticServices.agentBuilder()
                 .streamingChatModel(model)
@@ -99,7 +89,21 @@ public class SingleBuilder implements AgentBuilder {
 
                 // 幻觉情况 => 从上下文的信息找工具执行，但工具已经不再工具列表
                 .hallucinatedToolNameStrategy(factory.getToolExecutionResultMessageFunction())
-                .chatMemory(chatMemory)
+                .chatMemoryProvider(memoryId -> {
+
+//                    // 单聊上下文
+//                    if (AgentBuildSpec.MODE_SINGLE.equalsIgnoreCase(spec.getMode())) {
+//                        return factory.createChatMemory(spec);
+//                    }
+//
+//                    // 工作流上下文
+//                    if (AgentBuildSpec.MODE_WORKFLOW.equalsIgnoreCase(spec.getMode())) {
+//
+//                    }
+//
+//                    return null;
+                    return factory.createChatMemory(spec);
+                })
                 .returnType(TokenStream.class)
                 .maxToolCallingRoundTrips(25)
                 .build();

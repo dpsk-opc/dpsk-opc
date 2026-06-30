@@ -1,23 +1,32 @@
 package com.xiaomizhou.dpsk.db.chat;
 
+import com.google.common.collect.Maps;
 import com.xiaomizhou.dpsk.agent.*;
 import com.xiaomizhou.dpsk.agent.data.AgentDefProvider;
 import com.xiaomizhou.dpsk.agent.event.AgentEvent;
 import com.xiaomizhou.dpsk.constant.ConversationType;
-import com.xiaomizhou.dpsk.constant.MessageStatus;
 import com.xiaomizhou.dpsk.core.utils.WsUtils;
 import com.xiaomizhou.dpsk.core.ws.SenderInfo;
 import com.xiaomizhou.dpsk.core.ws.WsMessage;
 import com.xiaomizhou.dpsk.core.ws.WsMsgType;
-import com.xiaomizhou.dpsk.core.ws.payload.StreamEndPayload;
-import com.xiaomizhou.dpsk.db.AgentComponent;
-import com.xiaomizhou.dpsk.db.ChatGroupComponent;
-import com.xiaomizhou.dpsk.db.ChatMessageComponent;
+import com.xiaomizhou.dpsk.db.*;
 import com.xiaomizhou.dpsk.db.dao.TokenUsageDao;
 import com.xiaomizhou.dpsk.db.dto.AgentDto;
 import com.xiaomizhou.dpsk.db.dto.ChatMemberDto;
-import com.xiaomizhou.dpsk.task.TaskCreationContext;
+import com.xiaomizhou.dpsk.db.dto.WorkflowTaskDto;
+import com.xiaomizhou.dpsk.db.model.ChatMessage;
+import com.xiaomizhou.dpsk.utils.JsonUtils;
 import com.xiaomizhou.dpsk.utils.SequenceUtils;
+import com.xiaomizhou.dpsk.workflow.*;
+import com.xiaomizhou.dpsk.workflow.xyflow.NodeStep;
+import com.xiaomizhou.dpsk.workflow.xyflow.XyFlow;
+import com.xiaomizhou.dpsk.workflow.xyflow.XyFlowToLiteFlowUtils;
+import com.yomahub.liteflow.builder.LiteFlowNodeBuilder;
+import com.yomahub.liteflow.builder.el.LiteFlowChainELBuilder;
+import com.yomahub.liteflow.core.FlowExecutor;
+import com.yomahub.liteflow.enums.NodeTypeEnum;
+import com.yomahub.liteflow.flow.LiteflowResponse;
+import com.yomahub.liteflow.property.LiteflowConfig;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -30,6 +39,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
@@ -57,6 +67,8 @@ public class AgentBridge {
     private final ChatMessageComponent chatMessageComponent;
     private final ChatGroupComponent chatGroupComponent;
     private final TokenUsageDao tokenUsageDao;
+    private final WorkflowTaskComponent workflowTaskComponent;
+    private final WorkflowTaskExecuteComponent workflowTaskExecuteComponent;
 
     @Value("${com.xiaomizhou.dpsk.opc.skill.path:~/skills}")
     private String skillPathPrefix;
@@ -72,13 +84,17 @@ public class AgentBridge {
                        AgentComponent agentComponent,
                        ChatMessageComponent chatMessageComponent,
                        ChatGroupComponent chatGroupComponent,
-                       TokenUsageDao tokenUsageDao) {
+                       TokenUsageDao tokenUsageDao,
+                       WorkflowTaskComponent workflowTaskComponent,
+                       WorkflowTaskExecuteComponent workflowTaskExecuteComponent) {
         this.orchestrator = orchestrator;
         this.agentDefProvider = agentDefProvider;
         this.agentComponent = agentComponent;
         this.chatMessageComponent = chatMessageComponent;
         this.chatGroupComponent = chatGroupComponent;
         this.tokenUsageDao = tokenUsageDao;
+        this.workflowTaskComponent = workflowTaskComponent;
+        this.workflowTaskExecuteComponent = workflowTaskExecuteComponent;
     }
 
     /**
@@ -139,7 +155,6 @@ public class AgentBridge {
         }
 
         String targetId = msg.getReceiverCode();
-        String conversationType = msg.getConversationType();
 
         // 2. 获取会话编码
         ImmutablePair<String, ConversationType> conv = chatMessageComponent.getConversationCode(
@@ -155,11 +170,131 @@ public class AgentBridge {
         }
 
         // 3. 判断会话类型并组装 AgentBuildSpec
-        if (ConversationType.GROUP.name().equalsIgnoreCase(conversationType)) {
+        if (ConversationType.GROUP.equals(conv.right)) {
             dispatchGroup(userId, msg, targetId, conversationCode, mcpCodes);
-        } else {
+        } else if (ConversationType.SINGLE.equals(conv.right)) {
             dispatchSingle(userId, msg, targetId, conversationCode, mcpCodes, skillPaths);
+        } else if (ConversationType.WORKFLOW.equals(conv.right)) {
+            dispatchWorkflow(userId, msg, targetId, conversationCode);
+        } else {
+            throw new IllegalArgumentException("不支持的会话类型：" + conv.right);
         }
+    }
+
+    /**
+     * 工作流分发。
+     *
+     * @param userId
+     * @param msg
+     * @param targetId
+     * @param conversationCode
+     */
+    private void dispatchWorkflow(String userId, ChatMessage msg, String targetId, String conversationCode) {
+
+
+        // 这一层构建工作流，NodeProcess层构建agent并执行
+        WorkflowTaskDto task = workflowTaskComponent.getByCode(targetId);
+
+        if (Objects.isNull(task)) {
+            return;
+        }
+
+        XyFlow xyFlow = JsonUtils.toObj(task.getWorkflowJson(), XyFlow.class);
+        List<NodeStep> steps = xyFlow.getSteps();
+        List<String> agentCodes = steps.stream().map(NodeStep::getAgentCode).toList();
+        Map<String, List<String>> mcpCodes = Maps.newHashMap();
+        Map<String, List<String>> skillPaths = Maps.newHashMap();
+        Map<String, String> prompts = Maps.newHashMap();
+        steps.forEach(step -> {
+            mcpCodes.put(step.getAgentCode(), step.getMcpCodes());
+            skillPaths.put(step.getAgentCode(), step.getSkillPaths());
+            prompts.put(step.getAgentCode(), step.getSystemPrompt());
+        });
+
+        // build lite flow node
+        for (NodeStep step : steps) {
+
+
+            if (NodeStep.NODE_TYPE_START.left.equalsIgnoreCase(step.getType())) {
+                LiteFlowNodeBuilder.createCommonNode().setId(step.getId())
+                        .setName(step.getId())
+                        .setClazz(StartNodeProcessor.class)
+                        .build();
+            }
+
+            if (NodeStep.NODE_TYPE_END.left.equalsIgnoreCase(step.getType())) {
+                LiteFlowNodeBuilder.createCommonNode().setId(step.getId())
+                        .setName(step.getId())
+                        .setClazz(EndNodeProcessor.class)
+                        .build();
+            }
+
+            if (NodeStep.NODE_TYPE_SWITCH.left.equalsIgnoreCase(step.getType())) {
+                LiteFlowNodeBuilder.createCommonNode()
+                        .setType(NodeTypeEnum.SWITCH)
+                        .setId(step.getId())
+                        .setName(step.getId())
+                        .setClazz(SwitchNodeProcessor.class)
+                        .build();
+            }
+
+
+            if (NodeStep.NODE_TYPE_COMMON_AGENT.left.equalsIgnoreCase(step.getType())) {
+                LiteFlowNodeBuilder.createCommonNode()
+                        .setId(step.getId())
+                        .setName(step.getId())
+                        .setClazz(AgentNodeProcessor.class)
+                        .build();
+            }
+        }
+
+        String el = XyFlowToLiteFlowUtils.toEl(xyFlow);
+
+        log.info("task el. task:{},el:{}", task, el);
+        LiteFlowChainELBuilder.createChain().setChainId(task.getCode()).setEL(el).build();
+
+        LiteflowConfig config = new LiteflowConfig();
+
+        config.setChainCacheEnabled(false);
+        config.setSupportMultipleType(false);
+        config.setEnableMonitorFile(true);
+        config.setEnableLog(true);
+
+        FlowExecutor executor = new FlowExecutor(config);
+
+        // 构建NodeContext数组
+        Map<String, NodeContext> nodes = steps.stream().map(step -> {
+            return NodeContext.builder()
+                    .nodeId(step.getId())
+                    .nodeType(step.getType())
+                    .nodeLabel(step.getLabel())
+                    .mcpCodes(mcpCodes.get(step.getAgentCode()))
+                    .skillPaths(skillPaths.get(step.getAgentCode()))
+                    .prompt(prompts.get(step.getAgentCode()))
+                    .agentCode(step.getAgentCode())
+                    .build();
+        }).collect(Collectors.toMap(NodeContext::getNodeId, Function.identity()));
+
+        AtomicBoolean cancelFlag = getOrCreateCancelFlag(msg.getCode());
+
+        WorkflowContext context = WorkflowContext.builder()
+                .userId(userId)
+                .targetId(targetId)
+                .nodes(nodes)
+                .msgCode(msg.getCode())
+                .conversationCode(conversationCode)
+                .orchestrator(orchestrator)
+                .workflowTaskComponent(workflowTaskComponent)
+                .chatMessageComponent(chatMessageComponent)
+                .tokenUsageDao(tokenUsageDao)
+                .agentDefProvider(agentDefProvider)
+                .cancelFlag(cancelFlag)
+                .workflowTaskExecuteComponent(workflowTaskExecuteComponent)
+                .build();
+
+        LiteflowResponse response = executor.execute2Resp(task.getCode(), "上下文参数", context);
+
+        log.info("task response. task:{},response:{}", task, response);
     }
 
     /**

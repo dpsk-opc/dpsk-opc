@@ -28,12 +28,12 @@ public class ChatService {
      * @param msgCode
      * @param userId  发送
      */
-    public void doChat(String userId, String msgCode,List<String> mcpCodes,List<String> skillPaths) {
+    public void doChat(String userId, String msgCode, List<String> mcpCodes, List<String> skillPaths) {
 
         if (StringUtils.isBlank(msgCode)) {
             return;
         }
-        agentBridge.dispatch(userId, msgCode, mcpCodes,skillPaths);
+        agentBridge.dispatch(userId, msgCode, mcpCodes, skillPaths);
     }
 
     /**

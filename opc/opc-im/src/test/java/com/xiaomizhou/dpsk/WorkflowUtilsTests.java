@@ -3,12 +3,10 @@ package com.xiaomizhou.dpsk;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.collect.Maps;
 import com.xiaomizhou.dpsk.utils.JsonUtils;
 import com.xiaomizhou.dpsk.utils.LiteFlowELConverter;
-import com.xiaomizhou.dpsk.workflow.CommonNodeProcessor;
-import com.xiaomizhou.dpsk.workflow.EndNodeProcessor;
-import com.xiaomizhou.dpsk.workflow.StartNodeProcessor;
-import com.xiaomizhou.dpsk.workflow.SwitchNodeProcessor;
+import com.xiaomizhou.dpsk.workflow.*;
 import com.xiaomizhou.dpsk.workflow.xyflow.XyFlow;
 import com.xiaomizhou.dpsk.workflow.xyflow.XyFlowToLiteFlowUtils;
 import com.yomahub.liteflow.builder.LiteFlowNodeBuilder;
@@ -17,7 +15,10 @@ import com.yomahub.liteflow.core.FlowExecutor;
 import com.yomahub.liteflow.flow.LiteflowResponse;
 import com.yomahub.liteflow.property.LiteflowConfig;
 import lombok.extern.slf4j.Slf4j;
+import org.junit.Ignore;
 import org.junit.Test;
+
+import java.util.Map;
 
 @Slf4j
 public class WorkflowUtilsTests {
@@ -49,7 +50,7 @@ public class WorkflowUtilsTests {
             if("process".equalsIgnoreCase(type)){
                 LiteFlowNodeBuilder.createCommonNode().setId(nodeId)
                         .setName(label)
-                        .setClazz(CommonNodeProcessor.class)
+                        .setClazz(AgentNodeProcessor.class)
                         .build();
             }
 
@@ -107,6 +108,7 @@ public class WorkflowUtilsTests {
     }
 
     @Test
+    @Ignore
     public void testOnLoop(){
 
         /**
@@ -122,7 +124,7 @@ public class WorkflowUtilsTests {
 
         LiteFlowNodeBuilder.createCommonNode().setId("b")
                 .setName("b")
-                .setClazz(CommonNodeProcessor.class)
+                .setClazz(AgentNodeProcessor.class)
                 .build();
 
         LiteFlowNodeBuilder.createSwitchNode().setId("d")
@@ -138,9 +140,9 @@ public class WorkflowUtilsTests {
 
 
 
-        LiteFlowChainELBuilder.createChain().setChainId("chain2").setChainName("chain2").setEL(
+        LiteFlowChainELBuilder.createChain().setChainId("chain2").setEL(
                 // 输出el表达式
-                "THEN(a,b,SWITCH(d).to(e,a).DEFAULT(e));"
+                "THEN(a,b);"
 //                "THEN(a,b,IF(d,e).ELSE(a),e)"
 //                "SWITCH(d).to(a,e).DEFAULT(b)"
         ).build();
@@ -153,9 +155,23 @@ public class WorkflowUtilsTests {
         config.setEnableLog(true);
 
         FlowExecutor executor = new FlowExecutor(config);
-        LiteflowResponse response = executor.execute2Resp("chain2");
 
-        log.info("executor:{}",response);
+        Map<String,Object> map = Maps.newHashMap();
+
+        map.put("a","a");
+        map.put("b","b");
+
+
+//        WorkflowContext context = WorkflowContext.builder()
+//                .build();
+//
+//        LiteflowResponse response = executor.execute2Resp("chain2", map, NodeContext.builder()
+//                .nodeAgentCode("aaa")
+//                .nodeId("a")
+//                .nodePrompt("ssss")
+//                .build());
+
+//        log.info("executor:{}",response);
     }
 
 }

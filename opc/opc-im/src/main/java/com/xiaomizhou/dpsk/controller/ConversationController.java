@@ -151,10 +151,9 @@ public class ConversationController {
             return Results.ok(code);
         } else if (ConversationType.WORKFLOW.getCode().equals(type)) {
             String code = chatMessageComponent.newWorkflowMsg(sendCode, dto, null, null);
+            executorService.execute(() -> chatService.doChat(sendCode, code, dto.getMcpCodes(), dto.getSkillPaths()));
             return Results.ok(code);
-        } else {
-            throw BusinessException.paramError("不支持的会话类型: " + type);
         }
+        return Results.fail("会话类型不支持");
     }
-
 }

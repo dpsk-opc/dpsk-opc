@@ -64,6 +64,11 @@ public class AgentBuildSpec {
     private Map<String, Object> params;
 
     /**
+     * 任务ID（定时任务场景下使用）
+     */
+    private String taskId;
+
+    /**
      * 定时任务触发时的锚点上下文字符串。
      * <p>
      * 由 AgentTaskConsumer 在任务触发时根据 anchorMsgCode 查库拼装，
@@ -71,4 +76,9 @@ public class AgentBuildSpec {
      * 非定时任务场景下为空。
      */
     private String taskContext;
+
+    /**
+     *
+     */
+    private String prompt;
 }

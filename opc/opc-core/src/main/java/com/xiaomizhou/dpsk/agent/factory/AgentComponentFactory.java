@@ -196,14 +196,19 @@ public class AgentComponentFactory {
         String groupCode = spec.getGroupCode();
         String agentCode = spec.getUserCode();
 
-        if (groupCode != null && !groupCode.isEmpty()) {
+        String targetAgentCode = spec.getTargetAgentCode();
+
+        ContextAssembler.AssembledPrompt prompt;
+        if ((AgentBuildSpec.MODE_GROUP.equalsIgnoreCase(spec.getMode()))) {
             memoryId = MemoryConfig.buildGroupMemoryId(conversationCode, groupCode, agentCode);
+            prompt = assembleSystemPrompt(spec);
+        } else if (AgentBuildSpec.MODE_WORKFLOW.equalsIgnoreCase(spec.getMode())) {
+            memoryId = MemoryConfig.buildWorkflowMemoryId(conversationCode, targetAgentCode, spec.getTaskId());
+            prompt = assembleWorkflowSystemPrompt(spec);
         } else {
             memoryId = MemoryConfig.buildMemoryId(conversationCode, agentCode);
+            prompt = assembleSystemPrompt(spec);
         }
-
-        ContextAssembler.AssembledPrompt prompt = assembleSystemPrompt(spec);
-
 
         return MessageWindowChatMemory.builder()
                 .maxMessages(MemoryConfig.L0_MAX_MESSAGES)
@@ -242,6 +247,14 @@ public class AgentComponentFactory {
         }
 
 
+    }
+    /**
+     * 组装完整 System Prompt（人设 + L2 长期事实 + L1 摘要 + @引用 + 历史）
+     */
+    public ContextAssembler.AssembledPrompt assembleWorkflowSystemPrompt(/*AgentDef def,*/
+            AgentBuildSpec spec) {
+        ContextAssembler assembler = memorySystem.getContextAssembler();
+        return assembler.assembledForWorkflow(spec);
     }
 
     /**

@@ -1,6 +1,7 @@
 package com.xiaomizhou.dpsk.db;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.xiaomizhou.dpsk.constant.ConversationType;
 import com.xiaomizhou.dpsk.core.exceptions.BusinessException;
 import com.xiaomizhou.dpsk.db.dao.ConversationDao;
@@ -17,6 +18,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.ImmutablePair;
+import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -57,6 +59,8 @@ public class WorkflowTaskComponent {
                         .eq(WorkflowTaskDO::getIsDeleted, 0));
         return convertToDto(entity);
     }
+
+
 
     /**
      * 分页查询任务列表。
@@ -190,6 +194,16 @@ public class WorkflowTaskComponent {
             throw BusinessException.paramError("工作流模板不存在或者不是发布状态");
         }
 
+        Conversation conversation = new Conversation();
+
+        conversation.setCode(SequenceUtils.generator().next(CONVERSATION_PREFIX));
+        conversation.setConversationType(ConversationType.WORKFLOW.getCode());
+        conversation.setTargetCode(model.getCode());
+        conversation.setOwnerCode(task.getOwnerCode());
+        conversation.setCreateTime(new Date());
+        conversation.setUpdateTime(new Date());
+        conversationDao.save(conversation);
+
         model.setContextData(task.getContextData());
         model.setTemplateCode(templateCode);
         model.setWorkflowJson(template.getWorkflowJson());
@@ -198,8 +212,12 @@ public class WorkflowTaskComponent {
         model.setUpdateTime(new Date());
         model.setStatus(WorkflowTaskDO.STATUS_PENDING);
         model.setSource(WorkflowTaskDO.SOURCE_USER);
+        model.setConversationCode(conversation.getCode());
+
         if (StringUtils.isBlank(task.getAvatar())) {
             model.setAvatar(template.getAvatar());
+        } else {
+            model.setAvatar(task.getAvatar());
         }
 
         model.setInputParams("");
@@ -213,16 +231,7 @@ public class WorkflowTaskComponent {
         workflowTaskDao.save(model);
 
 
-        Conversation conversation = new Conversation();
 
-        conversation.setCode(SequenceUtils.generator().next(CONVERSATION_PREFIX));
-        conversation.setConversationType(ConversationType.WORKFLOW.getCode());
-        conversation.setTargetCode(model.getCode());
-        conversation.setOwnerCode(model.getOwnerCode());
-        conversation.setLastUserMessageCode(model.getOwnerCode());
-        conversation.setCreateTime(new Date());
-        conversation.setUpdateTime(new Date());
-        conversationDao.save(conversation);
 
         WorkflowTaskDto result = new WorkflowTaskDto();
 
@@ -231,5 +240,15 @@ public class WorkflowTaskComponent {
         result.setAvatar(model.getAvatar());
 
         return result;
+    }
+
+    public boolean updateByCode(WorkflowTaskDto dto) {
+        if (Objects.isNull(dto) || StringUtils.isBlank(dto.getCode())) {
+            return false;
+        }
+        WorkflowTaskDO model = new WorkflowTaskDO();
+        BeanUtils.copyProperties(dto, model);
+        return workflowTaskDao.update(model, Wrappers.<WorkflowTaskDO>lambdaUpdate()
+                .eq(WorkflowTaskDO::getCode, dto.getCode()));
     }
 }
