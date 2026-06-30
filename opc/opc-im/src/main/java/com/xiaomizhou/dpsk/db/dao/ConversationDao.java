@@ -214,7 +214,7 @@ public class ConversationDao extends ServiceImpl<ConversationMapper, Conversatio
      * @param pageSize         每页大小
      * @return 聊天协议列表和总数
      */
-    public ImmutablePair<Long, List<ChatProtocol>> chatPage(String conversationCode, int pageNo, int pageSize) {
+    public ImmutablePair<Long, List<ChatProtocol>> chatPage(String conversationCode, String taskId,int pageNo, int pageSize) {
 
         if (StringUtils.isBlank(conversationCode)) {
             return ImmutablePair.of(0L, List.of());
@@ -233,7 +233,11 @@ public class ConversationDao extends ServiceImpl<ConversationMapper, Conversatio
 
         // select * from t_chat_message where
         // 1. 查询消息总数
-        LambdaQueryWrapper<ChatMessage> wrapper = Wrappers.<ChatMessage>lambdaQuery().eq(ChatMessage::getConversationCode, conversationCode).in(ChatMessage::getMessageType, List.of("USER", "AI"));
+        LambdaQueryWrapper<ChatMessage> wrapper = Wrappers.<ChatMessage>lambdaQuery()
+                .eq(ChatMessage::getConversationCode, conversationCode)
+                .eq(StringUtils.isNoneBlank(taskId), ChatMessage::getTaskId, taskId)
+                .in(ChatMessage::getMessageType, List.of("USER", "AI"));
+
         long total = chatMessageDao.count(wrapper);
 
         if (total == 0) {

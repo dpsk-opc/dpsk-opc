@@ -79,6 +79,10 @@ public class WorkflowTaskComponent {
             wrapper.like(WorkflowTaskDO::getName, param.getKeyword());
         }
 
+        if (StringUtils.isNotBlank(param.getConversationCode())) {
+            wrapper.eq(WorkflowTaskDO::getConversationCode, param.getConversationCode());
+        }
+
         long cnt = workflowTaskDao.count(wrapper);
         if (cnt == 0) {
             return ImmutablePair.of(0L, List.of());
@@ -194,15 +198,20 @@ public class WorkflowTaskComponent {
             throw BusinessException.paramError("工作流模板不存在或者不是发布状态");
         }
 
-        Conversation conversation = new Conversation();
+        if (StringUtils.isBlank(task.getConversationCode())) {
+            Conversation conversation = new Conversation();
+            conversation.setCode(SequenceUtils.generator().next(CONVERSATION_PREFIX));
+            conversation.setConversationType(ConversationType.WORKFLOW.getCode());
+            conversation.setTargetCode(model.getCode());
+            conversation.setOwnerCode(task.getOwnerCode());
+            conversation.setCreateTime(new Date());
+            conversation.setUpdateTime(new Date());
+            conversationDao.save(conversation);
 
-        conversation.setCode(SequenceUtils.generator().next(CONVERSATION_PREFIX));
-        conversation.setConversationType(ConversationType.WORKFLOW.getCode());
-        conversation.setTargetCode(model.getCode());
-        conversation.setOwnerCode(task.getOwnerCode());
-        conversation.setCreateTime(new Date());
-        conversation.setUpdateTime(new Date());
-        conversationDao.save(conversation);
+            model.setConversationCode(conversation.getCode());
+        } else {
+            model.setConversationCode(task.getConversationCode());
+        }
 
         model.setContextData(task.getContextData());
         model.setTemplateCode(templateCode);
@@ -212,7 +221,7 @@ public class WorkflowTaskComponent {
         model.setUpdateTime(new Date());
         model.setStatus(WorkflowTaskDO.STATUS_PENDING);
         model.setSource(WorkflowTaskDO.SOURCE_USER);
-        model.setConversationCode(conversation.getCode());
+
 
         if (StringUtils.isBlank(task.getAvatar())) {
             model.setAvatar(template.getAvatar());
@@ -236,8 +245,8 @@ public class WorkflowTaskComponent {
         WorkflowTaskDto result = new WorkflowTaskDto();
 
         result.setCode(model.getCode());
-        result.setConversationCode(conversation.getCode());
         result.setAvatar(model.getAvatar());
+        result.setConversationCode(model.getConversationCode());
 
         return result;
     }

@@ -224,7 +224,7 @@ public class ChatMessageComponent {
         }
 
         msg.setMentionedList(JsonUtils.toJson(dto.getMentionedList()));
-        msg.setTaskId(dto.getTaskId());
+        msg.setTaskId(targetId);
 
         chatMessageDao.save(msg);
 

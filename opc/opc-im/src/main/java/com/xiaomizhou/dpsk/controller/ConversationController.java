@@ -69,7 +69,7 @@ public class ConversationController {
         int pageNo = request.pageNo() > 0 ? request.pageNo() : 1;
         int pageSize = request.pageSize() > 0 ? request.pageSize() : 20;
 
-        ImmutablePair<Long, List<ChatProtocol>> result = conversationDao.chatPage(param.getConversationCode(), pageNo, pageSize);
+        ImmutablePair<Long, List<ChatProtocol>> result = conversationDao.chatPage(param.getConversationCode(), param.getTaskId(),pageNo, pageSize);
         return Results.page(result.right, pageNo, pageSize, result.left);
     }
 

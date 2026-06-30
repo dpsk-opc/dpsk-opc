@@ -10,11 +10,13 @@ import com.xiaomizhou.dpsk.core.ws.SenderInfo;
 import com.xiaomizhou.dpsk.core.ws.WsMessage;
 import com.xiaomizhou.dpsk.core.ws.WsMsgType;
 import com.xiaomizhou.dpsk.db.*;
+import com.xiaomizhou.dpsk.db.dao.ConversationDao;
 import com.xiaomizhou.dpsk.db.dao.TokenUsageDao;
 import com.xiaomizhou.dpsk.db.dto.AgentDto;
 import com.xiaomizhou.dpsk.db.dto.ChatMemberDto;
 import com.xiaomizhou.dpsk.db.dto.WorkflowTaskDto;
 import com.xiaomizhou.dpsk.db.model.ChatMessage;
+import com.xiaomizhou.dpsk.db.model.Conversation;
 import com.xiaomizhou.dpsk.utils.JsonUtils;
 import com.xiaomizhou.dpsk.utils.SequenceUtils;
 import com.xiaomizhou.dpsk.workflow.*;
@@ -69,6 +71,7 @@ public class AgentBridge {
     private final TokenUsageDao tokenUsageDao;
     private final WorkflowTaskComponent workflowTaskComponent;
     private final WorkflowTaskExecuteComponent workflowTaskExecuteComponent;
+    private final ConversationDao conversationDao;
 
     @Value("${com.xiaomizhou.dpsk.opc.skill.path:~/skills}")
     private String skillPathPrefix;
@@ -86,7 +89,8 @@ public class AgentBridge {
                        ChatGroupComponent chatGroupComponent,
                        TokenUsageDao tokenUsageDao,
                        WorkflowTaskComponent workflowTaskComponent,
-                       WorkflowTaskExecuteComponent workflowTaskExecuteComponent) {
+                       WorkflowTaskExecuteComponent workflowTaskExecuteComponent,
+                       ConversationDao conversationDao) {
         this.orchestrator = orchestrator;
         this.agentDefProvider = agentDefProvider;
         this.agentComponent = agentComponent;
@@ -95,6 +99,7 @@ public class AgentBridge {
         this.tokenUsageDao = tokenUsageDao;
         this.workflowTaskComponent = workflowTaskComponent;
         this.workflowTaskExecuteComponent = workflowTaskExecuteComponent;
+        this.conversationDao = conversationDao;
     }
 
     /**
@@ -157,12 +162,11 @@ public class AgentBridge {
         String targetId = msg.getReceiverCode();
 
         // 2. 获取会话编码
-        ImmutablePair<String, ConversationType> conv = chatMessageComponent.getConversationCode(
-                msg.getSenderCode(), msg.getReceiverCode());
-        if (conv.left == null || conv.right == null) {
+        Conversation conv = conversationDao.getOneByCode(msg.getConversationCode());
+        if (Objects.isNull(conv)) {
             return;
         }
-        String conversationCode = conv.left;
+        String conversationCode = conv.getCode();
 
         if (CollectionUtils.isNotEmpty(skillPaths)) {
             String template = "%s/%s/skills/%s/";
@@ -170,14 +174,14 @@ public class AgentBridge {
         }
 
         // 3. 判断会话类型并组装 AgentBuildSpec
-        if (ConversationType.GROUP.equals(conv.right)) {
+        if (ConversationType.GROUP.getCode().equals(conv.getConversationType())) {
             dispatchGroup(userId, msg, targetId, conversationCode, mcpCodes);
-        } else if (ConversationType.SINGLE.equals(conv.right)) {
+        } else if (ConversationType.SINGLE.getCode().equals(conv.getConversationType())) {
             dispatchSingle(userId, msg, targetId, conversationCode, mcpCodes, skillPaths);
-        } else if (ConversationType.WORKFLOW.equals(conv.right)) {
+        } else if (ConversationType.WORKFLOW.getCode().equals(conv.getConversationType())) {
             dispatchWorkflow(userId, msg, targetId, conversationCode);
         } else {
-            throw new IllegalArgumentException("不支持的会话类型：" + conv.right);
+            throw new IllegalArgumentException("不支持的会话类型：" + conv.getConversationType());
         }
     }
 

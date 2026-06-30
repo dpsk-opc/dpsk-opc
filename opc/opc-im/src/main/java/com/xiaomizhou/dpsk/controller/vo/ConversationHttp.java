@@ -40,9 +40,14 @@ public class ConversationHttp {
     private Integer top;
 
     /**
-     * 类型 0: 单聊 1: 群聊
+     * 类型 0: 单聊 1: 群聊 2:专家团
      */
     private Integer type;
+
+    /**
+     * 任务ID
+     */
+    private String taskId;
 
     /**
      * 消息编码（用于取消会话等操作）

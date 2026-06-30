@@ -17,6 +17,11 @@ public class WorkflowTaskQueryParam {
     /** 状态（可选） */
     private Integer status;
 
+
+    /** 会话编码 */
+    private String conversationCode;
+
+
     /** 关键词搜索（可选，匹配名称） */
     private String keyword;
 }

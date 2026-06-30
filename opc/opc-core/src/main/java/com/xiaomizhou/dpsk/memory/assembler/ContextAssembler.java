@@ -83,9 +83,11 @@ public class ContextAssembler {
 
             // ai的信息
             if (Objects.nonNull(target)) {
-                sb.append("[你的信息] 名字:%s,你先出处于任务模式，使用客观的描述说明你已经完成的工作，后续节点需要根据你的输出开展后续的工作。prompt:%s\n".formatted(target.getName(), spec.getPrompt()));
+                sb.append("[你的信息] 名字:%s,你现在处于任务模式，使用客观的描述说明你已经完成的工作，后续节点需要根据你的输出开展后续的工作。prompt:%s\n".formatted(target.getName(), spec.getPrompt()));
             }
         }
+
+        sb.append("[强制要求] 1. 禁止使用emoji输出回答！\n 2. 回复尽量简短客观，避免使用任何情绪化、主观化的语言。\n 3. 回答禁止任何形式的互动，反问！");
 
         // 工具信息
         List<ToolMetadata> tools = toolRegistry.getToolsForAgent(spec.getTargetAgentCode());
