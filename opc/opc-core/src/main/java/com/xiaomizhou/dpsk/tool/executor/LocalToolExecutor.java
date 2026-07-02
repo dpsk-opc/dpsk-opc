@@ -26,7 +26,7 @@ public class LocalToolExecutor implements ToolExecutor {
     private final ApplicationContext applicationContext;
 
     /** 本地工具调用超时时间（秒），默认 30 秒 */
-    private static final long DEFAULT_TIMEOUT_SECONDS = 30;
+    private static final long DEFAULT_TIMEOUT_SECONDS = 120;
 
     public LocalToolExecutor(ApplicationContext applicationContext) {
         this.applicationContext = applicationContext;
@@ -66,9 +66,9 @@ public class LocalToolExecutor implements ToolExecutor {
                         return method.invoke(bean, args);
                     } catch (Exception e) {
                         log.error("Invoke local tool failed: {}.{}", beanName, methodName, e);
-                        return "工具执行失败";
+                        return "工具执行失败!" + e.getMessage();
                     }
-                }).get(metadata.getTimeoutMs(), TimeUnit.MINUTES);
+                }).get(DEFAULT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
 
         if (result == null) {
             return "";

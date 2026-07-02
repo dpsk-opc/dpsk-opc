@@ -86,28 +86,11 @@ public class KnowledgeBuildService {
                 return BuildResult.ok(0, 0, 0);
             }
 
-//            Set<String> unsupportNodes = Sets.newHashSet();
 
             // 2. 过滤：只处理支持的文件类型 + 文件存在 + 大小合法
             List<FileNodeInfo> pendingFiles = fileNodes.stream()
                     .map(this::resolveFileInfo)
                     .filter(Objects::nonNull).toList();
-//                    .filter(node -> {
-//
-//                        if (isSupportedFile(node)) {
-//                            return true;
-//                        }
-//
-//                        unsupportNodes.add(node.node.getCode());
-//                        return false;
-//                    }).toList();
-
-//            // 不支持类型标记为 UNSUPPORT
-//            if (CollectionUtils.isNotEmpty(unsupportNodes)) {
-//                unsupportNodes.forEach(nodeCode -> {
-//                    knowledgeNodeDao.casUpdateStatus(nodeCode, KnowledgeLibStatus.UPLOADED, KnowledgeLibStatus.UNSUPPORT);
-//                });
-//            }
 
             if (pendingFiles.isEmpty()) {
                 // 所有文件都不支持或无法处理，标记知识库为 LEARNED

@@ -71,10 +71,10 @@ public class McpBindingRepositoryImpl implements McpToolExecutor.McpBindingRepos
             if (argsJson == null || argsJson.isBlank() || "[]".equals(argsJson)) {
                 return new String[0];
             }
-            JsonNode root = JsonUtils.OBJECT_MAPPER.readTree(argsJson);
+            JsonNode root = JsonUtils.getObjectMapper().readTree(argsJson);
             // 防御双重序列化：如果是文本节点，先解开
             if (root.isTextual()) {
-                root = JsonUtils.OBJECT_MAPPER.readTree(root.asText());
+                root = JsonUtils.getObjectMapper().readTree(root.asText());
             }
             if (!root.isArray()) {
                 log.warn("Expected JSON array for args, got: {}", root.getNodeType());

@@ -168,31 +168,35 @@ public class LangChain4JToolBridge implements ToolProvider {
         }).collect(Collectors.toList());
 
         ChatMessage message = messages.get(messages.size() - 1);
+
+        if(!(message instanceof ToolExecutionResultMessage)){
+            return ToolProviderResult.builder().build();
+        }
+
+
         // add
-        if (message instanceof ToolExecutionResultMessage) {
-            String toolName = ((ToolExecutionResultMessage) message).toolName();
+        String toolName = ((ToolExecutionResultMessage) message).toolName();
 
-            // get tool param.
-            if (ADD_TOOLS_TOOL_NAME.equalsIgnoreCase(toolName)) {
-                ChatMessage preMessage = messages.get(messages.size() - 2);
-                if (preMessage instanceof AiMessage) {
-                    List<ToolExecutionRequest> requests = ((AiMessage) preMessage).toolExecutionRequests();
-                    for (ToolExecutionRequest req : requests) {
-                        HashMap map = JsonUtils.toObj(req.arguments(), HashMap.class);
-                        if (MapUtils.isNotEmpty(map) && map.containsKey(TOOL_ARGUMENT)) {
-                            Object obj = map.get(TOOL_ARGUMENT);
-                            if (obj instanceof List) {
-                                List<String> toolNames = (List<String>) obj;
-                                tools = tools.stream().filter(tool -> toolNames.contains(tool.getName())).collect(Collectors.toList());
-                            }
+        // get tool param.
+        if (ADD_TOOLS_TOOL_NAME.equalsIgnoreCase(toolName)) {
+            ChatMessage preMessage = messages.get(messages.size() - 2);
+            if (preMessage instanceof AiMessage) {
+                List<ToolExecutionRequest> requests = ((AiMessage) preMessage).toolExecutionRequests();
+                for (ToolExecutionRequest req : requests) {
+                    HashMap map = JsonUtils.toObj(req.arguments(), HashMap.class);
+                    if (MapUtils.isNotEmpty(map) && map.containsKey(TOOL_ARGUMENT)) {
+                        Object obj = map.get(TOOL_ARGUMENT);
+                        if (obj instanceof List) {
+                            List<String> toolNames = (List<String>) obj;
+                            tools = tools.stream().filter(tool -> toolNames.contains(tool.getName())).collect(Collectors.toList());
                         }
-
                     }
 
                 }
             }
+        } else {
+            tools = tools.stream().filter(tool -> tool.getName().equalsIgnoreCase(toolName)).toList();
         }
-
         if (CollectionUtils.isEmpty(tools)) {
             log.debug("No tools available for agent '{}'", agentCode);
             return ToolProviderResult.builder().build();
