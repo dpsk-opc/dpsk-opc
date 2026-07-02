@@ -20,9 +20,11 @@ public class WorkflowContext {
 
     private String targetId;
 
+    private String taskId;
+
     private Map<String, NodeContext> nodes;
 
-    private String msgCode;
+    private String contextData;
 
     private String conversationCode;
 
@@ -39,6 +41,8 @@ public class WorkflowContext {
     private AtomicBoolean cancelFlag;
 
     private WorkflowTaskExecuteComponent workflowTaskExecuteComponent;
+
+    private WorkflowConfirmManager workflowConfirmManager;
 
     public NodeContext getNodeContext(String nodeId) {
         return nodes.get(nodeId);

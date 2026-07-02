@@ -188,7 +188,6 @@ public class WorkflowTaskComponent {
         WorkflowTaskDO model = new WorkflowTaskDO();
 
         model.setCode(SequenceUtils.generator().next(WFK_PREFIX));
-        model.setName(task.getName());
         model.setOwnerCode(task.getOwnerCode());
 
         String templateCode = task.getTemplateCode();
@@ -198,19 +197,27 @@ public class WorkflowTaskComponent {
             throw BusinessException.paramError("工作流模板不存在或者不是发布状态");
         }
 
-        if (StringUtils.isBlank(task.getConversationCode())) {
-            Conversation conversation = new Conversation();
-            conversation.setCode(SequenceUtils.generator().next(CONVERSATION_PREFIX));
-            conversation.setConversationType(ConversationType.WORKFLOW.getCode());
-            conversation.setTargetCode(model.getCode());
-            conversation.setOwnerCode(task.getOwnerCode());
-            conversation.setCreateTime(new Date());
-            conversation.setUpdateTime(new Date());
-            conversationDao.save(conversation);
-
-            model.setConversationCode(conversation.getCode());
-        } else {
+        if (StringUtils.isNotBlank(task.getConversationCode())) {
             model.setConversationCode(task.getConversationCode());
+        } else {
+
+            Conversation exits = conversationDao.getOne(task.getOwnerCode(), templateCode, ConversationType.WORKFLOW.getCode());
+
+            if (Objects.isNull(exits)) {
+
+                Conversation conversation = new Conversation();
+                conversation.setCode(SequenceUtils.generator().next(CONVERSATION_PREFIX));
+                conversation.setConversationType(ConversationType.WORKFLOW.getCode());
+                conversation.setTargetCode(templateCode);
+                conversation.setOwnerCode(task.getOwnerCode());
+                conversation.setCreateTime(new Date());
+                conversation.setUpdateTime(new Date());
+                conversationDao.save(conversation);
+
+                model.setConversationCode(conversation.getCode());
+            } else {
+                model.setConversationCode(exits.getCode());
+            }
         }
 
         model.setContextData(task.getContextData());
@@ -221,6 +228,7 @@ public class WorkflowTaskComponent {
         model.setUpdateTime(new Date());
         model.setStatus(WorkflowTaskDO.STATUS_PENDING);
         model.setSource(WorkflowTaskDO.SOURCE_USER);
+        model.setName(task.getName());
 
 
         if (StringUtils.isBlank(task.getAvatar())) {
@@ -248,6 +256,9 @@ public class WorkflowTaskComponent {
         result.setAvatar(model.getAvatar());
         result.setConversationCode(model.getConversationCode());
 
+        // 专家团的名字作为会话名字
+        result.setName(template.getName());
+
         return result;
     }
 
@@ -259,5 +270,30 @@ public class WorkflowTaskComponent {
         BeanUtils.copyProperties(dto, model);
         return workflowTaskDao.update(model, Wrappers.<WorkflowTaskDO>lambdaUpdate()
                 .eq(WorkflowTaskDO::getCode, dto.getCode()));
+    }
+
+    /**
+     * 更新工作流任务。
+     *
+     * @param task
+     * @return
+     */
+    public String update(WorkflowTaskDto task) {
+
+        if (Objects.isNull(task) || StringUtils.isBlank(task.getName())) {
+            return null;
+        }
+
+
+        String taskCode = task.getCode();
+
+        WorkflowTaskDO model = new WorkflowTaskDO();
+
+        model.setName(task.getName());
+        model.setUpdateTime(new Date());
+
+        workflowTaskDao.update(model, Wrappers.<WorkflowTaskDO>lambdaUpdate()
+                .eq(WorkflowTaskDO::getCode, taskCode));
+        return taskCode;
     }
 }

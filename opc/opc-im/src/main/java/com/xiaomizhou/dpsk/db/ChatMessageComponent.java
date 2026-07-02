@@ -9,6 +9,7 @@ import com.xiaomizhou.dpsk.db.dao.ChatMessageDao;
 import com.xiaomizhou.dpsk.db.dao.ConversationDao;
 import com.xiaomizhou.dpsk.db.dao.TokenUsageDao;
 import com.xiaomizhou.dpsk.db.dto.ChatMsgDto;
+import com.xiaomizhou.dpsk.db.dto.WorkflowTaskDto;
 import com.xiaomizhou.dpsk.db.model.ChatMessage;
 import com.xiaomizhou.dpsk.db.model.Conversation;
 import com.xiaomizhou.dpsk.utils.JsonUtils;
@@ -19,6 +20,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.ImmutablePair;
+import org.apache.logging.log4j.util.Strings;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
@@ -101,10 +103,10 @@ public class ChatMessageComponent {
      * @return
      */
     public String newWorkflowMsg(String sendId, ChatMsgDto dto, TokenUsage token, String modelName) {
+
         if (Objects.isNull(dto) || StringUtils.isAnyBlank(sendId, dto.getTargetId())) {
             return "";
         }
-
 
         final String targetId = dto.getTargetId();
 
@@ -154,6 +156,31 @@ public class ChatMessageComponent {
                     .set(ChatMessage::getRelateUserMessageCode, conv.getLastUserMessageCode())
                     .eq(ChatMessage::getCode, msgCode);
             chatMessageDao.update(null, wrapper);
+        }
+
+        if (StringUtils.isBlank(dto.getTaskId())) {
+            WorkflowTaskDto task = new WorkflowTaskDto();
+            task.setOwnerCode(sendId);
+            task.setTemplateCode(targetId);
+            task.setOwnerCode(sendId);
+            task.setTemplateCode(targetId);
+            task.setConversationCode(dto.getConversationCode());
+            task.setContextData(msg.getContent());
+            task.setName(Strings.left(msg.getContent(), 100));
+
+            WorkflowTaskDto add = workflowTaskComponent.add(task);
+
+            chatMessageDao.update(null, Wrappers.<ChatMessage>lambdaUpdate().set(ChatMessage::getTaskId, add.getCode()).eq(ChatMessage::getCode, msgCode));
+        } else {
+            WorkflowTaskDto task = workflowTaskComponent.getByCode(dto.getTaskId());
+            if (StringUtils.isBlank(task.getName())) {
+
+                WorkflowTaskDto to = new WorkflowTaskDto();
+                to.setName(Strings.left(msg.getContent(), 100));
+                to.setCode(task.getCode());
+                to.setUpdateTime(new Date());
+                workflowTaskComponent.updateByCode(to);
+            }
         }
 
         // 更新消息编码
@@ -224,7 +251,7 @@ public class ChatMessageComponent {
         }
 
         msg.setMentionedList(JsonUtils.toJson(dto.getMentionedList()));
-        msg.setTaskId(targetId);
+        msg.setTaskId(dto.getTaskId());
 
         chatMessageDao.save(msg);
 
@@ -269,7 +296,6 @@ public class ChatMessageComponent {
 
             return model.getCode();
         });
-
 
         // 更新消息编码
         List<String> fileCodes = dto.getFileCodes();

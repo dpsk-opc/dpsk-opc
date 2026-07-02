@@ -34,7 +34,7 @@ public class NodeStep {
     public static ImmutablePair<String, Integer> NODE_TYPE_END = ImmutablePair.of("end", 1);
     public static ImmutablePair<String, Integer> NODE_TYPE_COMMON_AGENT = ImmutablePair.of("process", 2);
     public static ImmutablePair<String, Integer> NODE_TYPE_SWITCH = ImmutablePair.of("switch", 4);
-    public static ImmutablePair<String, Integer> NODE_TYPE_HUMAN_CONFIRM = ImmutablePair.of("human_confirm", 3);
+    public static ImmutablePair<String, Integer> NODE_TYPE_HUMAN_CONFIRM = ImmutablePair.of("confirm", 3);
     public static ImmutablePair<String, Integer> NODE_TYPE_AI_CONFIRM = ImmutablePair.of("ai_confirm", 7);
     public static ImmutablePair<String, Integer> NODE_TYPE_LOOP = ImmutablePair.of("loop", 5);
 

@@ -197,13 +197,14 @@ public class AgentComponentFactory {
         String agentCode = spec.getUserCode();
 
         String targetAgentCode = spec.getTargetAgentCode();
+        String taskCode = spec.getTaskCode();
 
         ContextAssembler.AssembledPrompt prompt;
         if ((AgentBuildSpec.MODE_GROUP.equalsIgnoreCase(spec.getMode()))) {
             memoryId = MemoryConfig.buildGroupMemoryId(conversationCode, groupCode, agentCode);
             prompt = assembleSystemPrompt(spec);
         } else if (AgentBuildSpec.MODE_WORKFLOW.equalsIgnoreCase(spec.getMode())) {
-            memoryId = MemoryConfig.buildWorkflowMemoryId(conversationCode, targetAgentCode, spec.getTaskId());
+            memoryId = MemoryConfig.buildWorkflowMemoryId(conversationCode, targetAgentCode, taskCode);
             prompt = assembleWorkflowSystemPrompt(spec);
         } else {
             memoryId = MemoryConfig.buildMemoryId(conversationCode, agentCode);

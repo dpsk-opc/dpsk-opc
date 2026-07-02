@@ -99,7 +99,7 @@ public class XyFlowToLiteFlowUtils {
 
             // 环路：目标已展开过，只输出 id
             if (visited.contains(target)) {
-                return "THEN(" + nodeId + ", " + target + ")";
+                return "THEN(" + nodeId + ", " + target + ").id(\"" + "id_" + nodeId + "\")";
             }
 
             visited.add(nodeId);
@@ -110,9 +110,9 @@ public class XyFlowToLiteFlowUtils {
             }
             // 合并 THEN
             if (next.startsWith("THEN(")) {
-                return "THEN(" + nodeId + ", " + next.substring(5);
+                return "THEN(" + nodeId + ", " + next.substring(5)+ ".id(\"id_" + nodeId + "\")";
             }
-            return "THEN(" + nodeId + ", " + next + ")";
+            return "THEN(" + nodeId + ", " + next + ").id(\"" + "id_" + nodeId + "\")";
         }
 
         // ---- 多条出边：SWITCH 分支 ----

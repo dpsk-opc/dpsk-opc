@@ -24,4 +24,20 @@ public class NodeContext {
 
     private List<String> skillPaths;
 
+    /**
+     * 只有选择节点才有这个值
+     */
+    private List<NodeCondition> chooseNodes;
+
+
+    @Data
+    public static class NodeCondition {
+
+        private String nextNodeId;
+
+        private String condition;
+
+        private String conditionLabel;
+    }
+
 }

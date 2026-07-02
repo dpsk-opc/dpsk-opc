@@ -32,17 +32,17 @@ public class MemoryKey {
 
     /** 任务ID（任务聊场景，单聊为 null） */
     @Getter
-    private final String taskId;
+    private final String taskCode;
 
     public MemoryKey(String conversationCode, String ownerCode) {
         this(conversationCode, ownerCode, null,null);
     }
 
-    public MemoryKey(String conversationCode, String ownerCode, String groupCode,String taskId) {
+    public MemoryKey(String conversationCode, String ownerCode, String groupCode,String taskCode) {
         this.conversationCode = conversationCode;
         this.ownerCode = ownerCode;
         this.groupCode = groupCode;
-        this.taskId = taskId;
+        this.taskCode = taskCode;
     }
 
     /** 是否为群聊记忆 */
@@ -51,7 +51,7 @@ public class MemoryKey {
     }
 
     public boolean isTaskChat() {
-        return taskId != null;
+        return taskCode != null;
     }
 
     /**

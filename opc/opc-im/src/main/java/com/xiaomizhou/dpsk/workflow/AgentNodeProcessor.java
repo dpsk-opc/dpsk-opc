@@ -9,6 +9,7 @@ import com.xiaomizhou.dpsk.db.WorkflowTaskExecuteComponent;
 import com.xiaomizhou.dpsk.db.chat.ImAgentCallback;
 import com.xiaomizhou.dpsk.db.dto.WorkflowTaskDto;
 import com.xiaomizhou.dpsk.db.model.WorkflowNodeLogDO;
+import com.xiaomizhou.dpsk.db.model.WorkflowTaskDO;
 import com.xiaomizhou.dpsk.utils.SequenceUtils;
 import com.xiaomizhou.dpsk.workflow.xyflow.NodeStep;
 import com.yomahub.liteflow.core.NodeComponent;
@@ -29,7 +30,7 @@ public class AgentNodeProcessor extends NodeComponent {
             return;
         }
 
-        String taskCode = context.getTargetId();
+        String taskCode = context.getTaskId();
         String nodeId = node.getNodeId();
 
         WorkflowTaskExecuteComponent component = context.getWorkflowTaskExecuteComponent();
@@ -43,6 +44,11 @@ public class AgentNodeProcessor extends NodeComponent {
 
         WorkflowTaskDto task = workflowTaskComponent.getByCode(taskCode);
 
+        if (WorkflowTaskDO.STATUS_CANCELLED == task.getStatus()) {
+            log.info("任务已经取消!");
+            return;
+        }
+
         // 开始事件
         Long id = component.start(NodeContext.builder()
                 .nodeType(node.getNodeType())
@@ -54,7 +60,7 @@ public class AgentNodeProcessor extends NodeComponent {
         ImAgentCallback callback = new ImAgentCallback(context.getUserId(),
                 context.getConversationCode(),
                 ConversationType.WORKFLOW.name(),
-                taskCode,
+                context.getTargetId(),
                 taskCode,
                 context.getChatMessageComponent(),
                 context.getTokenUsageDao(),
@@ -75,17 +81,17 @@ public class AgentNodeProcessor extends NodeComponent {
                 .conversationCode(context.getConversationCode())
                 .mcpCodes(node.getMcpCodes())
                 .skillPaths(node.getSkillPaths())
-                .taskId(taskCode)
+                .taskCode(taskCode)
                 .prompt(node.getPrompt())
                 .build();
 
         PipelineResult result = orchestrator.execute(spec, callback);
 
         if (result.isSuccess()) {
-            component.end(id, WorkflowNodeLogDO.STATUS_SUCCESS, "", result.getOutputText());
+            component.end(id, WorkflowNodeLogDO.STATUS_SUCCESS, null, "", result.getOutputText(), result.getOutputText());
         } else {
             // 失败继续用原始的contextData，重试的时候会用上一次的contextData
-            component.end(id, WorkflowNodeLogDO.STATUS_FAILED, result.getOutputText(), null);
+            component.end(id, WorkflowNodeLogDO.STATUS_FAILED, WorkflowTaskDO.STATUS_FAILED, result.getOutputText(), null, null);
         }
 
 

@@ -5,7 +5,6 @@ import com.xiaomizhou.dpsk.db.dao.WorkflowNodeLogDao;
 import com.xiaomizhou.dpsk.db.dto.WorkflowTaskDto;
 import com.xiaomizhou.dpsk.db.model.WorkflowNodeLogDO;
 import com.xiaomizhou.dpsk.db.model.WorkflowTaskDO;
-import com.xiaomizhou.dpsk.utils.JsonUtils;
 import com.xiaomizhou.dpsk.workflow.NodeContext;
 import com.xiaomizhou.dpsk.workflow.xyflow.NodeStep;
 import lombok.RequiredArgsConstructor;
@@ -69,13 +68,13 @@ public class WorkflowTaskExecuteComponent {
         return log.getId();
     }
 
-    public boolean end(Long id, Integer status, String error, String output) {
+    public boolean end(Long id, Integer nodeStatus, Integer taskStatus, String error, String taskOutput,String nodeOutput) {
 
         WorkflowNodeLogDO log = workflowNodeLogDao.getById(id);
-        log.setStatus(status);
+        log.setStatus(nodeStatus);
         log.setEndTime(new Date());
         log.setUpdateTime(new Date());
-        log.setOutputData(output);
+        log.setOutputData(nodeOutput);
         log.setErrorMessage(error);
         log.setTaskCode(log.getTaskCode());
 
@@ -87,14 +86,14 @@ public class WorkflowTaskExecuteComponent {
         dto.setCode(log.getTaskCode());
         dto.setUpdateTime(new Date());
         dto.setErrorMessage(error);
-        dto.setContextData(output);
+        dto.setContextData(taskOutput);
 
         // 终止节点更新状态为成功
         if (log.getNodeType() == WorkflowNodeLogDO.TYPE_END) {
             dto.setEndTime(new Date());
-            dto.setStatus(WorkflowTaskDO.STATUS_SUCCESS);
         }
 
+        dto.setStatus(taskStatus);
         workflowTaskComponent.updateByCode(dto);
         return true;
     }

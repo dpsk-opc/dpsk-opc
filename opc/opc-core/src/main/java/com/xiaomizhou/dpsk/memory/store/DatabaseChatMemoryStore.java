@@ -71,7 +71,7 @@ public class DatabaseChatMemoryStore implements ChatMemoryStore {
         } else if(key.isTaskChat()){
             // 专家团：按 taskId 查询所有消息，从当前 Agent 视角区分 User/AI
             dbMessages = messageRepository.findTopTaskMessagesForAgent(key.getConversationCode(),
-                    key.getOwnerCode(), key.getTaskId(), fetchLimit);
+                    key.getOwnerCode(), key.getTaskCode(), fetchLimit);
         } else {
             // 单聊：按 conversationCode + ownerCode 查询
             dbMessages = messageRepository.findTopByConversationAndAgent(

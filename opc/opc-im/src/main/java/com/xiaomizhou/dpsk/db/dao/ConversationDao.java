@@ -7,6 +7,7 @@ import com.google.common.collect.Maps;
 import com.xiaomizhou.dpsk.constant.ConversationType;
 import com.xiaomizhou.dpsk.constant.FileRefType;
 import com.xiaomizhou.dpsk.db.FileService;
+import com.xiaomizhou.dpsk.db.WorkflowTemplateComponent;
 import com.xiaomizhou.dpsk.db.chat.ChatProtocol;
 import com.xiaomizhou.dpsk.db.dto.ConversationDto;
 import com.xiaomizhou.dpsk.db.dto.FileRecordDto;
@@ -45,7 +46,7 @@ public class ConversationDao extends ServiceImpl<ConversationMapper, Conversatio
 
     private final FileService fileService;
 
-    private final WorkflowTaskDao workflowTaskDao;
+    private final WorkflowTemplateDao workflowTemplateDao;
 
 
     public ImmutablePair<Long, List<ConversationDto>> page(int pageNo, int pageSize, Integer type, String name, String ownerCode) {
@@ -74,8 +75,8 @@ public class ConversationDao extends ServiceImpl<ConversationMapper, Conversatio
         List<String> groupCodes = list.stream().filter(conversation -> conversation.getConversationType().equals(ConversationType.GROUP.getCode())).map(Conversation::getTargetCode).toList();
         List<ChatGroup> groups = CollectionUtils.isEmpty(groupCodes) ? List.of() : chatGroupDao.lambdaQuery().in(ChatGroup::getCode, groupCodes).list();
 
-        List<String> taskCodes = list.stream().filter(conversation -> conversation.getConversationType().equals(ConversationType.WORKFLOW.getCode())).map(Conversation::getTargetCode).toList();
-        List<WorkflowTaskDO> tasks = CollectionUtils.isEmpty(taskCodes) ? List.of() : workflowTaskDao.lambdaQuery().in(WorkflowTaskDO::getCode, taskCodes).list();
+        List<String> templateCodes = list.stream().filter(conversation -> conversation.getConversationType().equals(ConversationType.WORKFLOW.getCode())).map(Conversation::getTargetCode).toList();
+        List<WorkflowTemplateDO> templates = CollectionUtils.isEmpty(templateCodes) ? List.of() : workflowTemplateDao.lambdaQuery().in(WorkflowTemplateDO::getCode, templateCodes).list();
 
         return ImmutablePair.of(cnt, list.stream().map(record -> {
 
@@ -112,10 +113,10 @@ public class ConversationDao extends ServiceImpl<ConversationMapper, Conversatio
             }
 
             if (ConversationType.WORKFLOW.getCode().equals(record.getConversationType())) {
-                WorkflowTaskDO task = tasks.stream().filter(t -> t.getCode().equals(record.getTargetCode())).findFirst().orElse(null);
-                if (Objects.nonNull(task)) {
-                    dto.setTargetName(task.getName());
-                    dto.setTargetAvatar(task.getAvatar());
+                WorkflowTemplateDO template = templates.stream().filter(t -> t.getCode().equals(record.getTargetCode())).findFirst().orElse(null);
+                if (Objects.nonNull(template)) {
+                    dto.setTargetName(template.getName());
+                    dto.setTargetAvatar(template.getAvatar());
                 }
             }
 

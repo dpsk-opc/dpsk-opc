@@ -12,9 +12,12 @@ public class XyFlow {
 
     private List<NodeEdge> edges;
 
+    public boolean isConfirmNode(String nodeId) {
+        return CollectionUtils.isNotEmpty(steps) && steps.stream().filter(s -> s.getId().equals(nodeId)).anyMatch(s -> NodeStep.NODE_TYPE_HUMAN_CONFIRM.left.equals(s.getType()));
+    }
 
     public boolean isCommonNode(String nodeId) {
-        return (!isSwitchNode(nodeId) && !isStartNode(nodeId) && !isEndNode(nodeId));
+        return (!isSwitchNode(nodeId) && !isStartNode(nodeId) && !isEndNode(nodeId)) && !isConfirmNode(nodeId);
     }
 
     public boolean isSwitchNode(String nodeId) {
@@ -22,11 +25,11 @@ public class XyFlow {
     }
 
     public boolean isStartNode(String nodeId) {
-        return CollectionUtils.isNotEmpty(steps) && steps.stream().filter(s -> s.getId().equals(nodeId)).anyMatch(s -> "start".equals(s.getType()));
+        return CollectionUtils.isNotEmpty(steps) && steps.stream().filter(s -> s.getId().equals(nodeId)).anyMatch(s -> NodeStep.NODE_TYPE_START.left.equals(s.getType()));
     }
 
     public boolean isEndNode(String nodeId) {
-        return CollectionUtils.isNotEmpty(steps) && steps.stream().filter(s -> s.getId().equals(nodeId)).anyMatch(s -> "end".equals(s.getType()));
+        return CollectionUtils.isNotEmpty(steps) && steps.stream().filter(s -> s.getId().equals(nodeId)).anyMatch(s -> NodeStep.NODE_TYPE_END.left.equals(s.getType()));
     }
 
 }

@@ -90,18 +90,6 @@ public class SingleBuilder implements AgentBuilder {
                 // 幻觉情况 => 从上下文的信息找工具执行，但工具已经不再工具列表
                 .hallucinatedToolNameStrategy(factory.getToolExecutionResultMessageFunction())
                 .chatMemoryProvider(memoryId -> {
-
-//                    // 单聊上下文
-//                    if (AgentBuildSpec.MODE_SINGLE.equalsIgnoreCase(spec.getMode())) {
-//                        return factory.createChatMemory(spec);
-//                    }
-//
-//                    // 工作流上下文
-//                    if (AgentBuildSpec.MODE_WORKFLOW.equalsIgnoreCase(spec.getMode())) {
-//
-//                    }
-//
-//                    return null;
                     return factory.createChatMemory(spec);
                 })
                 .returnType(TokenStream.class)

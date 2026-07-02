@@ -51,4 +51,7 @@ public interface WsMsgType {
 
     // 待办到期提醒
     String TODO_REMIND = "todo_remind";
+
+    // 任务确认
+    String TASK_CONFIRM = "task_confirm";
 }

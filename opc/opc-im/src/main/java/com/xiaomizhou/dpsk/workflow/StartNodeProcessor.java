@@ -1,11 +1,11 @@
 package com.xiaomizhou.dpsk.workflow;
 
 import com.xiaomizhou.dpsk.constant.ConversationType;
-import com.xiaomizhou.dpsk.db.ChatMessageComponent;
 import com.xiaomizhou.dpsk.db.WorkflowTaskExecuteComponent;
 import com.xiaomizhou.dpsk.db.chat.ImAgentCallback;
-import com.xiaomizhou.dpsk.db.model.ChatMessage;
+import com.xiaomizhou.dpsk.db.dto.WorkflowTaskDto;
 import com.xiaomizhou.dpsk.db.model.WorkflowNodeLogDO;
+import com.xiaomizhou.dpsk.db.model.WorkflowTaskDO;
 import com.xiaomizhou.dpsk.utils.SequenceUtils;
 import com.xiaomizhou.dpsk.workflow.xyflow.NodeStep;
 import com.yomahub.liteflow.core.NodeComponent;
@@ -26,7 +26,7 @@ public class StartNodeProcessor extends NodeComponent {
             return;
         }
 
-        String taskCode = context.getTargetId();
+        String taskCode = context.getTaskId();
         String nodeId = node.getNodeId();
 
         WorkflowTaskExecuteComponent component = context.getWorkflowTaskExecuteComponent();
@@ -36,23 +36,25 @@ public class StartNodeProcessor extends NodeComponent {
             return;
         }
 
-        ChatMessageComponent chatMessageComponent = context.getChatMessageComponent();
-
-        ChatMessage msg = chatMessageComponent.getByCode(context.getMsgCode());
+        WorkflowTaskDto task = context.getWorkflowTaskComponent().getByCode(context.getTaskId());
+        if (WorkflowTaskDO.STATUS_CANCELLED == task.getStatus()) {
+            log.info("任务已经取消!");
+            return;
+        }
 
         // 开始事件
         Long id = component.start(NodeContext.builder()
                 .nodeType(node.getNodeType())
                 .nodeId(nodeId)
                 .nodeLabel(node.getNodeLabel())
-                .build(), taskCode, "", msg.getContent());
+                .build(), taskCode, "", context.getContextData());
 
 
         // 不发送任何事件返回前端
         ImAgentCallback callback = new ImAgentCallback(context.getUserId(),
                 context.getConversationCode(),
                 ConversationType.WORKFLOW.name(),
-                taskCode,
+                context.getTargetId(),
                 taskCode,
                 context.getChatMessageComponent(),
                 context.getTokenUsageDao(),
@@ -62,7 +64,7 @@ public class StartNodeProcessor extends NodeComponent {
         callback.setCancelFlag(context.getCancelFlag());
 
         // 修改状态
-        component.end(id, WorkflowNodeLogDO.STATUS_SUCCESS, "", msg.getContent());
+        component.end(id, WorkflowNodeLogDO.STATUS_SUCCESS, null, "", context.getContextData(), null);
         log.info("start node execute!nodeId:{}", getNodeId());
         return;
     }

@@ -53,5 +53,12 @@ public enum AgentEventType {
     /**
      * 消息已读
      */
-    MSG_READ
+    MSG_READ,
+
+    /**
+     * workflow msg confirm
+     */
+    WORKFLOW_MSG_CONFIRM,
+
+
 }

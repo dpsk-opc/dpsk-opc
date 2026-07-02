@@ -2,12 +2,9 @@ package com.xiaomizhou.dpsk.memory.impl;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
-import com.xiaomizhou.dpsk.constant.ConversationType;
 import com.xiaomizhou.dpsk.db.FileService;
 import com.xiaomizhou.dpsk.db.WorkflowTaskComponent;
-import com.xiaomizhou.dpsk.db.dto.FileRecordDto;
 import com.xiaomizhou.dpsk.db.dto.WorkflowTaskDto;
 import com.xiaomizhou.dpsk.utils.JsonUtils;
 import com.xiaomizhou.dpsk.db.dao.ChatMessageDao;
@@ -25,7 +22,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.collections.MapUtils;
 import org.apache.commons.io.FileUtils;
-import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 import org.springframework.ai.chat.messages.MessageType;
@@ -339,7 +335,7 @@ public class MessageRepositoryImpl implements MessageRepository {
                 model.setReceiverCode(conv.getTargetCode());
             } else if (memoryKey.isTaskChat()) {
                 model.setSenderCode(memoryKey.getOwnerCode());
-                model.setReceiverCode(memoryKey.getTaskId());
+                model.setReceiverCode(memoryKey.getTaskCode());
             } else {
                 model.setSenderCode(conv.getTargetCode());
                 model.setReceiverCode(conv.getOwnerCode());
@@ -348,7 +344,7 @@ public class MessageRepositoryImpl implements MessageRepository {
             model.setUpdateTime(new Date());
             model.setConversationCode(conv.getCode());
             model.setRelateUserMessageCode(userMsgCode);
-            model.setTaskId(memoryKey.getTaskId());
+            model.setTaskId(memoryKey.getTaskCode());
 
             chatMessageDao.save(model);
         });

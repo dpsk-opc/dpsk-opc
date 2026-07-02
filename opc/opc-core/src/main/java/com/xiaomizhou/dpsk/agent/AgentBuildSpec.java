@@ -66,7 +66,7 @@ public class AgentBuildSpec {
     /**
      * 任务ID（定时任务场景下使用）
      */
-    private String taskId;
+    private String taskCode;
 
     /**
      * 定时任务触发时的锚点上下文字符串。

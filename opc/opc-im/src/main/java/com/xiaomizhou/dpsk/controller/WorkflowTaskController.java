@@ -5,11 +5,14 @@ import com.xiaomizhou.dpsk.core.model.request.Request;
 import com.xiaomizhou.dpsk.core.model.response.PageResponse;
 import com.xiaomizhou.dpsk.core.model.response.Response;
 import com.xiaomizhou.dpsk.db.WorkflowTaskComponent;
+import com.xiaomizhou.dpsk.db.chat.AgentBridge;
 import com.xiaomizhou.dpsk.db.dto.WorkflowTaskDto;
 import com.xiaomizhou.dpsk.db.dto.WorkflowTaskQueryParam;
 import com.xiaomizhou.dpsk.utils.AuthContext;
+import com.xiaomizhou.dpsk.workflow.WorkflowConfirmManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -34,6 +37,7 @@ public class WorkflowTaskController {
 
     private final WorkflowTaskComponent taskComponent;
 
+    private final AgentBridge agentBridge;
 
     /**
      * 添加任务。
@@ -86,4 +90,34 @@ public class WorkflowTaskController {
         taskComponent.delete(request.getParam());
         return Results.ok();
     }
+
+
+    /**
+     * 更新任务名称。
+     * @param param
+     * @return
+     */
+    @PostMapping(value = "update")
+    public Response<Boolean> update(@RequestBody Request<WorkflowTaskDto> param){
+        WorkflowTaskDto task = param.getParam();
+        task.setOwnerCode(AuthContext.getAgentCode());
+        String code = taskComponent.update(task);
+        return Results.ok(StringUtils.isNotEmpty(code));
+    }
+
+    /**
+     * 确认任务。
+     *
+     * @param param
+     * @return
+     */
+    @PostMapping(value = "confirm")
+    public Response<Boolean> confirm(@RequestBody Request<WorkflowConfirmManager.WorkflowConfirmDto> param) {
+        WorkflowConfirmManager.WorkflowConfirmDto task = param.getParam();
+        task.setUserId(AuthContext.getAgentCode());
+        agentBridge.workFlowConfirm(task);
+        return Results.ok(true);
+    }
+
+
 }
