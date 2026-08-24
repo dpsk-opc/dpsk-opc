@@ -1,6 +1,7 @@
 package com.xiaomizhou.dpsk.memory.assembler;
 
 import com.google.common.base.Joiner;
+import com.google.common.collect.Lists;
 import com.xiaomizhou.dpsk.agent.AgentBuildSpec;
 import com.xiaomizhou.dpsk.agent.data.AgentDef;
 import com.xiaomizhou.dpsk.agent.data.AgentDefProvider;
@@ -21,6 +22,7 @@ import dev.langchain4j.skills.FileSystemSkillLoader;
 import dev.langchain4j.skills.Skills;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.lang3.StringUtils;
 
 import java.nio.file.Path;
 import java.util.List;
@@ -198,7 +200,12 @@ public class ContextAssembler {
 
         String targetAgentCode = spec.getTargetAgentCode();
         // 1. Agent 人设
-        List<AgentDef> agents = agentDefProvider.getByCodes(List.of(targetAgentCode, spec.getUserCode()));
+        List<String> agentCodes = Lists.newArrayList();
+        agentCodes.add(spec.getUserCode());
+        if(StringUtils.isNotBlank(spec.getTargetAgentCode())){
+            agentCodes.add(targetAgentCode);
+        }
+        List<AgentDef> agents = agentDefProvider.getByCodes(agentCodes);
 
         StringBuffer sb = new StringBuffer();
         if (CollectionUtils.isNotEmpty(agents)) {
