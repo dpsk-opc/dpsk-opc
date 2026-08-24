@@ -1,4 +1,8 @@
-package com.xiaomizhou.dpsk.workflow.xyflow;
+package com.xiaomizhou.dpsk.workflow.liteflow;
+
+import com.xiaomizhou.dpsk.workflow.xyflow.NodeEdge;
+import com.xiaomizhou.dpsk.workflow.xyflow.NodeStep;
+import com.xiaomizhou.dpsk.workflow.xyflow.XyFlow;
 
 import java.util.*;
 import java.util.stream.Collectors;

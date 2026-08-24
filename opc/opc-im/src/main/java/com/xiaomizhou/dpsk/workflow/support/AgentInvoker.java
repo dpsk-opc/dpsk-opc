@@ -1,0 +1,54 @@
+package com.xiaomizhou.dpsk.workflow.support;
+
+import com.xiaomizhou.dpsk.agent.AgentBuildSpec;
+import com.xiaomizhou.dpsk.agent.PipelineResult;
+import com.xiaomizhou.dpsk.constant.ConversationType;
+import com.xiaomizhou.dpsk.db.chat.ImAgentCallback;
+import com.xiaomizhou.dpsk.utils.SequenceUtils;
+import com.xiaomizhou.dpsk.workflow.NodeContext;
+import com.xiaomizhou.dpsk.workflow.WorkflowContext;
+
+/**
+ * Agent 调用封装：统一构建 {@link ImAgentCallback} + {@link AgentBuildSpec} 并执行。
+ *
+ * <p>供 Agent / Switch 等需要调用 Agent 的节点复用，消除重复代码。
+ */
+public final class AgentInvoker {
+
+    private AgentInvoker() {
+    }
+
+    /**
+     * 调用 Agent。
+     *
+     * @param wf          任务上下文
+     * @param node        当前节点配置
+     * @param userContent 输入给 Agent 的内容
+     * @param senderInfo  Agent 编码（用于推送消息的发送者信息），为 null 时不设置
+     */
+    public static PipelineResult invoke(WorkflowContext wf, NodeContext node, String userContent, String senderInfo) {
+        ImAgentCallback callback = new ImAgentCallback(
+                wf.getUserId(), wf.getConversationCode(),
+                ConversationType.WORKFLOW.name(), wf.getTargetId(), wf.getTaskId(),
+                wf.getChatMessageComponent(), wf.getTokenUsageDao(), wf.getAgentDefProvider());
+        callback.setStreamCode(SequenceUtils.generator().next("STM"));
+        callback.setCancelFlag(wf.getCancelFlag());
+        if (senderInfo != null) {
+            callback.setSenderInfo(senderInfo);
+        }
+
+        AgentBuildSpec spec = AgentBuildSpec.builder()
+                .mode(AgentBuildSpec.MODE_WORKFLOW)
+                .userCode(wf.getUserId())
+                .targetAgentCode(node.getAgentCode())
+                .userContent(userContent)
+                .conversationCode(wf.getConversationCode())
+                .mcpCodes(node.getMcpCodes())
+                .skillPaths(node.getSkillPaths())
+                .taskCode(wf.getTaskId())
+                .prompt(node.getPrompt())
+                .build();
+
+        return wf.getOrchestrator().execute(spec, callback);
+    }
+}

@@ -1,7 +1,5 @@
 package com.xiaomizhou.dpsk.db.chat;
 
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
 import com.xiaomizhou.dpsk.agent.AgentBuildSpec;
 import com.xiaomizhou.dpsk.agent.AgentOrchestrator;
 import com.xiaomizhou.dpsk.agent.PipelineResult;
@@ -24,15 +22,8 @@ import com.xiaomizhou.dpsk.db.model.WorkflowNodeLogDO;
 import com.xiaomizhou.dpsk.utils.JsonUtils;
 import com.xiaomizhou.dpsk.utils.SequenceUtils;
 import com.xiaomizhou.dpsk.workflow.*;
-import com.xiaomizhou.dpsk.workflow.xyflow.NodeEdge;
-import com.xiaomizhou.dpsk.workflow.xyflow.NodeStep;
+import com.xiaomizhou.dpsk.workflow.liteflow.LiteFlowWorkflowEngine;
 import com.xiaomizhou.dpsk.workflow.xyflow.XyFlow;
-import com.xiaomizhou.dpsk.workflow.xyflow.XyFlowToLiteFlowUtils;
-import com.yomahub.liteflow.builder.LiteFlowNodeBuilder;
-import com.yomahub.liteflow.builder.el.LiteFlowChainELBuilder;
-import com.yomahub.liteflow.core.FlowExecutor;
-import com.yomahub.liteflow.flow.LiteflowResponse;
-import com.yomahub.liteflow.property.LiteflowConfig;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -45,7 +36,6 @@ import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
@@ -238,8 +228,7 @@ public class AgentBridge {
      */
     private void dispatchWorkflow(String userId, String contextData,String taskCode, String targetId, String conversationCode) {
 
-
-        // 这一层构建工作流，NodeProcess层构建agent并执行
+        // 构建引擎无关的 WorkflowContext（LiteFlow / LangGraph4j 通用）
         WorkflowTaskDto task = workflowTaskComponent.getByCode(taskCode);
 
         if (Objects.isNull(task)) {
@@ -247,130 +236,15 @@ public class AgentBridge {
         }
 
         XyFlow xyFlow = JsonUtils.toObj(task.getWorkflowJson(), XyFlow.class);
-        List<NodeStep> steps = xyFlow.getSteps();
-        Map<String, List<String>> mcpCodes = Maps.newHashMap();
-        Map<String, List<String>> skillPaths = Maps.newHashMap();
-        Map<String, String> prompts = Maps.newHashMap();
-        steps.forEach(step -> {
-            mcpCodes.put(step.getAgentCode(), step.getMcpCodes());
-            skillPaths.put(step.getAgentCode(), step.getSkillPaths());
-            prompts.put(step.getAgentCode(), step.getSystemPrompt());
-        });
-
-        // build lite flow node
-        for (NodeStep step : steps) {
-
-
-            if (xyFlow.isStartNode(step.getId())) {
-                LiteFlowNodeBuilder.createCommonNode().setId(step.getId())
-                        .setName(step.getId())
-                        .setClazz(StartNodeProcessor.class)
-                        .build();
-                continue;
-            }
-
-            if (xyFlow.isEndNode(step.getId())) {
-                LiteFlowNodeBuilder.createCommonNode().setId(step.getId())
-                        .setName(step.getId())
-                        .setClazz(EndNodeProcessor.class)
-                        .build();
-                continue;
-            }
-
-            if (xyFlow.isSwitchNode(step.getId())) {
-                LiteFlowNodeBuilder.createSwitchNode()
-                        .setId(step.getId())
-                        .setName(step.getId())
-                        .setClazz(SwitchNodeProcessor.class)
-                        .build();
-            }
-
-            if (xyFlow.isConfirmNode(step.getId())) {
-                LiteFlowNodeBuilder.createCommonNode().setId(step.getId())
-                        .setName(step.getId())
-                        .setClazz(HumanConfirmNodeProcessor.class)
-                        .build();
-                continue;
-            }
-
-
-            if (xyFlow.isCommonNode(step.getId())) {
-                LiteFlowNodeBuilder.createCommonNode()
-                        .setId(step.getId())
-                        .setName(step.getId())
-                        .setClazz(AgentNodeProcessor.class)
-                        .build();
-            }
-        }
-
-        String el = XyFlowToLiteFlowUtils.toEl(xyFlow);
-
-        log.info("task el. task:{},el:{}", task, el);
-        LiteFlowChainELBuilder.createChain().setChainId(task.getCode()).setEL(el).build();
-
-        LiteflowConfig config = new LiteflowConfig();
-
-        config.setChainCacheEnabled(false);
-        config.setSupportMultipleType(false);
-        config.setEnableMonitorFile(true);
-        config.setEnableLog(true);
-
-        FlowExecutor executor = new FlowExecutor(config);
-
-        // 构建NodeContext数组
-        Map<String, NodeContext> nodes = steps.stream().map(step -> {
-
-            List<NodeContext.NodeCondition> conditions = Lists.newArrayList();
-            if (xyFlow.isSwitchNode(step.getId())) {
-                String nodeId = step.getId();
-                List<NodeEdge> edges = xyFlow.getEdges();
-                for (NodeEdge edge : edges) {
-                    if (nodeId.equalsIgnoreCase(edge.getSource())) {
-                        NodeContext.NodeCondition condition = new NodeContext.NodeCondition();
-
-                        condition.setCondition(edge.getCondition());
-                        condition.setConditionLabel(edge.getLabel());
-                        condition.setNextNodeId(edge.getTarget());
-
-                        conditions.add(condition);
-                    }
-                }
-            }
-
-            return NodeContext.builder()
-                    .nodeId(step.getId())
-                    .nodeType(step.getType())
-                    .nodeLabel(step.getLabel())
-                    .mcpCodes(mcpCodes.get(step.getAgentCode()))
-                    .skillPaths(skillPaths.get(step.getAgentCode()))
-                    .prompt(prompts.get(step.getAgentCode()))
-                    .agentCode(step.getAgentCode())
-                    .chooseNodes(conditions)
-                    .build();
-        }).collect(Collectors.toMap(NodeContext::getNodeId, Function.identity()));
 
         AtomicBoolean cancelFlag = getOrCreateCancelFlag(taskCode);
 
-        WorkflowContext context = WorkflowContext.builder()
-                .userId(userId)
-                .targetId(targetId)
-                .taskId(task.getCode())
-                .nodes(nodes)
-                .conversationCode(conversationCode)
-                .orchestrator(orchestrator)
-                .workflowTaskComponent(workflowTaskComponent)
-                .chatMessageComponent(chatMessageComponent)
-                .tokenUsageDao(tokenUsageDao)
-                .agentDefProvider(agentDefProvider)
-                .contextData(contextData)
-                .cancelFlag(cancelFlag)
-                .workflowTaskExecuteComponent(workflowTaskExecuteComponent)
-                .workflowConfirmManager(confirmManager)
-                .build();
+        WorkflowContext context = XyFlowContextBuilder.build(xyFlow, task, userId, targetId, conversationCode,
+                contextData, cancelFlag, confirmManager, orchestrator, workflowTaskComponent,
+                chatMessageComponent, tokenUsageDao, agentDefProvider, workflowTaskExecuteComponent);
 
-        LiteflowResponse response = executor.execute2Resp(task.getCode(), "上下文参数", context);
-
-        log.info("task response. task:{},response:{}", task, response);
+        // 交给 LiteFlow 引擎构建链并执行
+        new LiteFlowWorkflowEngine().execute(xyFlow, context);
     }
 
     /**
