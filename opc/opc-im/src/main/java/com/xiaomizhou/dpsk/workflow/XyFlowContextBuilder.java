@@ -3,6 +3,7 @@ package com.xiaomizhou.dpsk.workflow;
 import com.google.common.collect.Lists;
 import com.xiaomizhou.dpsk.agent.AgentOrchestrator;
 import com.xiaomizhou.dpsk.agent.data.AgentDefProvider;
+import com.xiaomizhou.dpsk.constant.ConversationType;
 import com.xiaomizhou.dpsk.db.ChatMessageComponent;
 import com.xiaomizhou.dpsk.db.WorkflowTaskComponent;
 import com.xiaomizhou.dpsk.db.WorkflowTaskExecuteComponent;
@@ -29,11 +30,42 @@ public final class XyFlowContextBuilder {
     private XyFlowContextBuilder() {
     }
 
+    /**
+     * 构建 WorkflowContext（专家团模板工作流专用，conversationType=WORKFLOW）。
+     */
     public static WorkflowContext build(XyFlow xyFlow,
                                         WorkflowTaskDto task,
                                         String userId,
                                         String targetId,
                                         String conversationCode,
+                                        String contextData,
+                                        AtomicBoolean cancelFlag,
+                                        WorkflowConfirmManager confirmManager,
+                                        AgentOrchestrator orchestrator,
+                                        WorkflowTaskComponent workflowTaskComponent,
+                                        ChatMessageComponent chatMessageComponent,
+                                        TokenUsageDao tokenUsageDao,
+                                        AgentDefProvider agentDefProvider,
+                                        WorkflowTaskExecuteComponent workflowTaskExecuteComponent) {
+        return build(xyFlow, task, userId, targetId, conversationCode,
+                ConversationType.WORKFLOW.name(), null, contextData, cancelFlag, confirmManager,
+                orchestrator, workflowTaskComponent, chatMessageComponent, tokenUsageDao,
+                agentDefProvider, workflowTaskExecuteComponent);
+    }
+
+    /**
+     * 构建 WorkflowContext，支持指定会话类型与群编码（群聊自主规划专用）。
+     *
+     * @param conversationType GROUP / WORKFLOW，AgentInvoker 据此切消息归属
+     * @param groupCode        群聊时的群编码，非群聊传 null
+     */
+    public static WorkflowContext build(XyFlow xyFlow,
+                                        WorkflowTaskDto task,
+                                        String userId,
+                                        String targetId,
+                                        String conversationCode,
+                                        String conversationType,
+                                        String groupCode,
                                         String contextData,
                                         AtomicBoolean cancelFlag,
                                         WorkflowConfirmManager confirmManager,
@@ -77,6 +109,8 @@ public final class XyFlowContextBuilder {
                 .taskId(task.getCode())
                 .nodes(nodes)
                 .conversationCode(conversationCode)
+                .conversationType(conversationType)
+                .groupCode(groupCode)
                 .orchestrator(orchestrator)
                 .workflowTaskComponent(workflowTaskComponent)
                 .chatMessageComponent(chatMessageComponent)

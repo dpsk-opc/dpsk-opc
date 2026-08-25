@@ -16,12 +16,15 @@ import com.xiaomizhou.dpsk.db.dao.TokenUsageDao;
 import com.xiaomizhou.dpsk.db.dto.AgentDto;
 import com.xiaomizhou.dpsk.db.dto.ChatMemberDto;
 import com.xiaomizhou.dpsk.db.dto.WorkflowTaskDto;
-import com.xiaomizhou.dpsk.db.model.ChatMessage;
 import com.xiaomizhou.dpsk.db.model.Conversation;
 import com.xiaomizhou.dpsk.db.model.WorkflowNodeLogDO;
+import com.xiaomizhou.dpsk.planning.*;
 import com.xiaomizhou.dpsk.utils.JsonUtils;
 import com.xiaomizhou.dpsk.utils.SequenceUtils;
-import com.xiaomizhou.dpsk.workflow.*;
+import com.xiaomizhou.dpsk.workflow.WorkflowConfirmManager;
+import com.xiaomizhou.dpsk.workflow.WorkflowContext;
+import com.xiaomizhou.dpsk.workflow.XyFlowContextBuilder;
+import com.xiaomizhou.dpsk.workflow.langgraph.LangGraphWorkflowEngine;
 import com.xiaomizhou.dpsk.workflow.liteflow.LiteFlowWorkflowEngine;
 import com.xiaomizhou.dpsk.workflow.xyflow.XyFlow;
 import lombok.extern.slf4j.Slf4j;
@@ -67,9 +70,21 @@ public class AgentBridge {
     private final WorkflowTaskExecuteComponent workflowTaskExecuteComponent;
     private final ConversationDao conversationDao;
     private final ExecutorService executorService;
+    private final WorkflowPlanner workflowPlanner;
+    private final PlanValidator planValidator;
+    private final WorkflowTaskFactory workflowTaskFactory;
+    private final GroupIntentClassifier groupIntentClassifier;
 
     @Value("${com.xiaomizhou.dpsk.opc.skill.path:~/skills}")
     private String skillPathPrefix;
+
+    /** 群聊自主规划 replan 总开关 */
+    @Value("${workflow.replan.enabled:true}")
+    private boolean replanEnabled;
+
+    /** 群聊 replan 最大轮次（replan 次数上限） */
+    @Value("${workflow.replan.max-retry:2}")
+    private int replanMaxRounds;
 
     /**
      * 取消标记映射：msgCode -> 取消标记。
@@ -91,7 +106,11 @@ public class AgentBridge {
                        WorkflowTaskComponent workflowTaskComponent,
                        WorkflowTaskExecuteComponent workflowTaskExecuteComponent,
                        ConversationDao conversationDao,
-                       ExecutorService executorService) {
+                       ExecutorService executorService,
+                       WorkflowPlanner workflowPlanner,
+                       PlanValidator planValidator,
+                       WorkflowTaskFactory workflowTaskFactory,
+                       GroupIntentClassifier groupIntentClassifier) {
         this.orchestrator = orchestrator;
         this.agentDefProvider = agentDefProvider;
         this.agentComponent = agentComponent;
@@ -102,6 +121,10 @@ public class AgentBridge {
         this.workflowTaskExecuteComponent = workflowTaskExecuteComponent;
         this.conversationDao = conversationDao;
         this.executorService = executorService;
+        this.workflowPlanner = workflowPlanner;
+        this.planValidator = planValidator;
+        this.workflowTaskFactory = workflowTaskFactory;
+        this.groupIntentClassifier = groupIntentClassifier;
     }
 
     /**
@@ -302,7 +325,10 @@ public class AgentBridge {
     }
 
     /**
-     * 群聊分发。
+     * 群聊分发入口：先做意图识别，再决定走闲聊对话（CHAT）还是任务编排（TASK）。
+     * <p>
+     * CHAT — 由群聊 Supervisor（suggestedAgent 机制）选一个合适的 Agent 直接对话，不建任务、不做编排；
+     * TASK — 自主规划 → 落库 → LangGraph 执行 → 失败时 replan。
      */
     private void dispatchGroup(String userId,
                                com.xiaomizhou.dpsk.db.model.ChatMessage msg,
@@ -310,28 +336,35 @@ public class AgentBridge {
                                String conversationCode,
                                List<String> mcpCodes) {
         String msgCode = msg.getCode();
+
+        // 意图识别前置：闲聊走 CHAT，复杂任务走 TASK
+        String intent = groupIntentClassifier.classify(msg.getContent());
+        if (GroupIntentClassifier.INTENT_CHAT.equals(intent)) {
+            dispatchGroupChat(userId, msg, targetId, conversationCode, mcpCodes, msgCode);
+        } else {
+            dispatchGroupTask(userId, msg, targetId, conversationCode, mcpCodes, msgCode);
+        }
+    }
+
+    /**
+     * 群聊闲聊分发：复用群聊 Supervisor（MODE_GROUP / GroupBuilder），
+     * 由 supervisor 依据各 Agent 人设决定谁最适合回答（即第一版 suggestedAgent 机制）。
+     * 不创建工作流任务、不做编排。
+     */
+    private void dispatchGroupChat(String userId,
+                                   com.xiaomizhou.dpsk.db.model.ChatMessage msg,
+                                   String targetId,
+                                   String conversationCode,
+                                   List<String> mcpCodes,
+                                   String msgCode) {
         AtomicBoolean cancelFlag = getOrCreateCancelFlag(msgCode);
-
         try {
-            // 获取群成员
-            List<ChatMemberDto> members = chatGroupComponent.getGroupMembers(targetId);
-            if (CollectionUtils.isEmpty(members)) {
+            List<String> agentCodes = groupAgentCodes(userId, targetId);
+            if (agentCodes.isEmpty()) {
                 return;
             }
 
-            // 排除发言用户
-            members = members.stream()
-                    .filter(member -> !member.getCode().equalsIgnoreCase(userId))
-                    .collect(Collectors.toList());
-            if (CollectionUtils.isEmpty(members)) {
-                return;
-            }
-
-            List<String> agentCodes = members.stream()
-                    .map(ChatMemberDto::getCode)
-                    .collect(Collectors.toList());
-
-            // 组装 AgentBuildSpec
+            // 组装 MODE_GROUP 的 spec（Supervisor 群聊对话）
             AgentBuildSpec spec = AgentBuildSpec.builder()
                     .mode(AgentBuildSpec.MODE_GROUP)
                     .userCode(userId)
@@ -342,10 +375,8 @@ public class AgentBridge {
                     .mcpCodes(mcpCodes)
                     .build();
 
-            // 生成流式编码
             String streamCode = SequenceUtils.generator().next("STM");
 
-            // 创建回调（群聊用 group 信息），注入取消标记
             ImAgentCallback callback = new ImAgentCallback(
                     userId, conversationCode,
                     ConversationType.GROUP.name(), targetId, msg.getTaskId(),
@@ -357,10 +388,145 @@ public class AgentBridge {
             callback.onEvent(AgentEvent.msgRead(userId, msg.getCode()));
 
             PipelineResult result = orchestrator.execute(spec, callback);
-            log.info("Group chat completed: group={}, agentCount={}, success={}",
+            log.info("Group chat (CHAT) completed: group={}, agentCount={}, success={}",
                     targetId, agentCodes.size(), result.isSuccess());
         } finally {
             clearCancelFlag(msgCode);
         }
+    }
+
+    /**
+     * 群聊任务分发：自主规划 → 落库 → LangGraph 执行 → 失败时 replan（最多 replanMaxRounds 轮）。
+     */
+    private void dispatchGroupTask(String userId,
+                                   com.xiaomizhou.dpsk.db.model.ChatMessage msg,
+                                   String targetId,
+                                   String conversationCode,
+                                   List<String> mcpCodes,
+                                   String msgCode) {
+        AtomicBoolean cancelFlag = getOrCreateCancelFlag(msgCode);
+
+        try {
+            // 1. 获取群成员（候选 Agent 池），排除发言用户
+            List<String> agentCodes = groupAgentCodes(userId, targetId);
+            if (agentCodes.isEmpty()) {
+                return;
+            }
+
+            String userContent = msg.getContent();
+
+            // 2. 首次规划（无历史）；校验不通过 → 落库一条 FAILED 任务（D2：直接失败不降级）
+            XyFlow xyFlow = plan(userId, targetId, conversationCode, agentCodes, userContent,
+                    List.of(), false);
+            if (xyFlow == null) {
+                log.warn("群聊规划失败（校验不通过），直接 FAILED：group={}", targetId);
+                WorkflowTaskDto failed = workflowTaskFactory.addByPlan(targetId, conversationCode,
+                        agentCodes.get(0), "群聊任务_" + SequenceUtils.generator().next("N"),
+                        "", userContent);
+                if (failed != null && StringUtils.isNotBlank(failed.getCode())) {
+                    workflowTaskComponent.failByCode(failed.getCode(), "规划校验不通过");
+                }
+                return;
+            }
+
+            // 3. 落库任务
+            WorkflowTaskDto task = workflowTaskFactory.addByPlan(targetId, conversationCode,
+                    agentCodes.get(0), "群聊任务_" + SequenceUtils.generator().next("N"),
+                    JsonUtils.toJson(xyFlow), userContent);
+            if (task == null || StringUtils.isBlank(task.getCode())) {
+                log.warn("群聊任务落库失败：group={}", targetId);
+                return;
+            }
+
+            // 4. LangGraph 执行 + replan 循环
+            String taskCode = task.getCode();
+            List<PlanningRequest.NodeResultRef> history = new java.util.ArrayList<>();
+            String userContentForReplan = userContent;
+
+            int maxRounds = replanEnabled ? replanMaxRounds : 0;
+            for (int round = 0; round <= maxRounds; round++) {
+                boolean isReplan = round > 0;
+
+                // 4.1 重新规划（replan 时用 history + 失败原因）
+                if (isReplan) {
+                    xyFlow = plan(userId, targetId, conversationCode, agentCodes, userContentForReplan,
+                            history, true);
+                    if (xyFlow == null) {
+                        workflowTaskComponent.failByCode(taskCode, "replan 规划校验不通过");
+                        return;
+                    }
+                    workflowTaskComponent.updateWorkflowJsonAndReset(taskCode, JsonUtils.toJson(xyFlow));
+                }
+
+                // 4.2 构建上下文并执行（conversationType=GROUP，targetId=groupCode，thinking 落群会话）
+                WorkflowContext context = XyFlowContextBuilder.build(xyFlow, task, userId, targetId,
+                        conversationCode, ConversationType.GROUP.name(), targetId, userContentForReplan,
+                        cancelFlag, confirmManager, orchestrator, workflowTaskComponent,
+                        chatMessageComponent, tokenUsageDao, agentDefProvider, workflowTaskExecuteComponent);
+
+                LangGraphWorkflowEngine.ExecutionResult exec = new LangGraphWorkflowEngine().execute(xyFlow, context);
+                if (exec.isSuccess()) {
+                    workflowTaskComponent.completeByCode(taskCode);
+                    log.info("群聊规划执行成功：group={}, taskCode={}, round={}", targetId, taskCode, round);
+                    return;
+                }
+
+                // 4.3 执行失败：记录失败原因 + 上游节点结果，进入 replan
+                String reason = exec.getReason() != null ? exec.getReason() : "节点执行失败";
+                log.warn("群聊规划执行失败：group={}, taskCode={}, round={}, reason={}",
+                        targetId, taskCode, round, reason);
+
+                if (round >= maxRounds) {
+                    workflowTaskComponent.failByCode(taskCode, reason);
+                    return;
+                }
+                history = toNodeResultRefs(context, reason);
+                userContentForReplan = userContent + "\n[上一次执行失败，请重新规划] 失败原因：" + reason;
+            }
+        } finally {
+            clearCancelFlag(msgCode);
+        }
+    }
+
+    /** 获取群成员 Agent 编码列表（排除发言用户）；为空返回空列表。 */
+    private List<String> groupAgentCodes(String userId, String targetId) {
+        List<ChatMemberDto> members = chatGroupComponent.getGroupMembers(targetId);
+        if (CollectionUtils.isEmpty(members)) {
+            return java.util.Collections.emptyList();
+        }
+        return members.stream()
+                .filter(member -> !member.getCode().equalsIgnoreCase(userId))
+                .map(ChatMemberDto::getCode)
+                .filter(StringUtils::isNotBlank)
+                .collect(Collectors.toList());
+    }
+
+    /** 规划一次：调用 planner 生成图，并经 PlanValidator 校验；失败返回 null。 */
+    private XyFlow plan(String userId, String targetId, String conversationCode, List<String> agentCodes,
+                        String userContent, List<PlanningRequest.NodeResultRef> history, boolean isReplan) {
+        try {
+            XyFlow xyFlow = workflowPlanner.plan(new PlanningRequest(userContent, agentCodes, history));
+            String error = planValidator.validate(xyFlow);
+            if (error != null) {
+                log.warn("群聊规划校验失败：group={}, error={}", targetId, error);
+                return null;
+            }
+            return xyFlow;
+        } catch (Exception e) {
+            log.warn("群聊规划异常：group={}, err={}", targetId, e.getMessage(), e);
+            return null;
+        }
+    }
+
+    /** 将执行上下文中的 nodeResults 转成 replan 历史引用，并附上失败原因占位。 */
+    private List<PlanningRequest.NodeResultRef> toNodeResultRefs(WorkflowContext context, String failureReason) {
+        List<PlanningRequest.NodeResultRef> refs = new java.util.ArrayList<>();
+        if (context.getNodeResults() != null) {
+            context.getNodeResults().forEach((nodeId, output) ->
+                    refs.add(new PlanningRequest.NodeResultRef(nodeId, output)));
+        }
+        // 追加一条失败原因，提示 planner 上次问题
+        refs.add(new PlanningRequest.NodeResultRef("__last_error__", failureReason));
+        return refs;
     }
 }

@@ -38,7 +38,7 @@ public class SwitchNodeExecutor extends AbstractNodeExecutor {
         }
 
         String next = "id_%s".formatted(result.getOutputText());
-        endSuccess(wf, logId, task.getContextData(), next);
+        endSuccess(wf, node, logId, task.getContextData(), next);
         return NodeExecutionResult.route(next);
     }
 

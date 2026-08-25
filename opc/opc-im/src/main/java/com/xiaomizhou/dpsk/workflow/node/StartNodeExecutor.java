@@ -24,7 +24,7 @@ public class StartNodeExecutor extends AbstractNodeExecutor {
     @Override
     protected NodeExecutionResult doExecute(WorkflowContext wf, NodeContext node, WorkflowTaskDto task, NodeExecutionContext ctx) {
         Long logId = startLog(wf, node, "", wf.getContextData());
-        endSuccess(wf, logId, wf.getContextData(), null);
+        endSuccess(wf, node, logId, wf.getContextData(), null);
         log.info("start node execute!nodeId:{}", node.getNodeId());
         return NodeExecutionResult.ok();
     }

@@ -29,13 +29,16 @@ public class AgentNodeExecutor extends AbstractNodeExecutor {
 
         PipelineResult result = AgentInvoker.invoke(wf, node, task.getContextData(), node.getAgentCode());
         if (result.isSuccess()) {
-            endSuccess(wf, logId, result.getOutputText(), result.getOutputText());
-        } else {
-            // 失败时继续沿用原上下文，重试时使用上一次的 contextData
-            endFailed(wf, logId, result.getOutputText());
+            endSuccess(wf, node, logId, result.getOutputText(), result.getOutputText());
+            log.info("agent node execute!nodeId:{},result:{}", node.getNodeId(), result);
+            return NodeExecutionResult.ok();
         }
 
-        log.info("agent node execute!nodeId:{},result:{}", node.getNodeId(), result);
-        return NodeExecutionResult.ok();
+        // 失败语义：返回 success=false（携带失败原因），由 LangGraph 适配层中断整图并触发 replan；
+        // LiteFlow 适配层不检查 success，专家团失败继续跑的行为不变。
+        String reason = result.getOutputText() != null ? result.getOutputText() : "Agent 节点执行失败";
+        endFailed(wf, logId, reason);
+        log.warn("agent node execute failed!nodeId:{},reason:{}", node.getNodeId(), reason);
+        return NodeExecutionResult.fail(reason);
     }
 }

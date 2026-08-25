@@ -68,7 +68,7 @@ public class HumanConfirmNodeExecutor extends AbstractNodeExecutor {
             if (WorkflowNodeLogDO.STATUS_SUCCESS == nodeLog.getStatus()) {
                 return NodeExecutionResult.ok();
             }
-            endSuccess(wf, logId, task.getContextData(), dto.getConfirmReason());
+            endSuccess(wf, node, logId, task.getContextData(), dto.getConfirmReason());
             return NodeExecutionResult.ok();
         }
 

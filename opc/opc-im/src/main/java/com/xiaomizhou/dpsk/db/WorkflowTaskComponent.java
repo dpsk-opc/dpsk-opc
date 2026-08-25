@@ -273,6 +273,93 @@ public class WorkflowTaskComponent {
     }
 
     /**
+     * 无模板落库（群聊自主规划专用）：不校验 templateCode 发布状态，
+     * workflow_json 直接取入参；source = SOURCE_AGENT；返回落库后的任务 DTO（含 code）。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public WorkflowTaskDto addByPlan(WorkflowTaskDto task, String workflowJson) {
+        WorkflowTaskDO model = new WorkflowTaskDO();
+        model.setCode(SequenceUtils.generator().next(WFK_PREFIX));
+        model.setName(task.getName());
+        model.setOwnerCode(task.getOwnerCode());
+        model.setConversationCode(task.getConversationCode());
+        model.setAgentCode(task.getAgentCode());
+        model.setWorkflowJson(workflowJson);
+        model.setContextData(task.getContextData());
+        model.setTemplateCode("");
+        model.setTemplateVersion(0);
+        model.setStatus(WorkflowTaskDO.STATUS_PENDING);
+        model.setSource(WorkflowTaskDO.SOURCE_AGENT);
+        model.setAvatar(StringUtils.isNotBlank(task.getAvatar()) ? task.getAvatar() : "");
+        model.setInputParams("");
+        model.setScheduledTaskCode("");
+        model.setCurrentNodeId("");
+        model.setCurrentStep(0);
+        model.setErrorMessage("");
+        model.setCreateTime(new Date());
+        model.setUpdateTime(new Date());
+        workflowTaskDao.save(model);
+
+        WorkflowTaskDto result = new WorkflowTaskDto();
+        result.setCode(model.getCode());
+        result.setAvatar(model.getAvatar());
+        result.setConversationCode(model.getConversationCode());
+        result.setName(model.getName());
+        result.setStatus(model.getStatus());
+        return result;
+    }
+
+    /**
+     * replan 覆盖：全量替换 workflow_json + status 回 RUNNING + currentNodeId 清空 + errorMessage 清空。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void updateWorkflowJsonAndReset(String taskCode, String workflowJson) {
+        workflowTaskDao.lambdaUpdate()
+                .eq(WorkflowTaskDO::getCode, taskCode)
+                .eq(WorkflowTaskDO::getIsDeleted, 0)
+                .set(WorkflowTaskDO::getWorkflowJson, workflowJson)
+                .set(WorkflowTaskDO::getStatus, WorkflowTaskDO.STATUS_RUNNING)
+                .set(WorkflowTaskDO::getCurrentNodeId, "")
+                .set(WorkflowTaskDO::getCurrentStep, 0)
+                .set(WorkflowTaskDO::getErrorMessage, "")
+                .set(WorkflowTaskDO::getUpdateTime, new Date())
+                .update();
+        log.info("replan workflow json reset. taskCode={}", taskCode);
+    }
+
+    /**
+     * 任务成功收尾：status → SUCCESS，记录结束时间。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void completeByCode(String taskCode) {
+        workflowTaskDao.lambdaUpdate()
+                .eq(WorkflowTaskDO::getCode, taskCode)
+                .eq(WorkflowTaskDO::getIsDeleted, 0)
+                .set(WorkflowTaskDO::getStatus, WorkflowTaskDO.STATUS_SUCCESS)
+                .set(WorkflowTaskDO::getErrorMessage, "")
+                .set(WorkflowTaskDO::getEndTime, new Date())
+                .set(WorkflowTaskDO::getUpdateTime, new Date())
+                .update();
+        log.info("workflow task completed. taskCode={}", taskCode);
+    }
+
+    /**
+     * 任务失败收尾：status → FAILED，记录失败原因。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void failByCode(String taskCode, String errorMessage) {
+        workflowTaskDao.lambdaUpdate()
+                .eq(WorkflowTaskDO::getCode, taskCode)
+                .eq(WorkflowTaskDO::getIsDeleted, 0)
+                .set(WorkflowTaskDO::getStatus, WorkflowTaskDO.STATUS_FAILED)
+                .set(WorkflowTaskDO::getErrorMessage, errorMessage)
+                .set(WorkflowTaskDO::getEndTime, new Date())
+                .set(WorkflowTaskDO::getUpdateTime, new Date())
+                .update();
+        log.info("workflow task failed. taskCode={}, err={}", taskCode, errorMessage);
+    }
+
+    /**
      * 更新工作流任务。
      *
      * @param task

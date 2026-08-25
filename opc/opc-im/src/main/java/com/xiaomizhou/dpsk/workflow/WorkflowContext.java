@@ -28,6 +28,16 @@ public class WorkflowContext {
 
     private String conversationCode;
 
+    /** 会话类型：GROUP / WORKFLOW，AgentInvoker 据此切消息归属目标 */
+    private String conversationType;
+
+    /** 群聊时的群编码（消息归属目标），非群聊为 null */
+    private String groupCode;
+
+    /** nodeId → 节点输出文本，每节点执行完累积（replan 输入） */
+    @Builder.Default
+    private Map<String, String> nodeResults = new java.util.HashMap<>();
+
     private AgentOrchestrator orchestrator;
 
     private WorkflowTaskComponent workflowTaskComponent;

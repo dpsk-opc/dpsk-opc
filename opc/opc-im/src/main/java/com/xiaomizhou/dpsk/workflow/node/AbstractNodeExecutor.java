@@ -85,9 +85,13 @@ public abstract class AbstractNodeExecutor implements NodeExecutor {
                 wf.getTaskId(), agentCode, inputData);
     }
 
-    /** 记录节点成功结束（不修改任务状态） */
-    protected final void endSuccess(WorkflowContext wf, Long logId, String taskOutput, String nodeOutput) {
+    /** 记录节点成功结束（不修改任务状态），并将节点输出写入 nodeResults 累积（replan 输入） */
+    protected final void endSuccess(WorkflowContext wf, NodeContext node, Long logId, String taskOutput, String nodeOutput) {
         wf.getWorkflowTaskExecuteComponent().end(logId, WorkflowNodeLogDO.STATUS_SUCCESS, null, "", taskOutput, nodeOutput);
+        // 累积节点结果：nodeId → 输出文本（供 replan 使用），null 安全
+        if (wf.getNodeResults() != null) {
+            wf.getNodeResults().put(node.getNodeId(), nodeOutput != null ? nodeOutput : "");
+        }
     }
 
     /** 记录节点失败结束（任务标记为失败） */
