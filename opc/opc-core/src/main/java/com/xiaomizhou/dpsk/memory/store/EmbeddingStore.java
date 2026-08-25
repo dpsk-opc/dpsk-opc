@@ -6,6 +6,7 @@ import lombok.Data;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * 向量存储接口，用于 L2 语义检索。
@@ -82,7 +83,7 @@ public interface EmbeddingStore {
         if (filter == null || filter.isEmpty()) return true;
         for (Map.Entry<String, String> e : filter.entrySet()) {
             String actual = match.getMetadata().getString(e.getKey());
-            if (!e.getValue().equals(actual)) {
+            if (Objects.isNull(e.getValue()) || !e.getValue().equals(actual)) {
                 return false;
             }
         }

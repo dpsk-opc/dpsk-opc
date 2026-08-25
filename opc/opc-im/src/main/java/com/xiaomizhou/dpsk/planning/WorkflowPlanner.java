@@ -2,20 +2,19 @@ package com.xiaomizhou.dpsk.planning;
 
 import com.xiaomizhou.dpsk.agent.data.AgentDef;
 import com.xiaomizhou.dpsk.agent.data.AgentDefProvider;
-import com.xiaomizhou.dpsk.agent.factory.AgentComponentFactory;
+import com.xiaomizhou.dpsk.db.TokenUsageComponent;
+import com.xiaomizhou.dpsk.db.dto.UsageRecord;
 import com.xiaomizhou.dpsk.utils.JsonUtils;
 import com.xiaomizhou.dpsk.workflow.xyflow.NodeEdge;
 import com.xiaomizhou.dpsk.workflow.xyflow.NodeStep;
 import com.xiaomizhou.dpsk.workflow.xyflow.XyFlow;
 import dev.langchain4j.data.message.UserMessage;
-import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.request.ResponseFormat;
 import dev.langchain4j.model.chat.request.ResponseFormatType;
 import dev.langchain4j.model.chat.request.json.JsonArraySchema;
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 import dev.langchain4j.model.chat.request.json.JsonSchema;
-import dev.langchain4j.model.chat.response.ChatResponse;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -34,7 +33,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class WorkflowPlanner {
 
-    private final AgentComponentFactory agentComponentFactory;
+    private final LlmExecutor llmExecutor;
     private final AgentDefProvider agentDefProvider;
 
     /**
@@ -51,15 +50,17 @@ public class WorkflowPlanner {
                 request.getUserRequest(),
                 request.getHistory() != null && !request.getHistory().isEmpty());
 
-        ChatModel model = agentComponentFactory.createChatModel();
-
         // 结构化输出：以 JsonSchema 约束 planner 返回严格 JSON，避免自由文本解析失败
-        ChatResponse response = model.chat(ChatRequest.builder()
+        ChatRequest req = ChatRequest.builder()
                 .messages(UserMessage.from(prompt))
 //                .responseFormat(buildJsonResponseFormat())
-                .build());
+                .build();
 
-        String content = response.aiMessage().text();
+        UsageRecord usage = UsageRecord.builder()
+                .agentCode("PLANNER")
+                .usageType("TASK")
+                .build();
+        String content = llmExecutor.chat(req, usage);
         if (content == null || content.isBlank()) {
             throw new IllegalStateException("planner 模型未返回内容");
         }

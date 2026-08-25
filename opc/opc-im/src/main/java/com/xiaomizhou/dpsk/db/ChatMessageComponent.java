@@ -7,8 +7,8 @@ import com.xiaomizhou.dpsk.constant.FileRefType;
 import com.xiaomizhou.dpsk.constant.MessageStatus;
 import com.xiaomizhou.dpsk.db.dao.ChatMessageDao;
 import com.xiaomizhou.dpsk.db.dao.ConversationDao;
-import com.xiaomizhou.dpsk.db.dao.TokenUsageDao;
 import com.xiaomizhou.dpsk.db.dto.ChatMsgDto;
+import com.xiaomizhou.dpsk.db.dto.UsageRecord;
 import com.xiaomizhou.dpsk.db.dto.WorkflowTaskDto;
 import com.xiaomizhou.dpsk.db.model.ChatMessage;
 import com.xiaomizhou.dpsk.db.model.Conversation;
@@ -45,7 +45,7 @@ public class ChatMessageComponent {
 
     private final ChatMessageDao chatMessageDao;
 
-    private final TokenUsageDao tokenUsageDao;
+    private final TokenUsageComponent tokenUsageComponent;
 
     private final AgentComponent agentComponent;
 
@@ -193,21 +193,14 @@ public class ChatMessageComponent {
             return msgCode;
         }
         // save token
-        com.xiaomizhou.dpsk.db.model.TokenUsage usage = new com.xiaomizhou.dpsk.db.model.TokenUsage();
-        usage.setTotalTokens(token.totalTokenCount());
-        usage.setInputTokens(token.inputTokenCount());
-        usage.setOutputTokens(token.outputTokenCount());
-
-        usage.setAgentCode(dto.getSendId());
-        usage.setCode(SequenceUtils.generator().next("TKU"));
-        usage.setConversationCode(dto.getConversationCode());
-        usage.setMessageCode(msg.getCode());
-        usage.setModelName(modelName);
-        usage.setTaskId(dto.getTaskId());
-        usage.setCreateTime(new Date());
-        usage.setUpdateTime(new Date());
-
-        tokenUsageDao.save(usage);
+        tokenUsageComponent.saveUsage(UsageRecord.builder()
+                .agentCode(dto.getSendId())
+                .conversationCode(dto.getConversationCode())
+                .messageCode(msg.getCode())
+                .taskId(dto.getTaskId())
+                .modelName(modelName)
+                .tokenUsage(token)
+                .build());
 
         return msgCode;
     }
@@ -307,22 +300,14 @@ public class ChatMessageComponent {
             return msgCode;
         }
 
-
         // save token
-        com.xiaomizhou.dpsk.db.model.TokenUsage usage = new com.xiaomizhou.dpsk.db.model.TokenUsage();
-        usage.setTotalTokens(token.totalTokenCount());
-        usage.setInputTokens(token.inputTokenCount());
-        usage.setOutputTokens(token.outputTokenCount());
-
-        usage.setAgentCode(dto.getSendId());
-        usage.setCode(SequenceUtils.generator().next("TKU"));
-        usage.setConversationCode(dto.getConversationCode());
-        usage.setMessageCode(msg.getCode());
-        usage.setModelName(modelName);
-        usage.setCreateTime(new Date());
-        usage.setUpdateTime(new Date());
-
-        tokenUsageDao.save(usage);
+        tokenUsageComponent.saveUsage(UsageRecord.builder()
+                .agentCode(dto.getSendId())
+                .conversationCode(dto.getConversationCode())
+                .messageCode(msg.getCode())
+                .modelName(modelName)
+                .tokenUsage(token)
+                .build());
 
         return msg.getCode();
     }
@@ -421,20 +406,13 @@ public class ChatMessageComponent {
             return msgCode;
         }
         // save token
-        com.xiaomizhou.dpsk.db.model.TokenUsage usage = new com.xiaomizhou.dpsk.db.model.TokenUsage();
-        usage.setTotalTokens(token.totalTokenCount());
-        usage.setInputTokens(token.inputTokenCount());
-        usage.setOutputTokens(token.outputTokenCount());
-
-        usage.setAgentCode(dto.getSendId());
-        usage.setCode(SequenceUtils.generator().next("TKU"));
-        usage.setConversationCode(dto.getConversationCode());
-        usage.setMessageCode(msg.getCode());
-        usage.setModelName(modelName);
-        usage.setCreateTime(new Date());
-        usage.setUpdateTime(new Date());
-
-        tokenUsageDao.save(usage);
+        tokenUsageComponent.saveUsage(UsageRecord.builder()
+                .agentCode(dto.getSendId())
+                .conversationCode(dto.getConversationCode())
+                .messageCode(msg.getCode())
+                .modelName(modelName)
+                .tokenUsage(token)
+                .build());
 
         return msgCode;
     }

@@ -293,6 +293,11 @@ public class AgentComponentFactory {
         return applicationContext;
     }
 
+    /** 获取当前默认模型名称 */
+    public String getModelName() {
+        return modelName;
+    }
+
     // ---- 私有辅助方法 ----
     /**
      * 解析 JSON 字符串为 LlmConfigOverride，解析失败或为空时返回 null。

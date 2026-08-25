@@ -1,11 +1,10 @@
 package com.xiaomizhou.dpsk.planning;
 
-import com.xiaomizhou.dpsk.agent.factory.AgentComponentFactory;
+import com.xiaomizhou.dpsk.db.TokenUsageComponent;
+import com.xiaomizhou.dpsk.db.dto.UsageRecord;
 import com.xiaomizhou.dpsk.utils.JsonUtils;
 import dev.langchain4j.data.message.UserMessage;
-import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
-import dev.langchain4j.model.chat.response.ChatResponse;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -28,7 +27,7 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class GroupIntentClassifier {
 
-    private final AgentComponentFactory agentComponentFactory;
+    private final LlmExecutor llmExecutor;
 
     /** 消息类型 */
     public static final String INTENT_CHAT = "CHAT";
@@ -100,11 +99,14 @@ public class GroupIntentClassifier {
                 请仅输出 JSON：{"intent": "CHAT"} 或 {"intent": "TASK"}
                 """.formatted(text);
 
-        ChatModel model = agentComponentFactory.createChatModel();
-        ChatResponse response = model.chat(ChatRequest.builder()
+        ChatRequest request = ChatRequest.builder()
                 .messages(UserMessage.from(prompt))
-                .build());
-        String content = response.aiMessage().text();
+                .build();
+        UsageRecord usage = UsageRecord.builder()
+                .agentCode("INTENT_CLASSIFIER")
+                .usageType("CHAT")
+                .build();
+        String content = llmExecutor.chat(request, usage);
         if (content == null || content.isBlank()) {
             return INTENT_CHAT;
         }
