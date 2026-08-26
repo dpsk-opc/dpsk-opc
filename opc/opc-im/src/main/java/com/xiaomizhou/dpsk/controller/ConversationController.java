@@ -4,6 +4,7 @@ import com.xiaomizhou.dpsk.agent.AgentBuildSpec;
 import com.xiaomizhou.dpsk.constant.ConversationType;
 import com.xiaomizhou.dpsk.controller.vo.ConversationHttp;
 import com.xiaomizhou.dpsk.core.exceptions.BusinessException;
+import com.xiaomizhou.dpsk.core.exceptions.OpErrorCode;
 import com.xiaomizhou.dpsk.core.model.Results;
 import com.xiaomizhou.dpsk.core.model.request.Request;
 import com.xiaomizhou.dpsk.core.model.response.PageResponse;
@@ -14,10 +15,8 @@ import com.xiaomizhou.dpsk.db.FileService;
 import com.xiaomizhou.dpsk.db.chat.ChatProtocol;
 import com.xiaomizhou.dpsk.db.chat.ChatService;
 import com.xiaomizhou.dpsk.db.dao.ConversationDao;
-import com.xiaomizhou.dpsk.db.dto.ChatMsgDto;
-import com.xiaomizhou.dpsk.db.dto.ConversationDto;
-import com.xiaomizhou.dpsk.db.dto.FileRecordDto;
-import com.xiaomizhou.dpsk.db.dto.UnreadCountDto;
+import com.xiaomizhou.dpsk.db.dto.*;
+import com.xiaomizhou.dpsk.db.model.ChatMessage;
 import com.xiaomizhou.dpsk.utils.AuthContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -136,7 +135,7 @@ public class ConversationController {
      * @return
      */
     @PostMapping(value = "chat/save")
-    public Response<String> addChat(@RequestBody Request<ChatMsgDto> request) {
+    public Response<SaveMsgDto> addChat(@RequestBody Request<ChatMsgDto> request) {
         ChatMsgDto dto = request.getParam();
         if (dto == null) {
             return Results.fail("参数不能为空");
@@ -147,6 +146,7 @@ public class ConversationController {
         Integer type = dto.getConversationType();
 
         dto.setMessageType("USER");
+        String msgCode = "";
         if (ConversationType.SINGLE.getCode().equals(type)) {
             String code = chatMessageComponent.newSingleChatMsg(sendCode, dto, null, "");
 
@@ -155,18 +155,28 @@ public class ConversationController {
             }
 
             chatService.doChat(sendCode, code, dto.getMcpCodes(), dto.getSkillPaths(), dto.getImageParam());
-            return Results.ok(code);
+            msgCode = code;
         } else if (ConversationType.GROUP.getCode().equals(type)) {
             String code = chatMessageComponent.newGroupChatMsg(sendCode, dto, null, null);
             executorService.submit(() -> {
                 chatService.doChat(sendCode, code, dto.getMcpCodes(), dto.getSkillPaths(), dto.getImageParam());
             });
-            return Results.ok(code);
+            msgCode = code;
         } else if (ConversationType.WORKFLOW.getCode().equals(type)) {
             String code = chatMessageComponent.newWorkflowMsg(sendCode, dto, null, null);
             executorService.execute(() -> chatService.doChat(sendCode, code, dto.getMcpCodes(), dto.getSkillPaths(), dto.getImageParam()));
-            return Results.ok(code);
+            msgCode = code;
         }
-        return Results.fail("会话类型不支持");
+
+        ChatMessage msg = chatMessageComponent.getByCode(msgCode);
+        if (Objects.isNull(msg)) {
+            throw new BusinessException(OpErrorCode.INTERNAL_ERROR, "Unknow error.");
+        }
+
+        return Results.ok(SaveMsgDto.builder()
+                .conversationCode(msg.getConversationCode())
+                .conversationType(msg.getContentType())
+                .msgCode(msgCode)
+                .build());
     }
 }
