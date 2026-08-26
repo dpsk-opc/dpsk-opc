@@ -10,6 +10,7 @@ import com.xiaomizhou.dpsk.core.utils.WsUtils;
 import com.xiaomizhou.dpsk.core.ws.SenderInfo;
 import com.xiaomizhou.dpsk.core.ws.WsMessage;
 import com.xiaomizhou.dpsk.core.ws.WsMsgType;
+import com.xiaomizhou.dpsk.core.ws.payload.MessagePayload;
 import com.xiaomizhou.dpsk.db.*;
 import com.xiaomizhou.dpsk.db.dao.ConversationDao;
 import com.xiaomizhou.dpsk.db.dao.TokenUsageDao;
@@ -17,6 +18,7 @@ import com.xiaomizhou.dpsk.db.dto.AgentDto;
 import com.xiaomizhou.dpsk.db.dto.ChatMemberDto;
 import com.xiaomizhou.dpsk.db.dto.ChatMsgDto;
 import com.xiaomizhou.dpsk.db.dto.WorkflowTaskDto;
+import com.xiaomizhou.dpsk.db.dto.WorkflowTemplateDto;
 import com.xiaomizhou.dpsk.db.model.ChatMessage;
 import com.xiaomizhou.dpsk.db.model.Conversation;
 import com.xiaomizhou.dpsk.db.model.WorkflowNodeLogDO;
@@ -27,7 +29,6 @@ import com.xiaomizhou.dpsk.workflow.WorkflowConfirmManager;
 import com.xiaomizhou.dpsk.workflow.WorkflowContext;
 import com.xiaomizhou.dpsk.workflow.XyFlowContextBuilder;
 import com.xiaomizhou.dpsk.workflow.langgraph.LangGraphWorkflowEngine;
-import com.xiaomizhou.dpsk.workflow.liteflow.LiteFlowWorkflowEngine;
 import com.xiaomizhou.dpsk.workflow.xyflow.XyFlow;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections.CollectionUtils;
@@ -76,6 +77,8 @@ public class AgentBridge {
     private final PlanValidator planValidator;
     private final WorkflowTaskFactory workflowTaskFactory;
     private final GroupIntentClassifier groupIntentClassifier;
+    private final ExpertIntentClassifier expertIntentClassifier;
+    private final WorkflowTemplateComponent workflowTemplateComponent;
 
     @Value("${com.xiaomizhou.dpsk.opc.skill.path:~/skills}")
     private String skillPathPrefix;
@@ -112,7 +115,9 @@ public class AgentBridge {
                        WorkflowPlanner workflowPlanner,
                        PlanValidator planValidator,
                        WorkflowTaskFactory workflowTaskFactory,
-                       GroupIntentClassifier groupIntentClassifier) {
+                       GroupIntentClassifier groupIntentClassifier,
+                       ExpertIntentClassifier expertIntentClassifier,
+                       WorkflowTemplateComponent workflowTemplateComponent) {
         this.orchestrator = orchestrator;
         this.agentDefProvider = agentDefProvider;
         this.agentComponent = agentComponent;
@@ -127,6 +132,8 @@ public class AgentBridge {
         this.planValidator = planValidator;
         this.workflowTaskFactory = workflowTaskFactory;
         this.groupIntentClassifier = groupIntentClassifier;
+        this.expertIntentClassifier = expertIntentClassifier;
+        this.workflowTemplateComponent = workflowTemplateComponent;
     }
 
     /**
@@ -309,23 +316,62 @@ public class AgentBridge {
      */
     private void dispatchWorkflow(String userId, String contextData,String taskCode, String targetId, String conversationCode) {
 
-        // 构建引擎无关的 WorkflowContext（LiteFlow / LangGraph4j 通用）
         WorkflowTaskDto task = workflowTaskComponent.getByCode(taskCode);
 
         if (Objects.isNull(task)) {
             return;
         }
 
+        // 意图识别 + 相关性判断：仅对新用户消息（contextData 非空）执行；
+        // 人工确认恢复执行（contextData=""）不做拦截，直接继续跑图。
+        if (StringUtils.isNotBlank(contextData)) {
+            ExpertIntentClassifier.Verdict verdict = judgeExpertTask(contextData, task);
+            if (verdict != ExpertIntentClassifier.Verdict.PASS) {
+                sendExpertHint(verdict, userId, task, conversationCode);
+                return;
+            }
+        }
+
         XyFlow xyFlow = JsonUtils.toObj(task.getWorkflowJson(), XyFlow.class);
 
         AtomicBoolean cancelFlag = getOrCreateCancelFlag(taskCode);
 
+        // 构造引擎无关的 WorkflowContext（LangGraph4j 执行）
         WorkflowContext context = XyFlowContextBuilder.build(xyFlow, task, userId, targetId, conversationCode,
                 contextData, cancelFlag, confirmManager, orchestrator, workflowTaskComponent,
                 chatMessageComponent, tokenUsageDao, agentDefProvider, workflowTaskExecuteComponent);
 
-        // 交给 LiteFlow 引擎构建链并执行
-        new LiteFlowWorkflowEngine().execute(xyFlow, context);
+        // LangGraph 引擎执行专家团人工定义图（支持 switch / loop 等回路结构）
+        new LangGraphWorkflowEngine().execute(xyFlow, context);
+    }
+
+    /**
+     * 专家团入口意图识别：非任务或任务与专家团不相关时返回对应 Verdict，可执行返回 PASS。
+     * LLM 判断异常时保守放行（PASS）。
+     */
+    private ExpertIntentClassifier.Verdict judgeExpertTask(String userContent, WorkflowTaskDto task) {
+        WorkflowTemplateDto template = null;
+        if (StringUtils.isNotBlank(task.getTemplateCode())) {
+            template = workflowTemplateComponent.getByCode(task.getTemplateCode());
+        }
+        return expertIntentClassifier.evaluate(userContent, template);
+    }
+
+    /** 向用户推送专家团入口提示消息（非任务 / 任务与专家团不相关）。 */
+    private void sendExpertHint(ExpertIntentClassifier.Verdict verdict, String userId,
+                                WorkflowTaskDto task, String conversationCode) {
+        String hint = ExpertIntentClassifier.Verdict.NOT_TASK.equals(verdict)
+                ? "这里是「" + (task != null && StringUtils.isNotBlank(task.getName()) ? task.getName() : "专家团") + "」任务模式，请输入具体任务描述，我会帮你执行。"
+                : "您输入的内容与本专家团的能力不匹配，请描述一个与当前专家团定位相符的具体任务。";
+        try {
+            SenderInfo sender = new SenderInfo(userId, userId, "");
+            WsUtils.send(new WsMessage(WsMsgType.MESSAGE_DONE,
+                    new MessagePayload(SequenceUtils.generator().next("MSG"), conversationCode,
+                            "text", hint, sender, System.currentTimeMillis(), null, null)));
+        } catch (Exception e) {
+            log.warn("send expert hint failed, conversationCode={}, verdict={}",
+                    conversationCode, verdict, e);
+        }
     }
 
     /**

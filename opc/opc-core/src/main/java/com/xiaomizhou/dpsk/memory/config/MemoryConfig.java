@@ -20,7 +20,7 @@ public final class MemoryConfig {
     public static final int L0_MAX_TOKENS = 4000;
 
     /** L0 最大消息条数（备选限制） */
-    public static final int L0_MAX_MESSAGES = 20;
+    public static final int L0_MAX_MESSAGES = 40;
 
     // ======================== L1 摘要记忆 ========================
 

@@ -5,6 +5,9 @@ import com.xiaomizhou.dpsk.workflow.WorkflowContext;
 import com.xiaomizhou.dpsk.workflow.api.NodeExecutionResult;
 import com.xiaomizhou.dpsk.workflow.api.NodeExecutor;
 import com.xiaomizhou.dpsk.workflow.node.NodeExecutorRegistry;
+import com.xiaomizhou.dpsk.workflow.node.SwitchNodeExecutor;
+import com.xiaomizhou.dpsk.workflow.xyflow.NodeStep;
+import org.apache.commons.collections.CollectionUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.bsc.langgraph4j.action.AsyncNodeAction;
 
@@ -41,7 +44,12 @@ public class LangGraphNodeAdapter implements AsyncNodeAction<LangGraphState> {
                 throw new IllegalStateException("node config not exist! nodeId:" + nodeId);
             }
 
-            NodeExecutor executor = NodeExecutorRegistry.get(node.getNodeType());
+            // 执行器选择：多出边节点（chooseNodes 非空，即 switch 分支语义）走 SwitchNodeExecutor，
+            // 与 LiteFlow 时代 isSwitchNode 的判定一致（画布上分支节点 type 可能是 process，但出边>1 即 switch）。
+            // 其余节点按 type 从注册表取。
+            NodeExecutor executor = CollectionUtils.isNotEmpty(node.getChooseNodes())
+                    ? NodeExecutorRegistry.get(NodeStep.NODE_TYPE_SWITCH.left)
+                    : NodeExecutorRegistry.get(node.getNodeType());
             NodeExecutionResult result = executor.execute(new LangGraphNodeExecutionContext(wf, nodeId));
 
             // 失败语义：success=false → 抛异常终止整图（携带失败原因，驱动 replan）

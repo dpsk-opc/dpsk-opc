@@ -31,6 +31,7 @@ import org.springframework.context.ApplicationContext;
 
 import java.io.IOException;
 import java.net.URL;
+import java.time.Duration;
 import java.util.*;
 import java.util.function.Function;
 
@@ -163,9 +164,10 @@ public class AgentComponentFactory {
                 .baseUrl(coalesce(override.getBaseUrl(), baseUrl))
                 .modelName(coalesce(override.getModelName(), modelName))
                 .logRequests(true)
+                .timeout(Duration.ofMinutes(5))
+                .maxCompletionTokens(4096)
                 .logResponses(true)
                 .returnThinking(true)
-//                .customParameters(Map.of("thinking", Map.of("type", "enabled")))
                 .sendThinking(true);
 
         if (override.getTemperature() != null) {

@@ -62,7 +62,7 @@ public class DatabaseChatMemoryStore implements ChatMemoryStore {
         }
 
         // 使用 2x 限制获取更多消息，避免工具调用组（THINKING + TOOL）被 LIMIT 截断
-        int fetchLimit = MemoryConfig.L0_MAX_MESSAGES * 2;
+        int fetchLimit = MemoryConfig.L0_MAX_MESSAGES + 10;
         List<ChatMessage> dbMessages;
         if (key.isGroupChat()) {
             // 群聊：按 groupCode 查询所有消息，从当前 Agent 视角区分 User/AI
