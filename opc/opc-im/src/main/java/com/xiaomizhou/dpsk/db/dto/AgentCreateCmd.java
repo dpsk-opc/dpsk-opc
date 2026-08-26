@@ -85,6 +85,11 @@ public class AgentCreateCmd {
     private String llmConfig;
 
     /**
+     *  模态: 0-TEXT, 1-IMAGE, 2-VIDEO, 3-AUDIO, 4-MIXED
+     */
+    private Integer modality;
+
+    /**
      *  工具
      */
     private List<String> tools;

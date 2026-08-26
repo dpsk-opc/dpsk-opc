@@ -115,6 +115,9 @@ public class AgentComponent {
                     .or()
                     .like(Agent::getDescription, param.getKeyword()));
         }
+        if (param.getModality() != null) {
+            wrapper.eq(Agent::getModality, param.getModality());
+        }
         // 排除已删除的记录
         wrapper.eq(Agent::getIsDeleted, 0);
 
@@ -218,6 +221,7 @@ public class AgentComponent {
         agent.setDescription(cmd.getDescription());
         agent.setType(cmd.getType());
         agent.setAvatar(cmd.getAvatar());
+        agent.setModality(cmd.getModality());
         agent.setStatus("ACTIVE");
         agent.setIntegrationConfig("");
         agent.setLlmConfig(StringUtils.defaultString(cmd.getLlmConfig(), ""));
@@ -288,6 +292,9 @@ public class AgentComponent {
         }
         if (cmd.getLlmConfig() != null) {
             agent.setLlmConfig(cmd.getLlmConfig());
+        }
+        if (cmd.getModality() != null) {
+            agent.setModality(cmd.getModality());
         }
 
         agent.setIntegrationConfig(cmd.getIntegrationConfig());
@@ -516,6 +523,7 @@ public class AgentComponent {
         dto.setStatus(agent.getStatus());
         dto.setIntegrationConfig(agent.getIntegrationConfig());
         dto.setLlmConfig(agent.getLlmConfig());
+        dto.setModality(agent.getModality());
         dto.setLastActiveTime(agent.getLastActiveTime());
         dto.setCreateTime(agent.getCreateTime());
         dto.setUpdateTime(agent.getUpdateTime());

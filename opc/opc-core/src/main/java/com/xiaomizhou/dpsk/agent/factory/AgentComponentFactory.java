@@ -1,6 +1,7 @@
 package com.xiaomizhou.dpsk.agent.factory;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.google.common.collect.Maps;
 import com.xiaomizhou.dpsk.agent.AgentBuildSpec;
 import com.xiaomizhou.dpsk.agent.data.AgentDef;
 import com.xiaomizhou.dpsk.memory.MemorySystem;
@@ -19,14 +20,18 @@ import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import dev.langchain4j.memory.ChatMemory;
 import dev.langchain4j.memory.chat.MessageWindowChatMemory;
 import dev.langchain4j.model.openai.OpenAiChatModel;
+import dev.langchain4j.model.openai.OpenAiImageModel;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 import dev.langchain4j.service.tool.ToolProvider;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.compress.utils.IOUtils;
 import org.springframework.context.ApplicationContext;
 
-import java.util.Collections;
-import java.util.List;
+import java.io.IOException;
+import java.net.URL;
+import java.util.*;
 import java.util.function.Function;
 
 /**
@@ -85,7 +90,59 @@ public class AgentComponentFactory {
                 .logResponses(true)
                 .returnThinking(true)
                 .sendThinking(true)
-//                .customParameters(Map.of("thinking", Map.of("type", "enabled")))
+                .build();
+    }
+
+    public OpenAiImageModel createImageModel(String llmConfigJson, AgentBuildSpec.ImageBuildSpec imageBuildSpec) {
+        LlmConfigOverride override = parseLlmConfig(llmConfigJson);
+        if (Objects.isNull(override)) {
+            return null;
+        }
+
+        if (AgentBuildSpec.ImageBuildSpec.TYPE_TEXT2IMAGE == imageBuildSpec.getMode()) {
+
+            return OpenAiImageModel.builder()
+                    .apiKey(coalesce(override.getAccessKey(), apiKey))
+                    .baseUrl(coalesce(override.getBaseUrl(), baseUrl))
+                    .modelName(coalesce(override.getModelName(), modelName))
+                    .size(imageBuildSpec.getSize().replace("*","x"))
+                    .logRequests(true)
+                    .logResponses(true)
+                    .build();
+        }
+
+        List<String> urls = imageBuildSpec.getUrls();
+        if (CollectionUtils.isEmpty(urls)) {
+            log.warn("image to image mode urls can not be null.");
+            return null;
+        }
+
+        Map<String, Object> body = Maps.newHashMap();
+
+        body.put("image", urls.stream().map(url -> {
+
+            // open url and convert to base64
+            try {
+                byte[] bytes = IOUtils.toByteArray(new URL(url).openStream());
+                return "data:image/png;base64," + new String(Base64.getEncoder().encode(bytes));
+            } catch (IOException e) {
+                log.warn("image to image mode url open failed.", e);
+                return null;
+            }
+        }).filter(Objects::nonNull).toList());
+
+
+        Map<String, String> query = Maps.newHashMap();
+
+        query.put("extra_body", JsonUtils.toJson(body));
+
+        return OpenAiImageModel.builder()
+                .apiKey(coalesce(override.getAccessKey(), apiKey))
+                .baseUrl(coalesce(override.getBaseUrl(), baseUrl))
+                .modelName(coalesce(override.getModelName(), modelName))
+                .customQueryParams(query)
+                .logRequests(true)
+                .logResponses(true)
                 .build();
     }
 

@@ -23,8 +23,11 @@ public class AgentBuildSpec {
     /** 群聊模式 */
     public static final String MODE_GROUP = "GROUP";
 
-    /** 工作流模式（预留） */
+    /** 工作流模式 */
     public static final String MODE_WORKFLOW = "WORKFLOW";
+
+    /** 图片模式 */
+    public static final String MODE_IMAGE = "IMAGE";
 
     /** 运行模式：SINGLE / GROUP / WORKFLOW */
     private String mode;
@@ -81,4 +84,45 @@ public class AgentBuildSpec {
      *
      */
     private String prompt;
+
+    /**
+     * 图片生成规范
+     */
+    private ImageBuildSpec imageBuildSpec;
+
+
+    @Data
+    @Builder
+    public static class ImageBuildSpec {
+
+        /**
+         * 图片生成类型：0-文本生成图片
+         */
+        public static int TYPE_TEXT2IMAGE = 0;
+
+        /**
+         * 图片生成类型：1-图生图
+         */
+        public static int TYPE_IMAGE2IMAGE = 1;
+
+        private String size;
+
+        private String style;
+
+        /**
+         * 图片地址列表（图生图模式）
+         */
+        private List<String> urls;
+
+        /**
+         * 图片数量
+         */
+        private int n = 1;
+
+
+        private int mode = 0;
+
+    }
 }
+
+

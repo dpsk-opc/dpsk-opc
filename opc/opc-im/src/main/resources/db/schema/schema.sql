@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS t_agent (
     type VARCHAR(20) NOT NULL DEFAULT 'AGENT' COMMENT '类型: USER(真实用户), AGENT(AI智能体), SYSTEM(系统)',
     avatar VARCHAR(500) NOT NULL DEFAULT '' COMMENT '头像URL或本地路径',
     status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE' COMMENT '状态: ACTIVE(活跃), INACTIVE(停用), DELETING(删除中)',
+    modality tinyint(2) NOT NULL DEFAULT '0' COMMENT '模态: 0-TEXT, 1-IMAGE, 2-VIDEO, 3-AUDIO, 4-MIXED',
 
     -- 扩展配置（JSON格式，用于存储第三方Agent集成信息、能力标签等）
     integration_config TEXT NOT NULL DEFAULT ''  COMMENT '集成配置（JSON字符串），示例: {"protocol":"HTTP","endpoint":"https://api.example.com","auth":{"type":"BEARER","token":"xxx"},"capabilities":["text","image"]}',

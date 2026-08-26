@@ -85,4 +85,9 @@ public class AgentUpdateCmd {
      * 示例: {"model":"gpt-3.5-turbo","access_key":"xxx","temperature":0.7,"max_tokens":1024}
      */
     private String llmConfig;
+
+    /**
+     * 模态: 0-TEXT, 1-IMAGE, 2-VIDEO, 3-AUDIO, 4-MIXED
+     */
+    private Integer modality;
 }

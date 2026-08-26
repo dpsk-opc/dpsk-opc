@@ -111,4 +111,10 @@ public class Agent extends BaseModel {
     @TableField("last_active_time")
     private Date lastActiveTime;
 
+    /**
+     * 模态: 0-TEXT, 1-IMAGE, 2-VIDEO, 3-AUDIO, 4-MIXED
+     */
+    @TableField("modality")
+    private Integer modality;
+
 }

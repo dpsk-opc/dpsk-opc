@@ -15,7 +15,9 @@ import com.xiaomizhou.dpsk.db.dao.ConversationDao;
 import com.xiaomizhou.dpsk.db.dao.TokenUsageDao;
 import com.xiaomizhou.dpsk.db.dto.AgentDto;
 import com.xiaomizhou.dpsk.db.dto.ChatMemberDto;
+import com.xiaomizhou.dpsk.db.dto.ChatMsgDto;
 import com.xiaomizhou.dpsk.db.dto.WorkflowTaskDto;
+import com.xiaomizhou.dpsk.db.model.ChatMessage;
 import com.xiaomizhou.dpsk.db.model.Conversation;
 import com.xiaomizhou.dpsk.db.model.WorkflowNodeLogDO;
 import com.xiaomizhou.dpsk.planning.*;
@@ -203,7 +205,7 @@ public class AgentBridge {
      * @param userId  当前用户编码
      * @param msgCode 用户发送的消息编码
      */
-    public void dispatch(String userId, String msgCode,List<String> mcpCodes,List<String> skillPaths) {
+    public void dispatch(String userId, String msgCode, List<String> mcpCodes, List<String> skillPaths, ChatMsgDto.ImageGenerateDto imageGenerateDto) {
         if (StringUtils.isBlank(msgCode)) {
             return;
         }
@@ -232,11 +234,67 @@ public class AgentBridge {
         if (ConversationType.GROUP.getCode().equals(conv.getConversationType())) {
             dispatchGroup(userId, msg, targetId, conversationCode, mcpCodes);
         } else if (ConversationType.SINGLE.getCode().equals(conv.getConversationType())) {
+
+            if (Objects.nonNull(imageGenerateDto)) {
+                dispatchImageGenerate(userId, msg, targetId, conversationCode,imageGenerateDto);
+                return;
+            }
+
             dispatchSingle(userId, msg, targetId, conversationCode, mcpCodes, skillPaths);
         } else if (ConversationType.WORKFLOW.getCode().equals(conv.getConversationType())) {
             dispatchWorkflow(userId, msg.getContent(), msg.getTaskId(), targetId, conversationCode);
         } else {
             throw new IllegalArgumentException("不支持的会话类型：" + conv.getConversationType());
+        }
+    }
+
+    private void dispatchImageGenerate(String userId, ChatMessage msg, String targetId, String conversationCode, ChatMsgDto.ImageGenerateDto imageGenerateDto) {
+
+        AgentDto agent = agentComponent.getByCode(targetId);
+        if (agent == null || !Objects.equals(1, agent.getModality())) {
+            log.warn("agent is not image generate agent.");
+            return;
+        }
+
+
+
+        try {
+            // 组装 AgentBuildSpec
+            AgentBuildSpec spec = AgentBuildSpec.builder()
+                    .mode(AgentBuildSpec.MODE_IMAGE)
+                    .userCode(userId)
+                    .targetAgentCode(targetId)
+                    .userContent(msg.getContent())
+                    .conversationCode(conversationCode)
+                    .imageBuildSpec(AgentBuildSpec.ImageBuildSpec.builder()
+                            .n(imageGenerateDto.getCount())
+                            .mode(imageGenerateDto.getMode())
+                            .size(imageGenerateDto.getSize())
+                            .urls(imageGenerateDto.getUrls())
+                            .build())
+                    .build();
+
+            // 生成流式编码
+            String streamCode = SequenceUtils.generator().next("STM");
+
+            // 创建回调，注入取消标记
+            SenderInfo senderInfo = new SenderInfo(agent.getCode(), agent.getName(), agent.getAvatar());
+            ImAgentCallback callback = new ImAgentCallback(
+                    userId, conversationCode,
+                    ConversationType.SINGLE.name(), targetId, msg.getTaskId(),
+                    chatMessageComponent, tokenUsageDao, agentDefProvider);
+            callback.setStreamCode(streamCode);
+            callback.setSenderInfo(senderInfo);
+
+            callback.onEvent(AgentEvent.msgRead(agent.getCode(), msg.getCode()));
+
+            PipelineResult result = orchestrator.execute(spec, callback);
+
+            log.info("Single image chat completed: agent={}, success={}, contentLen={}",
+                    targetId, result.isSuccess(),
+                    result.getOutputText() != null ? result.getOutputText().length() : 0);
+        } catch (Exception e) {
+            log.error("dispatchImageGenerate error", e);
         }
     }
 
@@ -323,6 +381,7 @@ public class AgentBridge {
             clearCancelFlag(msgCode);
         }
     }
+
 
     /**
      * 群聊分发入口：先做意图识别，再决定走闲聊对话（CHAT）还是任务编排（TASK）。

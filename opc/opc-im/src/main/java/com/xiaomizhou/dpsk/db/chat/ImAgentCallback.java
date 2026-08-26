@@ -204,10 +204,7 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
         if (streamCode == null) {
             return;
         }
-
         try {
-
-
             msgChunkIndex.set(0);
             WsUtils.send(new WsMessage(WsMsgType.MESSAGE,
                     new StreamChunkPayload(streamCode, text, 0)));
@@ -275,6 +272,7 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
     private void handleDone(AgentEvent event) {
         Map<String, Object> meta = event.meta();
         String content = meta != null ? (String) meta.get("content") : "";
+        String contentType = meta != null ? (String) meta.get("contentType") : "text";
         Object tokenObj = meta != null ? meta.get("tokenUsage") : null;
 
         TokenUsage usage = null;
@@ -304,7 +302,7 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
                     new MessagePayload(
                             streamCode != null ? streamCode : msgCode,
                             conversationCode,
-                            "text",
+                            contentType,
                             content,
                             senderInfo,
                             System.currentTimeMillis(),

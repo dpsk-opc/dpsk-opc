@@ -95,6 +95,7 @@ public class ConversationDao extends ServiceImpl<ConversationMapper, Conversatio
                     dto.setTargetName(at.getName());
                     dto.setTargetAvatar(at.getAvatar());
                     dto.setTargetType(at.getType());
+                    dto.setModality(at.getModality());
 
                     if (StringUtils.isNotBlank(at.getLlmConfig())) {
                         HashMap map = JsonUtils.toObj(at.getLlmConfig(), HashMap.class);

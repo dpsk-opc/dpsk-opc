@@ -28,6 +28,12 @@ public class ConversationDto {
     private String targetAvatar;
 
 
+    /**
+     * 模态: 0-TEXT, 1-IMAGE, 2-VIDEO, 3-AUDIO, 4-MIXED
+     */
+    private Integer modality;
+
+
     private String lastMessage;
 
 
@@ -41,4 +47,5 @@ public class ConversationDto {
     private String targetType;
 
     private String modelName;
+
 }
