@@ -4,11 +4,13 @@ import com.xiaomizhou.dpsk.memory.assembler.ContextAssembler;
 import com.xiaomizhou.dpsk.memory.config.MemoryConfig;
 import com.xiaomizhou.dpsk.memory.config.MemoryKey;
 import com.xiaomizhou.dpsk.memory.manager.MemoryManager;
+import com.xiaomizhou.dpsk.memory.repository.ConversationRepository;
 import com.xiaomizhou.dpsk.memory.repository.MessageRepository;
 import com.xiaomizhou.dpsk.utils.MemoryUtils;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.*;
 import dev.langchain4j.store.memory.chat.ChatMemoryStore;
+import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -34,6 +36,8 @@ public class DatabaseChatMemoryStore implements ChatMemoryStore {
 
     private final ContextAssembler.AssembledPrompt assembledPrompt;
 
+    private final ConversationRepository conversationRepository;
+
     /**
      * 内存快照：memoryId -> 消息指纹列表（用于检测移出窗口的消息）
      */
@@ -47,10 +51,12 @@ public class DatabaseChatMemoryStore implements ChatMemoryStore {
      */
     public DatabaseChatMemoryStore(MessageRepository messageRepository,
                                    MemoryManager memoryManager,
-                                   ContextAssembler.AssembledPrompt assembledPrompt) {
+                                   ContextAssembler.AssembledPrompt assembledPrompt,
+                                   ConversationRepository conversationRepository) {
         this.messageRepository = Objects.requireNonNull(messageRepository, "messageRepository must not be null");
         this.memoryManager = memoryManager;
         this.assembledPrompt = Objects.requireNonNull(assembledPrompt, "assembledPrompt can not be null.");
+        this.conversationRepository = Objects.requireNonNull(conversationRepository, "conversationRepository can not be null.");
     }
 
     @Override
@@ -92,8 +98,19 @@ public class DatabaseChatMemoryStore implements ChatMemoryStore {
         dbMessages = ensureStartsWithUserMessage(dbMessages, MemoryConfig.L0_MAX_MESSAGES);
 
         List<ChatMessage> result = new ArrayList<>();
-
         result.add(SystemMessage.from(assembledPrompt.getFullPrompt()));
+
+        // 坑爹
+        if (UserMessage.findLast(result).isEmpty()) {
+            String conversationCode = key.getConversationCode();
+            String lastUserContent = conversationRepository.getLastUserContent(conversationCode);
+            if (StringUtils.isNotBlank(lastUserContent)) {
+                result.add(UserMessage.from(lastUserContent));
+            } else {
+                // 无用的，避免底层爆异常
+                result.add(UserMessage.from("xxxxx"));
+            }
+        }
         result.addAll(dbMessages);
 
         return result;

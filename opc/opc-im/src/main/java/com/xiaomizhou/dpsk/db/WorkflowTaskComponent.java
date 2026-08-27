@@ -5,17 +5,21 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.xiaomizhou.dpsk.constant.ConversationType;
 import com.xiaomizhou.dpsk.core.exceptions.BusinessException;
 import com.xiaomizhou.dpsk.db.dao.ConversationDao;
+import com.xiaomizhou.dpsk.db.dao.WorkflowNodeLogDao;
 import com.xiaomizhou.dpsk.db.dao.WorkflowTaskDao;
 import com.xiaomizhou.dpsk.db.dao.WorkflowTemplateDao;
+import com.xiaomizhou.dpsk.db.dto.WorkflowNodeProgressDto;
 import com.xiaomizhou.dpsk.db.dto.WorkflowTaskDto;
 import com.xiaomizhou.dpsk.db.dto.WorkflowTaskQueryParam;
 import com.xiaomizhou.dpsk.db.dto.WorkflowTemplateDto;
 import com.xiaomizhou.dpsk.db.model.Conversation;
+import com.xiaomizhou.dpsk.db.model.WorkflowNodeLogDO;
 import com.xiaomizhou.dpsk.db.model.WorkflowTaskDO;
 import com.xiaomizhou.dpsk.db.model.WorkflowTemplateDO;
 import com.xiaomizhou.dpsk.utils.SequenceUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.springframework.beans.BeanUtils;
@@ -24,6 +28,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Date;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 import static com.xiaomizhou.dpsk.utils.SequenceUtils.UUIDSequenceGenerator.CONVERSATION_PREFIX;
@@ -48,6 +53,8 @@ public class WorkflowTaskComponent {
 
     private final ConversationDao conversationDao;
 
+    private final WorkflowNodeLogDao workflowNodeLogDao;
+
 
     /**
      * 根据编码查询任务。
@@ -57,15 +64,21 @@ public class WorkflowTaskComponent {
                 new LambdaQueryWrapper<WorkflowTaskDO>()
                         .eq(WorkflowTaskDO::getCode, code)
                         .eq(WorkflowTaskDO::getIsDeleted, 0));
-        return convertToDto(entity);
-    }
 
+        if (entity == null) {
+            return null;
+        }
+
+        List<WorkflowNodeLogDO> logs = workflowNodeLogDao.getLogs(entity.getCode());
+
+        return convertToDto(entity,logs);
+    }
 
 
     /**
      * 分页查询任务列表。
      */
-    public ImmutablePair<Long, List<WorkflowTaskDto>> page(WorkflowTaskQueryParam param,int pageNo,int pageSize) {
+    public ImmutablePair<Long, List<WorkflowTaskDto>> page(WorkflowTaskQueryParam param, int pageNo, int pageSize) {
         LambdaQueryWrapper<WorkflowTaskDO> wrapper = new LambdaQueryWrapper<WorkflowTaskDO>()
                 .eq(WorkflowTaskDO::getIsDeleted, 0);
 
@@ -95,7 +108,9 @@ public class WorkflowTaskComponent {
                 wrapper.last("limit %s,%s".formatted((pn - 1) * ps, ps))
                         .orderByDesc(WorkflowTaskDO::getCreateTime));
 
-        List<WorkflowTaskDto> dtos = list.stream().map(this::convertToDto).toList();
+        Map<String, List<WorkflowNodeLogDO>> logs = workflowNodeLogDao.getLogsByTaskCodes(list.stream().map(WorkflowTaskDO::getCode).toList());
+
+        List<WorkflowTaskDto> dtos = list.stream().map(entity -> convertToDto(entity, logs.get(entity.getCode()))).toList();
         return ImmutablePair.of(cnt, dtos);
     }
 
@@ -145,7 +160,7 @@ public class WorkflowTaskComponent {
 
     // ======================== 模型转换 ========================
 
-    private WorkflowTaskDto convertToDto(WorkflowTaskDO entity) {
+    private WorkflowTaskDto convertToDto(WorkflowTaskDO entity,List<WorkflowNodeLogDO> logs) {
         if (entity == null) return null;
 
         WorkflowTaskDto dto = new WorkflowTaskDto();
@@ -174,6 +189,19 @@ public class WorkflowTaskComponent {
         dto.setUpdateTime(entity.getUpdateTime());
         dto.setTaskInfo(entity.getTaskInfo());
         dto.setAvatar(entity.getAvatar());
+
+        if (CollectionUtils.isNotEmpty(logs)) {
+            dto.setProgressChain(logs.stream().map(log -> {
+                WorkflowNodeProgressDto p = new WorkflowNodeProgressDto();
+                p.setStatus(log.getStatus());
+                p.setAgentCode(log.getAgentCode());
+                p.setNodeId(log.getNodeId());
+                p.setNodeName(log.getNodeName());
+                p.setNodeType(log.getNodeType());
+                return p;
+            }).toList());
+        }
+
         return dto;
     }
 

@@ -78,7 +78,8 @@ public class TodoComponent {
 
             TaskCreateCmd task = new TaskCreateCmd();
             task.setSource(Task.SOURCE_USER);
-            task.setTaskType(Task.TYPE_TODO);
+
+            task.setTaskType(Task.TYPE_SCHEDULED);
             task.setName(cmd.getTitle());
             task.setParameters(JsonUtils.toJson(map));
             task.setAgentCode(cmd.getRefCode());
@@ -148,7 +149,7 @@ public class TodoComponent {
             } else {
                 TaskCreateCmd task = new TaskCreateCmd();
                 task.setSource(Task.SOURCE_USER);
-                task.setTaskType(Task.TYPE_TODO);
+                task.setTaskType(Task.TYPE_SCHEDULED);
                 task.setName(cmd.getTitle());
                 task.setParameters(JsonUtils.toJson(map));
                 task.setAgentCode(existing.getAgentCode());
@@ -274,12 +275,11 @@ public class TodoComponent {
         if (date == null) return null;
         Calendar cal = Calendar.getInstance();
         cal.setTime(date);
-        return String.format("0 %d %d %d %d ? %d",
+        return String.format("0 %d %d %d %d ?",
                 cal.get(Calendar.MINUTE),
                 cal.get(Calendar.HOUR_OF_DAY),
                 cal.get(Calendar.DAY_OF_MONTH),
-                cal.get(Calendar.MONTH) + 1,
-                cal.get(Calendar.YEAR));
+                cal.get(Calendar.MONTH) + 1);
     }
 
 }

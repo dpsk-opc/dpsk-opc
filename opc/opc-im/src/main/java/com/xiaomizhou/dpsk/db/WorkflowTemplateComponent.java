@@ -126,7 +126,7 @@ public class WorkflowTemplateComponent {
         existing.setUpdateTime(new Date());
 
         workflowTemplateDao.updateById(existing);
-        log.info("更新工作流模板成功: code={}, version={}", cmd.getId(), existing.getVersion());
+        log.debug("更新工作流模板成功: code={}, version={}", cmd.getId(), existing.getVersion());
 
         return convertToDto(existing);
     }
@@ -145,7 +145,7 @@ public class WorkflowTemplateComponent {
         if (!result) {
             throw BusinessException.notFound("工作流模板不存在: " + code);
         }
-        log.info("删除工作流模板成功: code={}", code);
+        log.debug("删除工作流模板成功: code={}", code);
     }
 
     /**

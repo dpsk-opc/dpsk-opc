@@ -7,6 +7,7 @@ import com.xiaomizhou.dpsk.memory.manager.FactManager;
 import com.xiaomizhou.dpsk.memory.manager.KnowledgeManager;
 import com.xiaomizhou.dpsk.memory.manager.MemoryManager;
 import com.xiaomizhou.dpsk.memory.manager.SummaryManager;
+import com.xiaomizhou.dpsk.memory.repository.ConversationRepository;
 import com.xiaomizhou.dpsk.memory.repository.MemorySummaryRepository;
 import com.xiaomizhou.dpsk.memory.repository.MessageRepository;
 import com.xiaomizhou.dpsk.memory.store.DatabaseChatMemoryStore;
@@ -60,6 +61,8 @@ public class MemorySystem {
 
     private final MessageRepository messageRepository;
 
+    private final ConversationRepository conversationRepository;
+
     private MemorySystem(Builder builder) {
         // 构建 L1（可选）
         SummaryManager sm = null;
@@ -100,10 +103,11 @@ public class MemorySystem {
         this.knowledgeManager = km;
         this.memoryManager = mm;
         this.messageRepository = builder.messageRepository;
+        this.conversationRepository = builder.conversationRepository;
     }
 
     public DatabaseChatMemoryStore getChatMemoryStore(ContextAssembler.AssembledPrompt prompt) {
-        return new DatabaseChatMemoryStore(messageRepository, memoryManager, prompt);
+        return new DatabaseChatMemoryStore(messageRepository, memoryManager, prompt, conversationRepository);
     }
 
     public ContextAssembler getContextAssembler() {
@@ -153,6 +157,7 @@ public class MemorySystem {
         private ExecutorService executorService;
         private ToolRegistry toolRegistry;
         private AgentDefProvider agentDefProvider;
+        private ConversationRepository conversationRepository;
 
         /**
          * 必填：消息仓储
@@ -230,6 +235,11 @@ public class MemorySystem {
 
         public Builder agentDefProvider(AgentDefProvider provider) {
             this.agentDefProvider = provider;
+            return this;
+        }
+
+        public Builder conversationRepository(ConversationRepository repo) {
+            this.conversationRepository = repo;
             return this;
         }
 
