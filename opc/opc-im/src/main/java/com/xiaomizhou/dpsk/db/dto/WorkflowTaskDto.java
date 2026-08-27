@@ -82,6 +82,9 @@ public class WorkflowTaskDto {
     /** 创建者编码 */
     private String ownerCode;
 
+    /** 任务信息 */
+    private String taskInfo;
+
     /** 创建时间 */
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss", timezone = "GMT+8")
     private Date createTime;

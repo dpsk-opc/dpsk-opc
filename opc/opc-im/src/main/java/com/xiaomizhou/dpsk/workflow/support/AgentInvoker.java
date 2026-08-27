@@ -45,11 +45,17 @@ public final class AgentInvoker {
             callback.setSenderInfo(senderInfo);
         }
 
+        String taskDetail = """
+                任务详情： [%s]
+                
+                你的任务输入：[%s]
+                """.formatted(wf.getContextData(), userContent);
+
         AgentBuildSpec spec = AgentBuildSpec.builder()
                 .mode(AgentBuildSpec.MODE_WORKFLOW)
                 .userCode(wf.getUserId())
                 .targetAgentCode(node.getAgentCode())
-                .userContent(userContent)
+                .userContent(taskDetail)
                 .conversationCode(wf.getConversationCode())
                 .mcpCodes(node.getMcpCodes())
                 .skillPaths(node.getSkillPaths())

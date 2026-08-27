@@ -245,7 +245,7 @@ public class WorkflowBuilder implements AgentBuilder {
                     @Override
                     public ToolErrorHandlerResult handle(Throwable error, ToolErrorContext context) {
                         log.error("tool arguments error:", error);
-                        return ToolErrorHandlerResult.text("llm执行错误.");
+                        return ToolErrorHandlerResult.text("工具参数错误. e:" + error.getMessage());
                     }
                 })
 
@@ -255,7 +255,7 @@ public class WorkflowBuilder implements AgentBuilder {
                     return factory.createChatMemory(spec);
                 })
                 .returnType(TokenStream.class)
-                .maxToolCallingRoundTrips(25)
+                .maxToolCallingRoundTrips(100)
                 .build();
     }
 

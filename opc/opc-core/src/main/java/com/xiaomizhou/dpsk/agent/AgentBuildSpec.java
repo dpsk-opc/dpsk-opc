@@ -86,6 +86,11 @@ public class AgentBuildSpec {
     private String prompt;
 
     /**
+     * 是否启用思考模式
+     */
+    private boolean enableThinking;
+
+    /**
      * 图片生成规范
      */
     private ImageBuildSpec imageBuildSpec;

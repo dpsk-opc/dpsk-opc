@@ -33,6 +33,7 @@ public class WorkflowTaskFactory {
         task.setAgentCode(agentCode);
         task.setName(name);
         task.setContextData(contextData);
+        task.setTaskInfo(contextData);
         return workflowTaskComponent.addByPlan(task, workflowJson);
     }
 }

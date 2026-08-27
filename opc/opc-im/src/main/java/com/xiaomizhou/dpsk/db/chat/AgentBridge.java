@@ -314,7 +314,7 @@ public class AgentBridge {
      * @param targetId
      * @param conversationCode
      */
-    private void dispatchWorkflow(String userId, String contextData,String taskCode, String targetId, String conversationCode) {
+    public void dispatchWorkflow(String userId, String contextData,String taskCode, String targetId, String conversationCode) {
 
         WorkflowTaskDto task = workflowTaskComponent.getByCode(taskCode);
 

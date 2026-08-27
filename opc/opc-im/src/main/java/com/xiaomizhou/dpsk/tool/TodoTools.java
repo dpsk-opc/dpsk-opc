@@ -14,7 +14,6 @@ import org.springframework.stereotype.Component;
 
 import java.util.Date;
 import java.util.List;
-import java.util.Objects;
 import java.util.stream.Collectors;
 
 /**
@@ -199,7 +198,7 @@ public class TodoTools {
                 return "查询待办列表失败：缺少透传参数 agentCode，请检查上下文是否已初始化";
             }
 
-            var pair = todoComponent.pageByAgent(agentCode, status, 1, 50);
+            var pair = todoComponent.page(agentCode, status, 1, 50);
             List<TodoItemDto> list = pair.getRight();
 
             if (list.isEmpty()) {

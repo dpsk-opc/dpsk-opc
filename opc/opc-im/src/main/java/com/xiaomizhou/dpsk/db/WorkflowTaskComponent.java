@@ -172,6 +172,7 @@ public class WorkflowTaskComponent {
         dto.setOwnerCode(entity.getOwnerCode());
         dto.setCreateTime(entity.getCreateTime());
         dto.setUpdateTime(entity.getUpdateTime());
+        dto.setTaskInfo(entity.getTaskInfo());
         dto.setAvatar(entity.getAvatar());
         return dto;
     }
@@ -229,6 +230,7 @@ public class WorkflowTaskComponent {
         model.setStatus(WorkflowTaskDO.STATUS_PENDING);
         model.setSource(WorkflowTaskDO.SOURCE_USER);
         model.setName(task.getName());
+        model.setTaskInfo(task.getContextData());
 
 
         if (StringUtils.isBlank(task.getAvatar())) {
@@ -295,6 +297,7 @@ public class WorkflowTaskComponent {
         model.setScheduledTaskCode("");
         model.setCurrentNodeId("");
         model.setCurrentStep(0);
+        model.setTaskInfo(task.getTaskInfo());
         model.setErrorMessage("");
         model.setCreateTime(new Date());
         model.setUpdateTime(new Date());

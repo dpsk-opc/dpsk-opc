@@ -1,15 +1,16 @@
 package com.xiaomizhou.dpsk.task.consumer;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.xiaomizhou.dpsk.core.utils.WsUtils;
 import com.xiaomizhou.dpsk.core.ws.SenderInfo;
 import com.xiaomizhou.dpsk.core.ws.WsMessage;
 import com.xiaomizhou.dpsk.core.ws.WsMsgType;
-import com.xiaomizhou.dpsk.core.ws.payload.MessagePayload;
 import com.xiaomizhou.dpsk.db.AgentComponent;
+import com.xiaomizhou.dpsk.db.WorkflowTaskComponent;
+import com.xiaomizhou.dpsk.db.chat.AgentBridge;
 import com.xiaomizhou.dpsk.db.dao.TodoItemDao;
 import com.xiaomizhou.dpsk.db.dto.AgentDto;
+import com.xiaomizhou.dpsk.db.dto.WorkflowTaskDto;
 import com.xiaomizhou.dpsk.db.model.TodoItemDO;
 import com.xiaomizhou.dpsk.task.model.Task;
 import com.xiaomizhou.dpsk.task.model.TaskConsumeResult;
@@ -24,6 +25,8 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
+
+import static com.xiaomizhou.dpsk.db.model.TodoItemDO.REF_TYPE_AGENT;
 
 /**
  * 待办到期消费者 — 待办到期时通过 WebSocket 推送给前端。
@@ -49,7 +52,12 @@ public class AgentTodoConsumer implements TaskConsumer {
     public static final String TODO_REMIND = "todo_remind";
 
     private final TodoItemDao todoItemDao;
+
     private final AgentComponent agentComponent;
+
+    private final AgentBridge agentBridge;
+
+    private final WorkflowTaskComponent taskComponent;
 
     @Override
     public String getConsumerKey() {
@@ -68,9 +76,11 @@ public class AgentTodoConsumer implements TaskConsumer {
             String todoCode = MapUtils.getString(params, "todo_code");
             String agentCode = MapUtils.getString(params,"agent_code");
             String conversationCode = MapUtils.getString(params,"conversation_code");
+            String refCode = MapUtils.getString(params,"ref_code");
+            Integer refType = MapUtils.getInteger(params,"ref_type");
 
-            if (StringUtils.isAnyBlank(todoCode, agentCode)) {
-                return TaskConsumeResult.fail("Missing required parameters: todo_code or agent_code");
+            if (StringUtils.isAnyBlank(todoCode, refCode)) {
+                return TaskConsumeResult.fail("Missing required parameters: todo_code or ref_code");
             }
 
             // 2. 查询待办详情
@@ -83,38 +93,80 @@ public class AgentTodoConsumer implements TaskConsumer {
                 return TaskConsumeResult.fail("Todo not found: " + todoCode);
             }
 
-            // 3. 查询 agent 信息用于 sender
-            AgentDto agent = agentComponent.getByCode(agentCode);
-            SenderInfo senderInfo = new SenderInfo(
-                    agentCode,
-                    Objects.isNull(agent) ? "" : agent.getName(),
-                    Objects.isNull(agent) ? "" : agent.getAvatar());
+            // agent 通知
+            if (REF_TYPE_AGENT.equals(refType)) {
+                // 3. 查询 agent 信息用于 sender
+                AgentDto agent = agentComponent.getByCode(agentCode);
+                SenderInfo senderInfo = new SenderInfo(
+                        agentCode,
+                        Objects.isNull(agent) ? "" : agent.getName(),
+                        Objects.isNull(agent) ? "" : agent.getAvatar());
 
-            // 4. 构建待办提醒 payload
-            Map<String, Object> todoPayload = new LinkedHashMap<>();
-            todoPayload.put("todoCode", todo.getCode());
-            todoPayload.put("title", todo.getTitle());
-            todoPayload.put("content", todo.getContent());
-            todoPayload.put("alarmSound", todo.getAlarmSound());
-            todoPayload.put("conversationCode", conversationCode);
-            todoPayload.put("agentCode", agentCode);
-            todoPayload.put("dueTime", todo.getDueTime() != null ? todo.getDueTime().getTime() : null);
-            todoPayload.put("status", todo.getStatus());
+                // 4. 构建待办提醒 payload
+                Map<String, Object> todoPayload = new LinkedHashMap<>();
+                todoPayload.put("todoCode", todo.getCode());
+                todoPayload.put("title", todo.getTitle());
+                todoPayload.put("content", todo.getContent());
+                todoPayload.put("alarmSound", todo.getAlarmSound());
+                todoPayload.put("conversationCode", conversationCode);
+                todoPayload.put("agentCode", agentCode);
+                todoPayload.put("dueTime", todo.getDueTime() != null ? todo.getDueTime().getTime() : null);
+                todoPayload.put("status", todo.getStatus());
 
-            // 5. 通过 WebSocket 推送
-            try {
-                WsUtils.send(new WsMessage(WsMsgType.TODO_REMIND, todoPayload));
-                log.info("AgentTodoConsumer: WS 推送待办提醒成功, todoCode={}, taskCode={}", todoCode, taskCode);
-            } catch (Exception e) {
-                log.warn("AgentTodoConsumer: WS 推送待办提醒失败, todoCode={}, taskCode={}", todoCode, taskCode, e);
-                // WS 推送失败不影响任务执行结果
+                // 5. 通过 WebSocket 推送
+                try {
+                    WsUtils.send(new WsMessage(WsMsgType.TODO_REMIND, todoPayload));
+                    log.info("AgentTodoConsumer: WS 推送待办提醒成功, todoCode={}, taskCode={}", todoCode, taskCode);
+                } catch (Exception e) {
+                    log.warn("AgentTodoConsumer: WS 推送待办提醒失败, todoCode={}, taskCode={}", todoCode, taskCode, e);
+                    // WS 推送失败不影响任务执行结果
+                }
+
+                return TaskConsumeResult.ok("Todo remind sent, todoCode=" + todoCode);
             }
 
-            return TaskConsumeResult.ok("Todo remind sent, todoCode=" + todoCode);
-
+            // 处理workflow
+            handleWorkflow(refCode, conversationCode, todoCode);
+            return TaskConsumeResult.ok("专家团任务触发" + todoCode);
         } catch (Exception e) {
             log.error("AgentTodoConsumer failed: task={}", taskCode, e);
             return TaskConsumeResult.fail(e.getMessage());
         }
+    }
+
+    private void handleWorkflow(String workflowCode, String conversationCode,String todoCode) {
+
+        if (StringUtils.isAnyBlank(workflowCode, conversationCode, todoCode)) {
+            return;
+        }
+
+        TodoItemDO todo = todoItemDao.getByCode(todoCode);
+        if (Objects.isNull(todo) || TodoItemDO.STATUS_PENDING != todo.getStatus()) {
+            log.warn("AgentTodoConsumer: 专家团待办不存在或者不是待办状态, todoCode={}", todoCode);
+            return;
+        }
+
+        boolean no = !todoItemDao.lambdaUpdate().set(TodoItemDO::getStatus, TodoItemDO.STATUS_IN_PROGRESS).eq(TodoItemDO::getCode, todoCode).eq(TodoItemDO::getStatus, TodoItemDO.STATUS_PENDING).update();
+        if (no) {
+            log.warn("AgentTodoConsumer: 专家团待办状态更新失败, todoCode={}", todoCode);
+            return;
+        }
+
+        WorkflowTaskDto task = new WorkflowTaskDto();
+
+        task.setTaskInfo(todo.getContent());
+        task.setOwnerCode("");
+        task.setTemplateCode(workflowCode);
+        task.setConversationCode(conversationCode);
+        task.setContextData(todo.getContent());
+        task.setName(todo.getTitle());
+
+        WorkflowTaskDto add = taskComponent.add(task);
+
+        // 发起任务
+        agentBridge.dispatchWorkflow("", todo.getContent(), add.getCode(), todo.getRefCode(), todo.getConversationCode());
+
+        // 更新状态
+        todoItemDao.lambdaUpdate().set(TodoItemDO::getStatus, TodoItemDO.STATUS_DONE).eq(TodoItemDO::getCode, todoCode).eq(TodoItemDO::getStatus, TodoItemDO.STATUS_IN_PROGRESS).update();
     }
 }

@@ -2,6 +2,7 @@ package com.xiaomizhou.dpsk.tool.buildin;
 
 import com.xiaomizhou.dpsk.tool.ToolMeta;
 import dev.langchain4j.agent.tool.P;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 
@@ -10,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Stream;
 
@@ -18,6 +20,7 @@ import java.util.stream.Stream;
  * @date 2026/6/1 13:56
  * @description
  */
+@Slf4j
 @ToolMeta(value = "文件工具", level = "normal")
 public class FileTools {
 
@@ -89,7 +92,6 @@ public class FileTools {
         }
     }
 
-    @Tool(name = "read_whole_file", description = "读取整个文件内容（文本）")
     @dev.langchain4j.agent.tool.Tool(name = "read_whole_file", value = "读取整个文件内容（文本）")
     public String readWholeFile(
             @ToolParam(description = "文件路径")
@@ -155,10 +157,11 @@ public class FileTools {
             if (file.getParent() != null) {
                 Files.createDirectories(file.getParent());
             }
-            Files.write(file, content.getBytes(StandardCharsets.UTF_8),
+            Files.writeString(file, content,
                     StandardOpenOption.CREATE, StandardOpenOption.APPEND);
             return "成功追加内容到文件: " + file.toAbsolutePath();
         } catch (IOException e) {
+            log.error("appendToFile error", e);
             return "追加文件失败: " + e.getMessage();
         }
     }
@@ -183,13 +186,10 @@ public class FileTools {
 
             // 拆分内容为多行
             String[] linesToInsert = content.split("\\R", -1);
-            List<String> newLines = new ArrayList<>();
             // 插入点前部分
-            newLines.addAll(allLines.subList(0, lineNumber - 1));
+            List<String> newLines = new ArrayList<>(allLines.subList(0, lineNumber - 1));
             // 插入新内容
-            for (String line : linesToInsert) {
-                newLines.add(line);
-            }
+            newLines.addAll(Arrays.asList(linesToInsert));
             // 插入点后部分
             newLines.addAll(allLines.subList(lineNumber - 1, allLines.size()));
 
@@ -199,6 +199,7 @@ public class FileTools {
                     file.toAbsolutePath(), lineNumber, allLines.size(), newLines.size());
 
         } catch (IOException e) {
+            log.error("insertIntoFile error", e);
             return "插入文件失败: " + e.getMessage();
         }
     }
@@ -236,13 +237,6 @@ public class FileTools {
     // 工具方法：路径解析与安全检查
     private Path resolvePath(String userPath) throws IOException {
         Path p = Paths.get(userPath).normalize();
-        if (BASE_DIR != null) {
-            Path base = BASE_DIR.toAbsolutePath().normalize();
-            Path absolute = p.toAbsolutePath().normalize();
-            if (!absolute.startsWith(base)) {
-                throw new IOException("访问被拒绝：路径超出允许范围");
-            }
-        }
         return p;
     }
 
