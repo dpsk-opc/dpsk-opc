@@ -1,5 +1,6 @@
 package com.xiaomizhou.dpsk.memory.store;
 
+import com.google.common.collect.Lists;
 import com.xiaomizhou.dpsk.memory.assembler.ContextAssembler;
 import com.xiaomizhou.dpsk.memory.config.MemoryConfig;
 import com.xiaomizhou.dpsk.memory.config.MemoryKey;
@@ -10,6 +11,7 @@ import com.xiaomizhou.dpsk.utils.MemoryUtils;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.*;
 import dev.langchain4j.store.memory.chat.ChatMemoryStore;
+import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -84,36 +86,56 @@ public class DatabaseChatMemoryStore implements ChatMemoryStore {
                     key.getConversationCode(), key.getOwnerCode(), fetchLimit);
         }
 
+        // 不会出现
+        if (CollectionUtils.isEmpty(dbMessages)) {
+            return List.of();
+        }
+
+
+        List<ChatMessage> result = Lists.newArrayList();
+
+        // 补系统消息
+        ChatMessage smsg = dbMessages.get(0);
+        if (!(smsg instanceof SystemMessage)) {
+            result.add(SystemMessage.from(assembledPrompt.getFullPrompt()));
+        }
+
+
+        //补用户消息： 如果用户消息被挤出窗口，需要把用户消息重新赛回去防止动态查找工具的时候报错
+        UserMessage um = UserMessage.findLast(dbMessages).orElse(null);
+        if (Objects.isNull(um)) {
+            log.warn("user message was evicted,and now add a empty user message. memoryId: {}", memoryId);
+            String conversationCode = key.getConversationCode();
+            String lastUserContent = conversationRepository.getLastUserContent(conversationCode);
+            if (StringUtils.isNotBlank(lastUserContent)) {
+                result.add(UserMessage.from(lastUserContent));
+                log.warn("a real lastUserContent: {}", lastUserContent);
+            } else {
+                // 无用的，避免底层爆异常
+                result.add(UserMessage.from("xxxxx"));
+                log.warn("a empty lastUserContent: {}", lastUserContent);
+            }
+        }
+
+
         // 去掉最后一个 UserMessage（如果存在），原因是Langchain4j在构建UserMessage()会append一个消息，同一条数据也会从db查出来，导致有两条一模一样的消息发给LLM
 
         // 确保工具调用消息配对完整（THINKING 的 call_id 与 TOOL 的 id 必须成对）
         dbMessages = ensureToolPairing(dbMessages);
 
         // 裁剪到 L0_MAX_MESSAGES，但不切断 THINKING-TOOL 工具调用组
-        dbMessages = trimKeepLatest(dbMessages, MemoryConfig.L0_MAX_MESSAGES);
-
-        // 修正：如果裁剪后第一条消息是 THINKING/TOOL，说明前面的 UserMessage 被淘汰了。
-        // LangChain4j 框架后续需要找到最近的一条 UserMessage，找不到会报错。
-        // 此时应主动淘汰最早的一组 THINKING+TOOL 对，腾出空间让 UserMessage 能保留下来。
-        dbMessages = ensureStartsWithUserMessage(dbMessages, MemoryConfig.L0_MAX_MESSAGES);
-
-        List<ChatMessage> result = new ArrayList<>();
-        result.add(SystemMessage.from(assembledPrompt.getFullPrompt()));
-
-        // 坑爹
-        if (UserMessage.findLast(result).isEmpty()) {
-            String conversationCode = key.getConversationCode();
-            String lastUserContent = conversationRepository.getLastUserContent(conversationCode);
-            if (StringUtils.isNotBlank(lastUserContent)) {
-                result.add(UserMessage.from(lastUserContent));
-            } else {
-                // 无用的，避免底层爆异常
-                result.add(UserMessage.from("xxxxx"));
-            }
+        if (CollectionUtils.isNotEmpty(result)) {
+            int size = MemoryConfig.L0_MAX_MESSAGES - result.size();
+            dbMessages = trimKeepLatest(dbMessages, size);
         }
-        result.addAll(dbMessages);
 
-        return result;
+//        // 修正：如果裁剪后第一条消息是 THINKING/TOOL，说明前面的 UserMessage 被淘汰了。
+//        // LangChain4j 框架后续需要找到最近的一条 UserMessage，找不到会报错。
+//        // 此时应主动淘汰最早的一组 THINKING+TOOL 对，腾出空间让 UserMessage 能保留下来。
+//        dbMessages = ensureStartsWithUserMessage(dbMessages, MemoryConfig.L0_MAX_MESSAGES);
+
+        result.addAll(dbMessages);
+        return new ArrayList<>(dbMessages);
     }
 
     @Override
