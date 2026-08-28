@@ -1,5 +1,6 @@
 package com.xiaomizhou.dpsk.tool;
 
+import com.google.common.collect.Maps;
 import com.xiaomizhou.dpsk.tool.buildin.CommandTools;
 import com.xiaomizhou.dpsk.tool.buildin.FileTools;
 import com.xiaomizhou.dpsk.tool.buildin.LoadSkillTools;
@@ -9,11 +10,15 @@ import com.xiaomizhou.dpsk.tool.repository.ToolRepository;
 import dev.langchain4j.community.tool.webscraper.WebScraperTool;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.DependsOn;
 import org.springframework.stereotype.Component;
+
+import java.util.Map;
 
 /**
  * 工具系统自动配置。
@@ -28,7 +33,32 @@ import org.springframework.stereotype.Component;
  */
 @Configuration
 @Slf4j
+@EnableConfigurationProperties(ToolConfiguration.PrivateProperties.class)
 public class ToolConfiguration {
+
+    /**
+     * 私有密钥配置，供工具参数中的敏感占位符替换使用。
+     * <p>
+     * 配置示例（application.properties）：
+     * <pre>
+     * com.xiaomizhou.dpsk.opc.privatekey.properties.AGNES_IMG_PRIVATE_KEY=sk-xxx
+     * </pre>
+     * 其中 map 的 key（如 AGNES_IMG_PRIVATE_KEY）是参数值中的占位符，
+     * value 是执行时替换进去的真实密钥。
+     */
+    @ConfigurationProperties(prefix = "com.xiaomizhou.dpsk.opc.privatekey")
+    public static class PrivateProperties {
+        private Map<String, String> properties;
+
+        public Map<String, String> getProperties() {
+            return properties;
+        }
+
+        public void setProperties(Map<String, String> properties) {
+            this.properties = properties;
+        }
+    }
+
 
     @Configuration
     @Slf4j
@@ -104,8 +134,9 @@ public class ToolConfiguration {
     public ToolInvocationInterceptor toolInvocationInterceptor(
             ToolRegistry toolRegistry,
             ToolAuditLogger toolAuditLogger,
-            ToolConfirmationManager toolConfirmationManager) {
-        return new ToolInvocationInterceptor(toolRegistry, toolAuditLogger, toolConfirmationManager);
+            ToolConfirmationManager toolConfirmationManager,
+            PrivateProperties privateProperties) {
+        return new ToolInvocationInterceptor(toolRegistry, toolAuditLogger, toolConfirmationManager, new PrivateParameterReplacer(privateProperties.properties));
     }
 
     @Bean

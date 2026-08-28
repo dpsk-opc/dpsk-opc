@@ -74,6 +74,7 @@ public class LocalToolExecutor implements ToolExecutor {
             return "";
         }
         if (result instanceof String s) {
+            log.info("Invoke local tool success: result: {}", result);
             return s;
         }
         return result.toString();

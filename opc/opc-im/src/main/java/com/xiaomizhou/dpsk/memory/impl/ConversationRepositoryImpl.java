@@ -2,6 +2,7 @@ package com.xiaomizhou.dpsk.memory.impl;
 
 import com.xiaomizhou.dpsk.db.ChatMessageComponent;
 import com.xiaomizhou.dpsk.db.dao.ConversationDao;
+import com.xiaomizhou.dpsk.db.model.ChatMessage;
 import com.xiaomizhou.dpsk.db.model.Conversation;
 import com.xiaomizhou.dpsk.memory.repository.ConversationRepository;
 import lombok.RequiredArgsConstructor;
@@ -28,10 +29,14 @@ public class ConversationRepositoryImpl implements ConversationRepository {
         }
 
         Conversation conv = conversationDao.getOneByCode(conversationCode);
-        if(Objects.isNull(conv) || StringUtils.isBlank(conv.getLastUserMessageCode())){
+        if (Objects.isNull(conv) || StringUtils.isBlank(conv.getLastUserMessageCode())) {
             return " ";
         }
 
-        return chatMessageComponent.getByCode(conv.getLastUserMessageCode()).getContent();
+        ChatMessage msg = chatMessageComponent.getByCode(conv.getLastUserMessageCode());
+        if (Objects.isNull(msg)) {
+            return " ";
+        }
+        return msg.getContent();
     }
 }
