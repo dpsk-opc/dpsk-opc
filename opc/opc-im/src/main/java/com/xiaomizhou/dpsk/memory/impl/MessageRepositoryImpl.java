@@ -252,7 +252,7 @@ public class MessageRepositoryImpl implements MessageRepository {
         String userMsgCode = Objects.isNull(lastUserMsg) || Objects.isNull(lastUserMsg.attributes()) ? "" : MapUtils.getString(lastUserMsg.attributes(),"code");
 
         // 用户消息在ChatService已经保存过了
-        messages = messages.stream()
+        List<ChatMessage> msgs = messages.stream()
                 .filter(Objects::nonNull)
                 .filter(message -> message instanceof ToolExecutionResultMessage || message instanceof AiMessage)
                 .distinct()
@@ -262,7 +262,7 @@ public class MessageRepositoryImpl implements MessageRepository {
             return;
         }
         Conversation conv = conversationDao.getOneByCode(memoryKey.getConversationCode());
-        messages.forEach(msg -> {
+        msgs.forEach(msg -> {
 
             com.xiaomizhou.dpsk.db.model.ChatMessage model = new com.xiaomizhou.dpsk.db.model.ChatMessage();
             ToolMsgDto tool = new ToolMsgDto();

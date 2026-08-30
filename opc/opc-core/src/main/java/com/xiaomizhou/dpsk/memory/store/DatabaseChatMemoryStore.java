@@ -95,16 +95,36 @@ public class DatabaseChatMemoryStore implements ChatMemoryStore {
         List<ChatMessage> result = Lists.newArrayList();
 
         // 补系统消息
-        ChatMessage smsg = dbMessages.get(0);
-        if (!(smsg instanceof SystemMessage)) {
+        if (CollectionUtils.isEmpty(dbMessages) || !(dbMessages.get(0) instanceof SystemMessage)) {
             result.add(SystemMessage.from(assembledPrompt.getFullPrompt()));
         }
 
 
-        //补用户消息： 如果用户消息被挤出窗口，需要把用户消息重新赛回去防止动态查找工具的时候报错
-        UserMessage um = UserMessage.findLast(dbMessages).orElse(null);
-        if (Objects.isNull(um)) {
-            log.warn("user message was evicted,and now add a empty user message. memoryId: {}", memoryId);
+        // 确保工具调用消息配对完整（THINKING 的 call_id 与 TOOL 的 id 必须成对）
+        dbMessages = ensureToolPairing(dbMessages);
+
+        // 裁剪到 L0_MAX_MESSAGES，但不切断 THINKING-TOOL 工具调用组
+        if (CollectionUtils.isNotEmpty(result)) {
+            int size = MemoryConfig.L0_MAX_MESSAGES - result.size();
+            dbMessages = trimKeepLatest(dbMessages, size);
+        }
+
+        result.addAll(dbMessages);
+
+        // 最终兜底：确保返回的完整消息列表中至少存在一条 UserMessage。
+        // 原因：LangChain4j 在 refreshDynamicProviders 中会执行
+        //   UserMessage.findLast(messages).orElseThrow()
+        // 当工具调用密集导致 UserMessage 被裁剪（trimKeepLatest）挤出窗口时，
+        // 最终列表会没有任何 UserMessage，从而抛出 NoSuchElementException。
+        //
+        // 关键：补的 UserMessage 必须放在「列表末尾」，而不能放在 SystemMessage 之后（index 1）。
+        // 因为 MessageWindowChatMemory.messages() 在拿到 store.getMessages() 的返回值后，
+        // 还会再调用 ensureCapacity(messages, maxMessages) 从「头部」逐出最早的非 SystemMessage。
+        // 若补在 index 1，会第一个被 ensureCapacity 逐出，等于白补。
+        // 补在末尾（最新位置）则不会被 ensureCapacity 从头部逐出，findLast 能稳定命中；
+        // 且 messagesToSend() 里 UserMessage.replaceLast() 会把它替换成当前真实用户消息，语义正确。
+        if (UserMessage.findLast(result).isEmpty()) {
+            log.warn("No UserMessage in final memory window after trimming, padding one back. memoryId: {}", memoryId);
             String conversationCode = key.getConversationCode();
             String lastUserContent = conversationRepository.getLastUserContent(conversationCode);
             if (StringUtils.isNotBlank(lastUserContent)) {
@@ -117,25 +137,7 @@ public class DatabaseChatMemoryStore implements ChatMemoryStore {
             }
         }
 
-
-        // 去掉最后一个 UserMessage（如果存在），原因是Langchain4j在构建UserMessage()会append一个消息，同一条数据也会从db查出来，导致有两条一模一样的消息发给LLM
-
-        // 确保工具调用消息配对完整（THINKING 的 call_id 与 TOOL 的 id 必须成对）
-        dbMessages = ensureToolPairing(dbMessages);
-
-        // 裁剪到 L0_MAX_MESSAGES，但不切断 THINKING-TOOL 工具调用组
-        if (CollectionUtils.isNotEmpty(result)) {
-            int size = MemoryConfig.L0_MAX_MESSAGES - result.size();
-            dbMessages = trimKeepLatest(dbMessages, size);
-        }
-
-//        // 修正：如果裁剪后第一条消息是 THINKING/TOOL，说明前面的 UserMessage 被淘汰了。
-//        // LangChain4j 框架后续需要找到最近的一条 UserMessage，找不到会报错。
-//        // 此时应主动淘汰最早的一组 THINKING+TOOL 对，腾出空间让 UserMessage 能保留下来。
-//        dbMessages = ensureStartsWithUserMessage(dbMessages, MemoryConfig.L0_MAX_MESSAGES);
-
-        result.addAll(dbMessages);
-        return new ArrayList<>(dbMessages);
+        return new ArrayList<>(result);
     }
 
     @Override

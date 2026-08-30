@@ -71,10 +71,10 @@ public class LocalToolExecutor implements ToolExecutor {
                 }).get(DEFAULT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
 
         if (result == null) {
-            return "";
+            return "工具执行成功!但是结果是null";
         }
         if (result instanceof String s) {
-            log.info("Invoke local tool success: result: {}", result);
+            log.debug("Invoke local tool success: result: {}", result);
             return s;
         }
         return result.toString();

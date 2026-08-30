@@ -9,6 +9,8 @@ import com.xiaomizhou.dpsk.agent.event.AgentEventType;
 import com.xiaomizhou.dpsk.agent.factory.AgentComponentFactory;
 import dev.langchain4j.agentic.AgenticServices;
 import dev.langchain4j.agentic.UntypedAgent;
+import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.invocation.InvocationContext;
 import dev.langchain4j.memory.ChatMemory;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 import dev.langchain4j.model.output.TokenUsage;
@@ -21,6 +23,7 @@ import java.time.ZoneId;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -89,9 +92,7 @@ public class SingleBuilder implements AgentBuilder {
 
                 // 幻觉情况 => 从上下文的信息找工具执行，但工具已经不再工具列表
                 .hallucinatedToolNameStrategy(factory.getToolExecutionResultMessageFunction())
-                .chatMemoryProvider(memoryId -> {
-                    return factory.createChatMemory(spec);
-                })
+                .chatMemoryProvider(memoryId -> chatMemory)
                 .returnType(TokenStream.class)
                 .maxToolCallingRoundTrips(25)
                 .build();

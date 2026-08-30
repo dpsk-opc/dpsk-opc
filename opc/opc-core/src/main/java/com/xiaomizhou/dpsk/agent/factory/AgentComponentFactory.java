@@ -303,7 +303,7 @@ public class AgentComponentFactory {
         public ToolExecutionResultMessage apply(ToolExecutionRequest toolExecutionRequest) {
             ToolCall toolCall = ToolUtils.toToolCall(toolExecutionRequest);
             ToolExecutionResult result = toolInvocationInterceptor.execute(toolCall, ToolContext.builder().build());
-            return ToolExecutionResultMessage.toolExecutionResultMessage(toolExecutionRequest, null == result.getResult() ? "未知异常" : result.getResult());
+            return ToolExecutionResultMessage.toolExecutionResultMessage(toolExecutionRequest, String.valueOf(result));
         }
 
 
