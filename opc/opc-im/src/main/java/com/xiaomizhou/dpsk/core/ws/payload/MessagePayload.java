@@ -13,6 +13,7 @@ import java.util.Map;
 public record MessagePayload(
         @JsonProperty("id") String messageId,
         @JsonProperty("conversationId") String conversationId,
+        @JsonProperty("taskId") String taskId,
         @JsonProperty("type") String messageType,   // text, image, file, etc.
         @JsonProperty("content") Object content,     // 文本内容 或 文件URL
         @JsonProperty("sender") SenderInfo sender,

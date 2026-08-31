@@ -14,18 +14,14 @@ import com.xiaomizhou.dpsk.core.ws.WsMessage;
 import com.xiaomizhou.dpsk.core.ws.WsMsgType;
 import com.xiaomizhou.dpsk.core.ws.payload.*;
 import com.xiaomizhou.dpsk.db.ChatMessageComponent;
-import com.xiaomizhou.dpsk.db.dao.AgentDao;
 import com.xiaomizhou.dpsk.db.dao.TokenUsageDao;
-import com.xiaomizhou.dpsk.db.dto.AgentDto;
 import com.xiaomizhou.dpsk.db.dto.ChatMsgDto;
-import com.xiaomizhou.dpsk.utils.SequenceUtils;
 import dev.langchain4j.model.output.TokenUsage;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -70,7 +66,8 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
                            String targetId,
                            String taskId,
                            ChatMessageComponent chatMessageComponent,
-                           TokenUsageDao tokenUsageDao, AgentDefProvider agentDefProvider) {
+                           TokenUsageDao tokenUsageDao,
+                           AgentDefProvider agentDefProvider) {
         this.userId = userId;
         this.conversationCode = conversationCode;
         this.conversationType = conversationType;
@@ -141,7 +138,7 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
             return;
         }
         try {
-            WsUtils.send(new WsMessage(WsMsgType.CANCEL, new StreamEndPayload(streamCode, null, null)));
+            WsUtils.send(new WsMessage(WsMsgType.CANCEL, new StreamEndPayload(streamCode, null, taskId, null)));
         } catch (Exception e) {
             log.warn("Failed to send cancel event for stream {}!", streamCode, e);
         }
@@ -153,7 +150,7 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
             return;
         }
         try {
-            WsUtils.send(new WsMessage(WsMsgType.TOOL_RESULT, new ToolCallPayload(event.text(), streamCode, event.toolName(), event.toolInput(), event.toolOutput(), event.meta())));
+            WsUtils.send(new WsMessage(WsMsgType.TOOL_RESULT, new ToolCallPayload(event.text(), streamCode, taskId, event.toolName(), event.toolInput(), event.toolOutput(), event.meta())));
         } catch (Exception e) {
             log.error("Failed to send tool call event for stream {}!", streamCode, e);
         }
@@ -166,7 +163,7 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
             return;
         }
         try {
-            WsUtils.send(new WsMessage(WsMsgType.TOOL_CALL, new ToolCallPayload(event.text(), streamCode, event.toolName(), event.toolInput(), null, null)));
+            WsUtils.send(new WsMessage(WsMsgType.TOOL_CALL, new ToolCallPayload(event.text(), streamCode, taskId, event.toolName(), event.toolInput(), null, null)));
         } catch (Exception e) {
             log.error("Failed to send tool call event for stream {}!", streamCode, e);
         }
@@ -176,7 +173,7 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
         if (streamCode != null) {
             try {
                 WsUtils.send(new WsMessage(WsMsgType.MESSAGE_CHUNK_END,
-                        new StreamEndPayload(streamCode, null, null)));
+                        new StreamEndPayload(streamCode, null, taskId, null)));
             } catch (Exception e) {
                 log.error("Failed to send message stream end event for stream {}!", streamCode, e);
             }
@@ -191,7 +188,7 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
         try {
             int index = msgChunkIndex.incrementAndGet();
             WsUtils.send(new WsMessage(WsMsgType.MESSAGE_CHUNK,
-                    new StreamChunkPayload(streamCode, event.text(), index)));
+                    new StreamChunkPayload(streamCode, taskId, event.text(), index)));
         } catch (Exception e) {
             log.error("Failed to send stream end event for stream {}!", streamCode, e);
         }
@@ -207,7 +204,7 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
         try {
             msgChunkIndex.set(0);
             WsUtils.send(new WsMessage(WsMsgType.MESSAGE,
-                    new StreamChunkPayload(streamCode, text, 0)));
+                    new StreamChunkPayload(streamCode, taskId, text, 0)));
         } catch (Exception e) {
             log.warn("Failed to send message event for stream {}: {}", streamCode, e.getMessage());
         }
@@ -217,7 +214,7 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
         if (streamCode != null) {
             try {
                 WsUtils.send(new WsMessage(WsMsgType.STREAM_END,
-                        new StreamEndPayload(streamCode, null, null)));
+                        new StreamEndPayload(streamCode, null, taskId, null)));
             } catch (Exception e) {
                 log.error("Failed to send stream end event for stream {}!", streamCode, e);
             }
@@ -248,7 +245,7 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
 
             chunkIndex.set(0);
             WsUtils.send(new WsMessage(WsMsgType.STREAM_START,
-                    new StreamStartPayload(streamCode, conversationCode, senderInfo,System.currentTimeMillis())));
+                    new StreamStartPayload(streamCode, conversationCode, taskId, senderInfo, System.currentTimeMillis())));
         } catch (Exception e) {
             log.warn("Failed to send thinking event for stream {}: {}", streamCode, e.getMessage());
         }
@@ -263,7 +260,7 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
         try {
             int index = chunkIndex.incrementAndGet();
             WsUtils.send(new WsMessage(WsMsgType.STREAM_CHUNK,
-                    new StreamChunkPayload(streamCode, text, index)));
+                    new StreamChunkPayload(streamCode, taskId, text, index)));
         } catch (Exception e) {
             log.warn("Failed to send stream chunk for stream {}: {}", streamCode, e.getMessage());
         }
@@ -302,6 +299,7 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
                     new MessagePayload(
                             streamCode != null ? streamCode : msgCode,
                             conversationCode,
+                            taskId,
                             contentType,
                             content,
                             senderInfo,
@@ -343,7 +341,7 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
     /**
      * 保存消息到 DB。
      */
-    private String saveMessageToDb(String agentCode, String content,TokenUsage usage) {
+    private String saveMessageToDb(String agentCode, String content, TokenUsage usage) {
         try {
             if (ConversationType.GROUP.name().equalsIgnoreCase(conversationType)) {
                 return chatMessageComponent.newGroupChatMsg(agentCode, ChatMsgDto.builder()

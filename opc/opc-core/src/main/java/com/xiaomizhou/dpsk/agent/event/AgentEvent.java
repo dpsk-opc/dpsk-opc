@@ -19,12 +19,10 @@ public record AgentEvent(
         String toolInput,
         String toolOutput,
         Map<String, Object> meta
+
 ) {
 
-    /** 创建 THINKING 事件 */
-    public static AgentEvent thinking(String agentCode, String text) {
-        return new AgentEvent(AgentEventType.THINKING, agentCode, text, null, null, null, Collections.emptyMap());
-    }
+
 
     /** 创建 STREAM_CHUNK 事件 */
     public static AgentEvent streamChunk(String agentCode, String delta) {
@@ -38,15 +36,7 @@ public record AgentEvent(
         return new AgentEvent(AgentEventType.STREAM_CHUNK_END, agentCode, null, null, null, null, Collections.emptyMap());
     }
 
-    /** 创建 TOOL_CALL 事件 */
-    public static AgentEvent toolCall(String agentCode, String name, String input) {
-        return new AgentEvent(AgentEventType.TOOL_CALL, agentCode, null, name, input, null, Collections.emptyMap());
-    }
 
-    /** 创建 TOOL_RESULT 事件 */
-    public static AgentEvent toolResult(String agentCode, String name, String output) {
-        return new AgentEvent(AgentEventType.TOOL_RESULT, agentCode, null, name, null, output, Collections.emptyMap());
-    }
 
     /** 创建 DONE 事件 */
     public static AgentEvent done(String agentCode, Map<String, Object> meta) {

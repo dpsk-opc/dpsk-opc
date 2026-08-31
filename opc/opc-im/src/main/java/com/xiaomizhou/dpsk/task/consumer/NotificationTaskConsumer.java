@@ -102,14 +102,15 @@ public class NotificationTaskConsumer implements TaskConsumer {
                 SenderInfo senderInfo = new SenderInfo(agentCode, Objects.isNull(agent) ? "" : agent.getName(), Objects.isNull(agent) ? "" : agent.getAvatar());
                 WsUtils.send(new WsMessage(WsMsgType.MESSAGE,
                         new MessagePayload(
-                                msgCode,
-                                conversationCode,
-                                "text",
-                                notificationContent,
-                                senderInfo,
-                                System.currentTimeMillis(),
-                                taskCode,
-                                Map.of()
+                                msgCode,                 // messageId
+                                conversationCode,        // conversationId
+                                taskCode,                // taskId
+                                "text",                  // messageType
+                                notificationContent,     // content
+                                senderInfo,              // sender
+                                System.currentTimeMillis(), // timestamp
+                                null,                    // replyToId
+                                Map.of()                 // metadata
                         )));
             } catch (Exception e) {
                 log.warn("Failed to push notification via WebSocket: msgCode={}", msgCode, e);

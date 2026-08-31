@@ -367,6 +367,7 @@ public class AgentBridge {
             SenderInfo sender = new SenderInfo(userId, userId, "");
             WsUtils.send(new WsMessage(WsMsgType.MESSAGE_DONE,
                     new MessagePayload(SequenceUtils.generator().next("MSG"), conversationCode,
+                            Objects.isNull(task) ? "" : task.getCode(),
                             "text", hint, sender, System.currentTimeMillis(), null, null)));
         } catch (Exception e) {
             log.warn("send expert hint failed, conversationCode={}, verdict={}",
@@ -415,6 +416,7 @@ public class AgentBridge {
             callback.setStreamCode(streamCode);
             callback.setSenderInfo(senderInfo);
             callback.setCancelFlag(cancelFlag);
+
 
             callback.onEvent(AgentEvent.msgRead(agent.getCode(), msg.getCode()));
 
