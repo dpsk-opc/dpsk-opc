@@ -16,6 +16,7 @@ import com.xiaomizhou.dpsk.core.ws.payload.*;
 import com.xiaomizhou.dpsk.db.ChatMessageComponent;
 import com.xiaomizhou.dpsk.db.dao.TokenUsageDao;
 import com.xiaomizhou.dpsk.db.dto.ChatMsgDto;
+import com.xiaomizhou.dpsk.tool.ask.ToolAskManager;
 import dev.langchain4j.model.output.TokenUsage;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -141,6 +142,15 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
             WsUtils.send(new WsMessage(WsMsgType.CANCEL, new StreamEndPayload(streamCode, null, taskId, null)));
         } catch (Exception e) {
             log.warn("Failed to send cancel event for stream {}!", streamCode, e);
+        }
+        // Agent 被取消时，取消该会话下所有待答复的 ask_user 提问，避免工具一直挂到超时
+        try {
+            ToolAskManager manager = ToolAskManager.instance();
+            if (manager != null) {
+                manager.cancelByConversation(conversationCode);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to cancel ask requests for conversation {}", conversationCode, e);
         }
     }
 

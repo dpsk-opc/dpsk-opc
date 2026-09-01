@@ -66,7 +66,9 @@ public class LocalToolExecutor implements ToolExecutor {
                         return method.invoke(bean, args);
                     } catch (Exception e) {
                         log.error("Invoke local tool failed: {}.{}", beanName, methodName, e);
-                        return "工具执行失败!" + e.getMessage();
+                        String msg = "工具执行失败!" + e.getMessage();
+                        log.info("工具执行失败结果返回! msg:{}",msg);
+                        return msg;
                     }
                 }).get(DEFAULT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
 
