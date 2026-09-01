@@ -97,7 +97,7 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
     @Override
     public void setSenderInfo(String agentCode) {
         AgentDef agent = agentDefProvider.getByCode(agentCode);
-        this.senderInfo = new SenderInfo(agentCode, agent.getNickname(), agent.getAvatar());
+        this.senderInfo = new SenderInfo(agentCode, agent.getNickname(), agent.getAvatar(),agent.getNickname());
     }
 
     /**

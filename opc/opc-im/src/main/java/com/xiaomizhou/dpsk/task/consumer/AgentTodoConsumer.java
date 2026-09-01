@@ -96,11 +96,11 @@ public class AgentTodoConsumer implements TaskConsumer {
             // agent 通知
             if (REF_TYPE_AGENT.equals(refType)) {
                 // 3. 查询 agent 信息用于 sender
-                AgentDto agent = agentComponent.getByCode(agentCode);
-                SenderInfo senderInfo = new SenderInfo(
-                        agentCode,
-                        Objects.isNull(agent) ? "" : agent.getName(),
-                        Objects.isNull(agent) ? "" : agent.getAvatar());
+//                AgentDto agent = agentComponent.getByCode(agentCode);
+//                SenderInfo senderInfo = new SenderInfo(
+//                        agentCode,
+//                        Objects.isNull(agent) ? "" : agent.getName(),
+//                        Objects.isNull(agent) ? "" : agent.getAvatar());
 
                 // 4. 构建待办提醒 payload
                 Map<String, Object> todoPayload = new LinkedHashMap<>();

@@ -14,6 +14,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 public record SenderInfo(
         @JsonProperty("userId") String userId,
         @JsonProperty("name") String name,
-        @JsonProperty("avatar") String avatar
+        @JsonProperty("avatar") String avatar,
+        @JsonProperty("nickname") String nickname
 ) {
 }

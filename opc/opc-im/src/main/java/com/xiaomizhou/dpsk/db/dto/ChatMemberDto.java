@@ -24,7 +24,7 @@ public class ChatMemberDto {
     /**
      * 昵称
      */
-    private String nicknameInGroup;
+    private String nickname;
 
     /**
      * 角色: OWNER, ADMIN, MEMBER

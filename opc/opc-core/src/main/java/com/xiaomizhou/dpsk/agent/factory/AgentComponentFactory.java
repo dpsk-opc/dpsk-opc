@@ -220,7 +220,7 @@ public class AgentComponentFactory {
 
         var builder = OpenAiChatModel.builder()
                 .apiKey(coalesce(override.getAccessKey(), apiKey))
-                .baseUrl(baseUrl)
+                .baseUrl(coalesce(override.getBaseUrl(), baseUrl))
                 .modelName(coalesce(override.getModelName(), modelName))
                 .logRequests(true);
 

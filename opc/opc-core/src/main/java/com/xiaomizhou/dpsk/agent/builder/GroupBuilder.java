@@ -14,6 +14,7 @@ import dev.langchain4j.agentic.supervisor.SupervisorAgent;
 import dev.langchain4j.agentic.supervisor.SupervisorResponseStrategy;
 import dev.langchain4j.memory.ChatMemory;
 import dev.langchain4j.model.openai.OpenAiChatModel;
+import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -56,7 +57,8 @@ public class GroupBuilder implements AgentBuilder {
         }
 
         // 2. 构建默认同步 LLM 模型（Supervisor 和无自定义配置的 Sub-Agent 使用）
-        OpenAiChatModel defaultModel = factory.createChatModel();
+        AgentDef ref = agentDefs.get(0);
+        OpenAiChatModel defaultModel = factory.createChatModel(ref.getLlmConfig());
 
 
         // 群聊模式，每个人自己回复

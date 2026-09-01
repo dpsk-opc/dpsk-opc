@@ -10,9 +10,11 @@ import com.xiaomizhou.dpsk.constant.ConversationType;
 import com.xiaomizhou.dpsk.db.AgentComponent;
 import com.xiaomizhou.dpsk.db.ChatMessageComponent;
 import com.xiaomizhou.dpsk.db.chat.ImAgentCallback;
+import com.xiaomizhou.dpsk.db.dao.ConversationDao;
 import com.xiaomizhou.dpsk.db.dao.TokenUsageDao;
 import com.xiaomizhou.dpsk.db.dto.AgentDto;
 import com.xiaomizhou.dpsk.db.dto.ChatMsgDto;
+import com.xiaomizhou.dpsk.db.model.Conversation;
 import com.xiaomizhou.dpsk.core.ws.SenderInfo;
 import com.xiaomizhou.dpsk.memory.repository.MessageRepository;
 import com.xiaomizhou.dpsk.task.TaskCreationContext;
@@ -20,6 +22,7 @@ import com.xiaomizhou.dpsk.task.model.Task;
 import com.xiaomizhou.dpsk.task.model.TaskConsumeResult;
 import com.xiaomizhou.dpsk.utils.SequenceUtils;
 import dev.langchain4j.data.message.ChatMessage;
+import dev.langchain4j.model.output.TokenUsage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -53,6 +56,7 @@ public class AgentTaskConsumer implements TaskConsumer {
     private final AgentComponent agentComponent;
     private final AgentDefProvider agentDefProvider;
     private final TokenUsageDao tokenUsageDao;
+    private final ConversationDao conversationDao;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Override
@@ -85,22 +89,26 @@ public class AgentTaskConsumer implements TaskConsumer {
             String agentCode = task.getAgentCode();
             String conversationCode = task.getConversationCode();
 
-            // 2. 构建锚点上下文
+            // 2. 根据会话编码判断实际会话类型（专家团/群聊/单聊），而非写死 SINGLE，
+            //    避免在专家团/群聊会话下错误创建出多余的单聊会话。
+            ConversationType conversationType = resolveConversationType(conversationCode);
+
+            // 3. 构建锚点上下文
             String taskContext = buildTaskContext(anchorMsgCode, contextSize, task.getName(), prompt);
 
-            // 3. 创建 ChatMessage（模拟用户触发）
+            // 4. 创建 ChatMessage（模拟用户触发），按实际会话类型入库
             String triggerContent = "[定时任务: " + task.getName() + "]\n" + prompt;
 
-            String msgCode = chatMessageComponent.newSingleChatMsg(userId,
-                    ChatMsgDto.builder()
-                            .targetId(agentCode)
-                            .sendId(userId)
-                            .message(triggerContent)
-                            .messageType("USER")
-                            .conversationType(ConversationType.SINGLE.getCode())
-                            .conversationCode(conversationCode)
-                            .build(),
-                    null, null);
+            ChatMsgDto dto = ChatMsgDto.builder()
+                    .targetId(agentCode)
+                    .sendId(userId)
+                    .message(triggerContent)
+                    .messageType("USER")
+                    .conversationType(conversationType.getCode())
+                    .conversationCode(conversationCode)
+                    .build();
+
+            String msgCode = saveMessage(userId, dto, conversationType, null, null);
 
             if (StringUtils.isBlank(msgCode)) {
                 return TaskConsumeResult.fail("Failed to create trigger message");
@@ -127,11 +135,11 @@ public class AgentTaskConsumer implements TaskConsumer {
             // 6. 生成流式编码
             String streamCode = SequenceUtils.generator().next("STM");
 
-            // 7. 创建回调
-            SenderInfo senderInfo = new SenderInfo(agent.getCode(), agent.getName(), agent.getAvatar());
+            // 7. 创建回调（按实际会话类型，避免 Agent 回复被误落到单聊会话）
+            SenderInfo senderInfo = new SenderInfo(agent.getCode(), agent.getName(), agent.getAvatar(), agent.getNickname());
             ImAgentCallback callback = new ImAgentCallback(
                     userId, conversationCode,
-                    ConversationType.SINGLE.name(), agentCode, taskCode,
+                    conversationType.name(), agentCode, taskCode,
                     chatMessageComponent, tokenUsageDao, agentDefProvider);
             callback.setStreamCode(streamCode);
             callback.setSenderInfo(senderInfo);
@@ -207,6 +215,43 @@ public class AgentTaskConsumer implements TaskConsumer {
             return "[System]: " + ((dev.langchain4j.data.message.SystemMessage) message).text();
         }
         return message.type().name() + ": " + message;
+    }
+
+    /**
+     * 根据会话编码解析实际会话类型；查不到时回退为单聊。
+     */
+    private ConversationType resolveConversationType(String conversationCode) {
+        if (StringUtils.isNotBlank(conversationCode)) {
+            Conversation conv = conversationDao.getOneByCode(conversationCode);
+            if (conv != null && conv.getConversationType() != null) {
+                ConversationType type = ConversationType.getByCode(conv.getConversationType());
+                if (type != null) {
+                    return type;
+                }
+            }
+        }
+        return ConversationType.SINGLE;
+    }
+
+    /**
+     * 按实际会话类型选择入库方法：
+     * <ul>
+     *   <li>WORKFLOW（专家团）→ newWorkflowMsg（复用现有会话，不新建）</li>
+     *   <li>GROUP（群聊）→ newGroupChatMsg</li>
+     *   <li>SINGLE（单聊）→ newSingleChatMsg</li>
+     * </ul>
+     */
+    private String saveMessage(String sendId, ChatMsgDto dto, ConversationType type,
+                               TokenUsage token, String modelName) {
+        switch (type) {
+            case WORKFLOW:
+                return chatMessageComponent.newWorkflowMsg(sendId, dto, token, modelName);
+            case GROUP:
+                return chatMessageComponent.newGroupChatMsg(sendId, dto, token, modelName);
+            case SINGLE:
+            default:
+                return chatMessageComponent.newSingleChatMsg(sendId, dto, token, modelName);
+        }
     }
 
     private String getString(JsonNode node, String field) {

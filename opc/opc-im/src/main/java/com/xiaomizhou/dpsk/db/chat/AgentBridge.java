@@ -83,11 +83,15 @@ public class AgentBridge {
     @Value("${com.xiaomizhou.dpsk.opc.skill.path:~/skills}")
     private String skillPathPrefix;
 
-    /** 群聊自主规划 replan 总开关 */
+    /**
+     * 群聊自主规划 replan 总开关
+     */
     @Value("${workflow.replan.enabled:true}")
     private boolean replanEnabled;
 
-    /** 群聊 replan 最大轮次（replan 次数上限） */
+    /**
+     * 群聊 replan 最大轮次（replan 次数上限）
+     */
     @Value("${workflow.replan.max-retry:2}")
     private int replanMaxRounds;
 
@@ -243,7 +247,7 @@ public class AgentBridge {
         } else if (ConversationType.SINGLE.getCode().equals(conv.getConversationType())) {
 
             if (Objects.nonNull(imageGenerateDto)) {
-                dispatchImageGenerate(userId, msg, targetId, conversationCode,imageGenerateDto);
+                dispatchImageGenerate(userId, msg, targetId, conversationCode, imageGenerateDto);
                 return;
             }
 
@@ -262,8 +266,6 @@ public class AgentBridge {
             log.warn("agent is not image generate agent.");
             return;
         }
-
-
 
         try {
             // 组装 AgentBuildSpec
@@ -285,7 +287,7 @@ public class AgentBridge {
             String streamCode = SequenceUtils.generator().next("STM");
 
             // 创建回调，注入取消标记
-            SenderInfo senderInfo = new SenderInfo(agent.getCode(), agent.getName(), agent.getAvatar());
+            SenderInfo senderInfo = new SenderInfo(agent.getCode(), agent.getName(), agent.getAvatar(), agent.getNickname());
             ImAgentCallback callback = new ImAgentCallback(
                     userId, conversationCode,
                     ConversationType.SINGLE.name(), targetId, msg.getTaskId(),
@@ -314,7 +316,7 @@ public class AgentBridge {
      * @param targetId
      * @param conversationCode
      */
-    public void dispatchWorkflow(String userId, String contextData,String taskCode, String targetId, String conversationCode) {
+    public void dispatchWorkflow(String userId, String contextData, String taskCode, String targetId, String conversationCode) {
 
         WorkflowTaskDto task = workflowTaskComponent.getByCode(taskCode);
 
@@ -357,14 +359,16 @@ public class AgentBridge {
         return expertIntentClassifier.evaluate(userContent, template);
     }
 
-    /** 向用户推送专家团入口提示消息（非任务 / 任务与专家团不相关）。 */
+    /**
+     * 向用户推送专家团入口提示消息（非任务 / 任务与专家团不相关）。
+     */
     private void sendExpertHint(ExpertIntentClassifier.Verdict verdict, String userId,
                                 WorkflowTaskDto task, String conversationCode) {
         String hint = ExpertIntentClassifier.Verdict.NOT_TASK.equals(verdict)
                 ? "这里是「" + (task != null && StringUtils.isNotBlank(task.getName()) ? task.getName() : "专家团") + "」任务模式，请输入具体任务描述，我会帮你执行。"
                 : "您输入的内容与本专家团的能力不匹配，请描述一个与当前专家团定位相符的具体任务。";
         try {
-            SenderInfo sender = new SenderInfo(userId, userId, "");
+            SenderInfo sender = new SenderInfo(userId, userId, "", "");
             WsUtils.send(new WsMessage(WsMsgType.MESSAGE_DONE,
                     new MessagePayload(SequenceUtils.generator().next("MSG"), conversationCode,
                             Objects.isNull(task) ? "" : task.getCode(),
@@ -408,7 +412,7 @@ public class AgentBridge {
             String streamCode = SequenceUtils.generator().next("STM");
 
             // 创建回调，注入取消标记
-            SenderInfo senderInfo = new SenderInfo(agent.getCode(), agent.getName(), agent.getAvatar());
+            SenderInfo senderInfo = new SenderInfo(agent.getCode(), agent.getName(), agent.getAvatar(), agent.getNickname());
             ImAgentCallback callback = new ImAgentCallback(
                     userId, conversationCode,
                     ConversationType.SINGLE.name(), targetId, msg.getTaskId(),
@@ -443,6 +447,12 @@ public class AgentBridge {
                                String conversationCode,
                                List<String> mcpCodes) {
         String msgCode = msg.getCode();
+
+        // 如果@人，说明是私聊，不是任务
+        if (StringUtils.isNotBlank(msg.getMentionedList())) {
+            dispatchGroupChat(userId, msg, targetId, conversationCode, mcpCodes, msgCode);
+            return;
+        }
 
         // 意图识别前置：闲聊走 CHAT，复杂任务走 TASK
         String intent = groupIntentClassifier.classify(msg.getContent());
@@ -489,7 +499,7 @@ public class AgentBridge {
                     ConversationType.GROUP.name(), targetId, msg.getTaskId(),
                     chatMessageComponent, tokenUsageDao, agentDefProvider);
             callback.setStreamCode(streamCode);
-            callback.setSenderInfo(new SenderInfo(userId, userId, ""));
+            callback.setSenderInfo(new SenderInfo(userId, userId, "", ""));
             callback.setCancelFlag(cancelFlag);
 
             callback.onEvent(AgentEvent.msgRead(userId, msg.getCode()));
@@ -595,7 +605,9 @@ public class AgentBridge {
         }
     }
 
-    /** 获取群成员 Agent 编码列表（排除发言用户）；为空返回空列表。 */
+    /**
+     * 获取群成员 Agent 编码列表（排除发言用户）；为空返回空列表。
+     */
     private List<String> groupAgentCodes(String userId, String targetId) {
         List<ChatMemberDto> members = chatGroupComponent.getGroupMembers(targetId);
         if (CollectionUtils.isEmpty(members)) {
@@ -608,7 +620,9 @@ public class AgentBridge {
                 .collect(Collectors.toList());
     }
 
-    /** 规划一次：调用 planner 生成图，并经 PlanValidator 校验；失败返回 null。 */
+    /**
+     * 规划一次：调用 planner 生成图，并经 PlanValidator 校验；失败返回 null。
+     */
     private XyFlow plan(String userId, String targetId, String conversationCode, List<String> agentCodes,
                         String userContent, List<PlanningRequest.NodeResultRef> history, boolean isReplan) {
         try {
@@ -625,7 +639,9 @@ public class AgentBridge {
         }
     }
 
-    /** 将执行上下文中的 nodeResults 转成 replan 历史引用，并附上失败原因占位。 */
+    /**
+     * 将执行上下文中的 nodeResults 转成 replan 历史引用，并附上失败原因占位。
+     */
     private List<PlanningRequest.NodeResultRef> toNodeResultRefs(WorkflowContext context, String failureReason) {
         List<PlanningRequest.NodeResultRef> refs = new java.util.ArrayList<>();
         if (context.getNodeResults() != null) {

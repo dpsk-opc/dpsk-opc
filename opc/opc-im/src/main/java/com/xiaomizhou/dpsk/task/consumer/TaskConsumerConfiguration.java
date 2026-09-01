@@ -37,9 +37,11 @@ public class TaskConsumerConfiguration {
     // ======================== 消费者 Bean ========================
 
     @Bean
-    public NotificationTaskConsumer notificationTaskConsumer(ChatMessageComponent chatMessageComponent, AgentComponent agentComponent) {
+    public NotificationTaskConsumer notificationTaskConsumer(ChatMessageComponent chatMessageComponent,
+                                                              AgentComponent agentComponent,
+                                                              ConversationDao conversationDao) {
         log.info("Creating NotificationTaskConsumer bean");
-        return new NotificationTaskConsumer(chatMessageComponent, agentComponent);
+        return new NotificationTaskConsumer(chatMessageComponent, agentComponent, conversationDao);
     }
 
     @Bean
@@ -48,10 +50,11 @@ public class TaskConsumerConfiguration {
                                                 ChatMessageComponent chatMessageComponent,
                                                 AgentComponent agentComponent,
                                                 AgentDefProvider agentDefProvider,
-                                                TokenUsageDao tokenUsageDao) {
+                                                TokenUsageDao tokenUsageDao,
+                                                ConversationDao conversationDao) {
         log.info("Creating AgentTaskConsumer bean");
         return new AgentTaskConsumer(orchestrator, messageRepository,
-                chatMessageComponent, agentComponent, agentDefProvider, tokenUsageDao);
+                chatMessageComponent, agentComponent, agentDefProvider, tokenUsageDao, conversationDao);
     }
 
     // ======================== 工具 Bean ========================

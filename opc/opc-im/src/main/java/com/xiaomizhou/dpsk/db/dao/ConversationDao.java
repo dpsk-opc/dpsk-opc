@@ -294,8 +294,9 @@ public class ConversationDao extends ServiceImpl<ConversationMapper, Conversatio
             if (Objects.nonNull(senderAgent)) {
                 sender = new ChatProtocol.User(
                         senderAgent.getCode(),
-                        senderAgent.getNickname() != null ? senderAgent.getNickname() : senderAgent.getName(),
-                        senderAgent.getAvatar()
+                        senderAgent.getName(),
+                        senderAgent.getAvatar(),
+                        senderAgent.getNickname()
                 );
             }
 
@@ -324,11 +325,16 @@ public class ConversationDao extends ServiceImpl<ConversationMapper, Conversatio
             if (quotedMessageMap.containsKey(msg.getParentId())) {
 
                 try {
-                    quotedMessage = ChatProtocol.QuotedMessage.builder()
-                            .content(quotedMessageMap.get(msg.getParentId()).getContent())
-                            .senderName(agentMap.get(quotedMessageMap.get(msg.getParentId()).getSenderCode()).getNickname())
-                            .msgCode(quotedMessageMap.get(msg.getParentId()).getCode())
-                            .build();
+                    ChatMessage cm = quotedMessageMap.get(msg.getParentId());
+                    if (Objects.nonNull(cm) && Objects.nonNull(agentMap.get(cm.getCode()))) {
+                        Agent agent = agentMap.get(cm.getCode());
+                        quotedMessage = ChatProtocol.QuotedMessage.builder()
+                                .content(quotedMessageMap.get(msg.getParentId()).getContent())
+                                .senderName(agent.getName())
+                                .nickname(agent.getNickname())
+                                .msgCode(quotedMessageMap.get(msg.getParentId()).getCode())
+                                .build();
+                    }
                 } catch (Exception e) {
                     log.error("Error building quoted message", e);
                 }
