@@ -165,7 +165,7 @@ public class AgentComponentFactory {
                 .modelName(coalesce(override.getModelName(), modelName))
                 .logRequests(true)
                 .timeout(Duration.ofMinutes(5))
-                .maxCompletionTokens(4096)
+//                .maxCompletionTokens(4096)
                 .logResponses(true)
                 .returnThinking(true)
                 .sendThinking(true);

@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS t_agent (
     avatar VARCHAR(500) NOT NULL DEFAULT '' COMMENT '头像URL',
     status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE' COMMENT '状态: ACTIVE, INACTIVE, DELETING',
     modality tinyint(2) NOT NULL DEFAULT '0' COMMENT '模态: 0-TEXT, 1-IMAGE, 2-VIDEO, 3-AUDIO, 4-MIXED',
+    capabilities varchar(200) NOT NULL DEFAULT '[]' COMMENT '能力标签: []',
     integration_config TEXT NOT NULL DEFAULT '' COMMENT '集成配置（JSON）',
     llm_config TEXT NOT NULL DEFAULT '' COMMENT 'LLM配置（JSON）',
     last_active_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '最后活跃时间',

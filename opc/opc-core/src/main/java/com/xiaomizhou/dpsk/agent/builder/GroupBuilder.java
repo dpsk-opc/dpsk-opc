@@ -1,30 +1,33 @@
 package com.xiaomizhou.dpsk.agent.builder;
 
-import com.google.common.collect.Maps;
 import com.xiaomizhou.dpsk.agent.*;
 import com.xiaomizhou.dpsk.agent.data.AgentDef;
 import com.xiaomizhou.dpsk.agent.data.AgentDefProvider;
-import com.xiaomizhou.dpsk.agent.event.AgentEvent;
-import com.xiaomizhou.dpsk.agent.event.AgentEventType;
 import com.xiaomizhou.dpsk.agent.factory.AgentComponentFactory;
 import dev.langchain4j.agentic.AgenticServices;
-import dev.langchain4j.agentic.observability.AgentListener;
-import dev.langchain4j.agentic.observability.AgentResponse;
-import dev.langchain4j.agentic.supervisor.SupervisorAgent;
-import dev.langchain4j.agentic.supervisor.SupervisorResponseStrategy;
-import dev.langchain4j.memory.ChatMemory;
-import dev.langchain4j.model.openai.OpenAiChatModel;
+import dev.langchain4j.agentic.UntypedAgent;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
+import dev.langchain4j.service.TokenStream;
+import dev.langchain4j.service.tool.ToolExecutionErrorHandler;
+import dev.langchain4j.service.tool.ToolErrorContext;
+import dev.langchain4j.service.tool.ToolErrorHandlerResult;
+import dev.langchain4j.service.tool.ToolArgumentsErrorHandler;
+import dev.langchain4j.service.tool.ToolProvider;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.collections.CollectionUtils;
 
 import java.util.*;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
  * 群聊模式 Builder。
- * 为每个 Sub-Agent 构建独立的 Pipeline，使用 SupervisorAgent 协调。
+ * <p>
+ * 由 opc-im 决策层（GroupResponderPicker）产出本次发言顺序（spec.responderAgentCodes），
+ * 本 Builder 为候选 Agent 生成独立流式 UntypedAgent，并按其顺序【串行逐个流式】执行，
+ * 复用 {@link StreamingAgentRunner} 处理完整流式事件。
+ * <p>
+ * 替代原 SupervisorAgent 黑盒机制，精确控制参与会话的 Agent，且支持流式输出。
  *
  * @author eason - vipzhsh@163.com
  * @date 2026/6/3
@@ -36,8 +39,6 @@ public class GroupBuilder implements AgentBuilder {
     private final AgentDefProvider agentDefProvider;
     private final AgentComponentFactory factory;
 
-    private final Object lock = new Object();
-
     @Override
     public String supportedMode() {
         return AgentBuildSpec.MODE_GROUP;
@@ -46,156 +47,158 @@ public class GroupBuilder implements AgentBuilder {
     @Override
     public AgentPipeline build(AgentBuildSpec spec) {
         List<String> targetAgentCodes = spec.getTargetAgentCodes();
-        if (targetAgentCodes == null || targetAgentCodes.isEmpty()) {
+        if (CollectionUtils.isEmpty(targetAgentCodes)) {
             throw new IllegalArgumentException("GroupBuilder requires targetAgentCodes");
         }
 
         // 1. 批量查询 Agent 定义
         List<AgentDef> agentDefs = agentDefProvider.getByCodes(targetAgentCodes);
-        if (agentDefs.isEmpty()) {
+        if (CollectionUtils.isEmpty(agentDefs)) {
             throw new IllegalArgumentException("No agents found for codes: " + targetAgentCodes);
         }
 
-        // 2. 构建默认同步 LLM 模型（Supervisor 和无自定义配置的 Sub-Agent 使用）
-        AgentDef ref = agentDefs.get(0);
-        OpenAiChatModel defaultModel = factory.createChatModel(ref.getLlmConfig());
+        // 2. 为每个候选 Agent 构建独立流式 UntypedAgent
+        Map<String, UntypedAgent> agentMap = agentDefs.stream().collect(Collectors.toMap(
+                AgentDef::getCode,
+                agentDef -> buildStreamingAgent(agentDef, spec),
+                (a, b) -> a,
+                LinkedHashMap::new
+        ));
 
+        // 3. 发言顺序：决策层（GroupResponderPicker）产出的 responderAgentCodes，空则退化为候选顺序
+        List<String> responders = spec.getResponderAgentCodes();
+        if (CollectionUtils.isEmpty(responders)) {
+            responders = new ArrayList<>(agentMap.keySet());
+        }
 
-        // 群聊模式，每个人自己回复
-        return new GroupPipeline(null, agentDefs, spec.getUserContent(), callback -> {
-            // 3. 为每个 Sub-Agent 构建 AgenticServices Agent
-            var subAgents = agentDefs.stream().map(agentDef -> {
-                // 群聊记忆：每个 Agent 在群聊中有独立的记忆空间
-                ChatMemory groupChatMemory = factory.createChatMemory(spec);
-
-                // 注入 L2 长期事实
-                String enrichedPersona = factory.enrichSystemPrompt(agentDef, spec.getGroupCode());
-
-                // 为有自定义 LLM 配置的 Agent 创建独立模型
-                OpenAiChatModel agentModel = defaultModel;
-                if (agentDef.getLlmConfig() != null && !agentDef.getLlmConfig().isBlank()) {
-                    agentModel = factory.createChatModel(agentDef.getLlmConfig());
-                }
-
-                return AgenticServices.agentBuilder()
-                        .chatModel(agentModel)
-                        .name(agentDef.getCode())
-                        .description(enrichedPersona)
-                        .userMessage(spec.getUserContent())
-                        .listener(new AgentListener() {
-                            @Override
-                            public void afterAgentInvocation(AgentResponse agentResponse) {
-
-                                if (!(callback instanceof GroupAgentCallback groupAgentCallback)) {
-                                    return;
-                                }
-
-                                // 检查取消
-                                if (callback.isCancelled()) {
-                                    log.info("GroupPipeline cancelled, skip agent={}", agentDef.getCode());
-                                    return;
-                                }
-
-                                synchronized (lock) {
-                                    groupAgentCallback.setStreamCode(UUID.randomUUID().toString().replace("-", ""));
-                                    groupAgentCallback.setSenderInfo(agentDef.getCode());
-
-                                    String text = agentResponse.chatResponse().aiMessage().text();
-
-                                    Map<String, Object> meta = Maps.newHashMap();
-
-                                    meta.put("content", text);
-                                    meta.put("tokenUsage", agentResponse.chatResponse().tokenUsage());
-
-                                    AgentEvent event = new AgentEvent(AgentEventType.DONE, agentDef.getCode(), text, null, null, null, meta);
-                                    groupAgentCallback.onEvent(event);
-                                }
-                            }
-                        })
-                        .chatMemory(groupChatMemory)
-                        .toolProviders(factory.getToolProviders(agentDef.getCode(), spec.getUserCode(), spec.getConversationCode(), spec.getMcpCodes()))
-                        .systemMessage(enrichedPersona)
-                        .build();
-            }).collect(Collectors.toList());
-
-            // 4. 构建 SupervisorAgent（使用默认模型）
-            return AgenticServices
-                    .supervisorBuilder()
-                    .chatModel(defaultModel)
-                    .subAgents(subAgents)
-                    .responseStrategy(SupervisorResponseStrategy.SUMMARY)
-                    .build();
-        });
+        return new GroupPipeline(agentMap, agentDefs, responders);
     }
 
     /**
-     * 群聊 Pipeline 实现。
+     * 为单个候选 Agent 构建流式 UntypedAgent（对齐 WorkflowBuilder.init() 的 AgenticServices 配置）。
+     */
+    private UntypedAgent buildStreamingAgent(AgentDef agentDef, AgentBuildSpec spec) {
+        // 群聊下 spec.getTargetAgentCode() 为 null，会导致 createChatMemory → assembleSystemPrompt 拼不出 agent 人设。
+        // 为每个 Agent 复制一份 spec 并注入当前 agent 的 targetAgentCode，让人设（[你的信息]）能拼进 system prompt。
+        AgentBuildSpec agentSpec = copyWithTargetAgentCode(spec, agentDef.getCode());
+
+        // 群聊记忆：每个 Agent 在群聊中有独立的记忆空间
+        // 流式模型（优先使用 Agent 自定义 LLM 配置）
+        OpenAiStreamingChatModel model = factory.createStreamingModel(agentDef.getLlmConfig());
+
+        // 注入 L2 长期事实
+        String enrichedPersona = factory.enrichSystemPrompt(agentDef, spec.getGroupCode());
+
+        return AgenticServices.agentBuilder()
+                .streamingChatModel(model)
+                .name(agentDef.getCode())
+                // 显式注入人设 + L2 长期事实，作为 system prompt
+                .systemMessage(enrichedPersona)
+                .toolProviders(factory.getToolProviders(agentDef.getCode(), spec.getUserCode(), spec.getConversationCode(), spec.getMcpCodes()))
+                .userMessage(spec.getUserContent())
+                .toolExecutionErrorHandler(new ToolExecutionErrorHandler() {
+                    @Override
+                    public ToolErrorHandlerResult handle(Throwable error, ToolErrorContext context) {
+                        log.error("tool execution error:", error);
+                        return ToolErrorHandlerResult.text("llm返回错误.error:" + error.getMessage());
+                    }
+                })
+                .toolArgumentsErrorHandler(new ToolArgumentsErrorHandler() {
+                    @Override
+                    public ToolErrorHandlerResult handle(Throwable error, ToolErrorContext context) {
+                        log.error("tool arguments error:", error);
+                        return ToolErrorHandlerResult.text("工具参数错误. e:" + error.getMessage());
+                    }
+                })
+                // 幻觉情况 => 从上下文的信息找工具执行，但工具已经不再工具列表
+                .hallucinatedToolNameStrategy(factory.getToolExecutionResultMessageFunction())
+                .chatMemoryProvider(memoryId -> factory.createChatMemory(agentSpec))
+                .returnType(TokenStream.class)
+                .maxToolCallingRoundTrips(25)
+                .build();
+    }
+
+    /**
+     * 复制 spec 并注入 targetAgentCode。
+     * 群聊下原 spec 的 targetAgentCode 为 null，这里按当前 agent 覆盖，使 assembleSystemPrompt 能拼出该 agent 人设。
+     */
+    private AgentBuildSpec copyWithTargetAgentCode(AgentBuildSpec spec, String agentCode) {
+        return spec.toBuilder().targetAgentCode(agentCode).build();
+    }
+
+    /**
+     * 群聊 Pipeline 实现：按决策层产出的发言顺序串行逐个流式执行。
      */
     private static class GroupPipeline implements AgentPipeline {
 
-        private final SupervisorAgent supervisor;
+        /** agentCode → UntypedAgent */
+        private final Map<String, UntypedAgent> agentMap;
         private final List<AgentDef> agentDefs;
-        private final String userContent;
+        /** 本次发言顺序（由决策层产出，已保序） */
+        private final List<String> responders;
 
-        private final Function<AgentCallback,SupervisorAgent> agentCallback;
-
-        GroupPipeline(SupervisorAgent supervisor, List<AgentDef> agentDefs, String userContent, Function<AgentCallback,SupervisorAgent> callback) {
-            this.supervisor = supervisor;
+        GroupPipeline(Map<String, UntypedAgent> agentMap, List<AgentDef> agentDefs, List<String> responders) {
+            this.agentMap = agentMap;
             this.agentDefs = agentDefs;
-            this.userContent = userContent;
-            this.agentCallback = callback;
+            this.responders = responders;
         }
 
         @Override
         public PipelineResult execute(AgentCallback callback) {
-            try {
+            if (CollectionUtils.isEmpty(responders)) {
+                log.warn("GroupPipeline no responder resolved, skip execution");
+                return PipelineResult.builder().success(true).outputText(null).build();
+            }
 
-                if(Objects.nonNull(supervisor)) {
+            // 汇总执行结果
+            StringBuilder output = new StringBuilder();
+            boolean anyFailed = false;
 
-                    String response = supervisor.invoke(userContent);
-
-                    // 检查取消
-                    if (callback.isCancelled()) {
-                        log.info("GroupPipeline cancelled after supervisor invoke");
-                        return PipelineResult.builder()
-                                .success(false)
-                                .outputText(null)
-                                .build();
-                    }
-
-                    Map<String, Object> meta = new HashMap<>();
-                    meta.put("content", response);
-                    meta.put("agentCount", agentDefs.size());
-
-                    // 发送 DONE 事件（群聊没有流式输出，直接返回结果）
-                    callback.onEvent(AgentEvent.done("supervisor", meta));
-                    callback.onComplete();
-
-                    return PipelineResult.builder()
-                            .success(true)
-                            .outputText(response)
-                            .meta(meta)
-                            .build();
-                } else {
-                    SupervisorAgent apply = agentCallback.apply(callback);
-                    String response = apply.invoke(userContent);
-
-                    boolean cancelled = callback.isCancelled();
-                    return PipelineResult.builder()
-                            .success(!cancelled)
-                            .outputText(response)
-                            .build();
+            for (String code : responders) {
+                // 中途取消 → 跳过后续所有 Agent
+                if (callback.isCancelled()) {
+                    log.info("GroupPipeline cancelled, skip remaining agents, current={}", code);
+                    break;
                 }
 
-            } catch (Exception e) {
-                log.error("GroupPipeline execution failed", e);
-//                callback.onEvent(AgentEvent.error("supervisor", e.getMessage()));
-//                callback.onError(e);
-                return PipelineResult.builder()
-                        .success(false)
-                        .outputText(null)
-                        .build();
+                UntypedAgent agent = agentMap.get(code);
+                AgentDef agentDef = findAgentDef(code);
+                if (agent == null || agentDef == null) {
+                    log.warn("GroupPipeline cannot resolve agent for code={}, skip", code);
+                    continue;
+                }
+
+                // 标记"谁在说"
+                if (callback instanceof GroupAgentCallback groupCallback) {
+                    groupCallback.setStreamCode(UUID.randomUUID().toString().replace("-", ""));
+                    groupCallback.setSenderInfo(code);
+                }
+
+                log.info("GroupPipeline streaming agent start, code={}", code);
+                PipelineResult result = StreamingAgentRunner.run(agent, agentDef, callback);
+                log.info("GroupPipeline streaming agent end, code={}, success={}", code, result.isSuccess());
+
+                if (!result.isSuccess()) {
+                    anyFailed = true;
+                }
+                if (result.getOutputText() != null) {
+                    output.append(result.getOutputText()).append("\n");
+                }
             }
+
+            boolean cancelled = callback.isCancelled();
+            if (cancelled) {
+                return PipelineResult.builder().success(false).outputText(null).build();
+            }
+
+            return PipelineResult.builder()
+                    .success(!anyFailed)
+                    .outputText(output.length() > 0 ? output.toString().strip() : null)
+                    .build();
+        }
+
+        private AgentDef findAgentDef(String code) {
+            return agentDefs.stream().filter(d -> d.getCode().equals(code)).findFirst().orElse(null);
         }
     }
 }

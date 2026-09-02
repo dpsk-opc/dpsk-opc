@@ -94,6 +94,25 @@ public class ChatMessageComponent {
 
 
     /**
+     * 查询某会话最近 N 条消息（含 sender），供群聊决策层取上下文。
+     *
+     * @param conversationCode 会话编码
+     * @param limit            返回条数上限
+     * @return 最近消息列表（按时间倒序，最新在前）
+     */
+    public List<ChatMessage> listRecent(String conversationCode, int limit) {
+        if (StringUtils.isBlank(conversationCode) || limit <= 0) {
+            return Collections.emptyList();
+        }
+        return chatMessageDao.list(Wrappers.<ChatMessage>lambdaQuery()
+                .eq(ChatMessage::getConversationCode, conversationCode)
+                .in(ChatMessage::getMessageType, List.of("USER", "AI"))
+                .orderByDesc(ChatMessage::getId)
+                .last(" limit " + limit));
+    }
+
+
+    /**
      * 新建工作流消息
      *
      * @param sendId

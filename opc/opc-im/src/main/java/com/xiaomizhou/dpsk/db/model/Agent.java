@@ -106,6 +106,13 @@ public class Agent extends BaseModel {
     private String llmConfig;
 
     /**
+     * 能力标签（JSON数组字符串），如 ["代码开发","数据分析","写作","翻译"]。
+     * 由 LLM 从 prompt 提取，供群聊 Picker 做能力匹配。
+     */
+    @TableField("capabilities")
+    private String capabilities;
+
+    /**
      * 最后活跃时间（登录或收发消息时间）
      */
     @TableField("last_active_time")

@@ -13,6 +13,8 @@ import com.xiaomizhou.dpsk.db.model.Agent;
 import com.xiaomizhou.dpsk.db.model.AgentAuthToken;
 import com.xiaomizhou.dpsk.core.exceptions.BusinessException;
 import com.xiaomizhou.dpsk.db.model.KnowledgeLib;
+import com.xiaomizhou.dpsk.planning.CapabilityExtractor;
+import com.xiaomizhou.dpsk.utils.JsonUtils;
 import com.xiaomizhou.dpsk.utils.PasswordEncoder;
 import com.xiaomizhou.dpsk.utils.SequenceUtils;
 import com.xiaomizhou.dpsk.utils.TokenUtils;
@@ -22,6 +24,7 @@ import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.collections.MapUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -50,6 +53,12 @@ public class AgentComponent {
 
     private final AgentToolComponent agentToolComponent;
     private final KnowledgeLibComponent knowledgeLibComponent;
+
+    /**
+     * 能力标签提取器。使用 ObjectProvider 懒加载，打破
+     * AgentComponent → CapabilityExtractor → … → ImAgentDefProvider → AgentComponent 的构造期循环依赖。
+     */
+    private final ObjectProvider<CapabilityExtractor> capabilityExtractorProvider;
 
     /**
      * 是否是真实用户
@@ -227,6 +236,17 @@ public class AgentComponent {
         agent.setLlmConfig(StringUtils.defaultString(cmd.getLlmConfig(), ""));
         agent.setLastActiveTime(new Date());
 
+        // 新增时同步提取能力标签（若 prompt 为空则跳过）
+        if (StringUtils.isNotBlank(cmd.getPrompt())) {
+            CapabilityExtractor extractor = capabilityExtractorProvider.getIfAvailable();
+            if (extractor != null) {
+                List<String> tags = extractor.extract(cmd.getPrompt());
+                if (!tags.isEmpty()) {
+                    agent.setCapabilities(JsonUtils.toJson(tags));
+                }
+            }
+        }
+
         agent.setCreateTime(new Date());
         agent.setUpdateTime(new Date());
 
@@ -295,6 +315,17 @@ public class AgentComponent {
         }
         if (cmd.getModality() != null) {
             agent.setModality(cmd.getModality());
+        }
+
+        // 能力标签：优先前端手动指定；否则在 prompt 变化时由 LLM 从 prompt 提取（同步）
+        if (CollectionUtils.isNotEmpty(cmd.getCapabilities())) {
+            agent.setCapabilities(JsonUtils.toJson(cmd.getCapabilities()));
+        } else if (cmd.getPrompt() != null) {
+            CapabilityExtractor extractor = capabilityExtractorProvider.getIfAvailable();
+            if (extractor != null) {
+                List<String> tags = extractor.extract(cmd.getPrompt());
+                agent.setCapabilities(tags.isEmpty() ? null : JsonUtils.toJson(tags));
+            }
         }
 
         agent.setIntegrationConfig(cmd.getIntegrationConfig());
@@ -523,6 +554,7 @@ public class AgentComponent {
         dto.setStatus(agent.getStatus());
         dto.setIntegrationConfig(agent.getIntegrationConfig());
         dto.setLlmConfig(agent.getLlmConfig());
+        dto.setCapabilities(parseCapabilities(agent.getCapabilities()));
         dto.setModality(agent.getModality());
         dto.setLastActiveTime(agent.getLastActiveTime());
         dto.setCreateTime(agent.getCreateTime());
@@ -531,5 +563,21 @@ public class AgentComponent {
         dto.setSlogan(agent.getSlogan());
 
         return dto;
+    }
+
+    /**
+     * 将 capabilities（JSON 数组字符串）解析为 List&lt;String&gt;；空/非法时返回空列表。
+     */
+    private List<String> parseCapabilities(String capabilities) {
+        if (StringUtils.isBlank(capabilities)) {
+            return Collections.emptyList();
+        }
+        try {
+            return JsonUtils.toObj(capabilities, new com.fasterxml.jackson.core.type.TypeReference<List<String>>() {
+            });
+        } catch (Exception e) {
+            log.warn("parse capabilities failed, raw={}", capabilities, e);
+            return Collections.emptyList();
+        }
     }
 }

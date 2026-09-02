@@ -3,6 +3,7 @@ package com.xiaomizhou.dpsk.db.chat;
 import com.xiaomizhou.dpsk.agent.AgentBuildSpec;
 import com.xiaomizhou.dpsk.agent.AgentOrchestrator;
 import com.xiaomizhou.dpsk.agent.PipelineResult;
+import com.xiaomizhou.dpsk.agent.data.AgentDef;
 import com.xiaomizhou.dpsk.agent.data.AgentDefProvider;
 import com.xiaomizhou.dpsk.agent.event.AgentEvent;
 import com.xiaomizhou.dpsk.constant.ConversationType;
@@ -36,6 +37,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -79,6 +81,7 @@ public class AgentBridge {
     private final GroupIntentClassifier groupIntentClassifier;
     private final ExpertIntentClassifier expertIntentClassifier;
     private final WorkflowTemplateComponent workflowTemplateComponent;
+    private final GroupResponderPicker groupResponderPicker;
 
     @Value("${com.xiaomizhou.dpsk.opc.skill.path:~/skills}")
     private String skillPathPrefix;
@@ -121,7 +124,8 @@ public class AgentBridge {
                        WorkflowTaskFactory workflowTaskFactory,
                        GroupIntentClassifier groupIntentClassifier,
                        ExpertIntentClassifier expertIntentClassifier,
-                       WorkflowTemplateComponent workflowTemplateComponent) {
+                       WorkflowTemplateComponent workflowTemplateComponent,
+                       GroupResponderPicker groupResponderPicker) {
         this.orchestrator = orchestrator;
         this.agentDefProvider = agentDefProvider;
         this.agentComponent = agentComponent;
@@ -138,6 +142,7 @@ public class AgentBridge {
         this.groupIntentClassifier = groupIntentClassifier;
         this.expertIntentClassifier = expertIntentClassifier;
         this.workflowTemplateComponent = workflowTemplateComponent;
+        this.groupResponderPicker = groupResponderPicker;
     }
 
     /**
@@ -481,7 +486,23 @@ public class AgentBridge {
                 return;
             }
 
-            // 组装 MODE_GROUP 的 spec（Supervisor 群聊对话）
+            final int linkNum = 2;
+
+            // 1. 解析被 @ 的 Agent code 集合（mentionedList 为 Agent 主键 ID 数组，需映射为 code）
+            List<String> mentionedAgentCodes = parseMentionedAgentCodes(msg.getMentionedList());
+
+            // 2. 查询最近群聊上下文（含 sender），供 Picker 做衔接判断
+            List<AgentBuildSpec.GroupRecentMessage> recentGroupMessages =
+                    buildRecentGroupMessages(conversationCode, linkNum);
+
+            // 3. 候选 Agent 定义（含能力标签），供 Picker 做能力匹配
+            List<AgentDef> candidateAgents = agentDefProvider.getByCodes(agentCodes);
+
+            // 4. 决策：由 GroupResponderPicker 决定本次发言顺序（三层：@ / 衔接 / 能力匹配）
+            GroupResponderPicker.ResponderPickResult pick = groupResponderPicker.pick(
+                    msg.getContent(), candidateAgents, mentionedAgentCodes, recentGroupMessages, linkNum);
+
+            // 5. 组装 MODE_GROUP 的 spec（决策层产出 responderAgentCodes，执行层串行流式）
             AgentBuildSpec spec = AgentBuildSpec.builder()
                     .mode(AgentBuildSpec.MODE_GROUP)
                     .userCode(userId)
@@ -490,6 +511,9 @@ public class AgentBridge {
                     .userContent(msg.getContent())
                     .conversationCode(conversationCode)
                     .mcpCodes(mcpCodes)
+                    .mentionedAgentCodes(mentionedAgentCodes)
+                    .recentGroupMessages(recentGroupMessages)
+                    .responderAgentCodes(pick == null ? agentCodes : pick.getAgentCodes())
                     .build();
 
             String streamCode = SequenceUtils.generator().next("STM");
@@ -510,6 +534,50 @@ public class AgentBridge {
         } finally {
             clearCancelFlag(msgCode);
         }
+    }
+
+    /**
+     * 解析被 @ 的 Agent code 集合。
+     * mentionedList 为 Agent code 字符串的 JSON 数组，如 ["AGT-xxx"]，直接返回即可，无需再映射。
+     * 解析失败或为空时返回空列表（不抛异常，不阻塞主流程）。
+     */
+    private List<String> parseMentionedAgentCodes(String mentionedList) {
+        if (StringUtils.isBlank(mentionedList)) {
+            return Collections.emptyList();
+        }
+        try {
+            List<String> codes = JsonUtils.toObj(mentionedList, new com.fasterxml.jackson.core.type.TypeReference<List<String>>() {
+            });
+            if (CollectionUtils.isEmpty(codes)) {
+                return Collections.emptyList();
+            }
+            return codes.stream()
+                    .filter(StringUtils::isNotBlank)
+                    .distinct()
+                    .collect(Collectors.toList());
+        } catch (Exception e) {
+            log.warn("parse mentionedList failed, raw={}", mentionedList, e);
+            return Collections.emptyList();
+        }
+    }
+
+    /**
+     * 构建最近群聊上下文（含 sender），供 Picker 做衔接判断。
+     */
+    private List<AgentBuildSpec.GroupRecentMessage> buildRecentGroupMessages(String conversationCode, int size) {
+        List<ChatMessage> recent = chatMessageComponent.listRecent(conversationCode, size);
+        if (CollectionUtils.isEmpty(recent)) {
+            return Collections.emptyList();
+        }
+        return recent.stream()
+                .filter(Objects::nonNull)
+                .map(m -> AgentBuildSpec.GroupRecentMessage.builder()
+                        .senderCode(m.getSenderCode())
+                        .senderType(m.getSenderCode() == null ? "USER" : "AGENT")
+                        .content(m.getContent())
+                        .messageType(m.getMessageType())
+                        .build())
+                .collect(Collectors.toList());
     }
 
     /**

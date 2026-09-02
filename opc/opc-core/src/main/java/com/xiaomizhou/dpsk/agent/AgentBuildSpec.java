@@ -14,7 +14,7 @@ import java.util.Map;
  * @date 2026/6/3
  */
 @Data
-@Builder
+@Builder(toBuilder = true)
 public class AgentBuildSpec {
 
     /** 单聊模式 */
@@ -52,6 +52,23 @@ public class AgentBuildSpec {
 
     /** 引用消息编码（@ 功能） */
     private String quoteMessageCode;
+
+    /**
+     * 被@的 Agent code 集合（群聊时使用，已由 opc-im 从 mentionedList 解析出）。
+     * 被@的 agent 必须全部对本次消息做出回应。
+     */
+    private List<String> mentionedAgentCodes;
+
+    /**
+     * 群聊上下文：最近 N 条消息（含 sender），用于「衔接判断」与「能力匹配」挑选发言 agent。
+     */
+    private List<GroupRecentMessage> recentGroupMessages;
+
+    /**
+     * 本次发言顺序列表（群聊 chat 分支使用）。
+     * 由 opc-im 决策层（GroupResponderPicker）产出，执行层（GroupBuilder）按此顺序串行逐个流式执行。
+     */
+    private List<String> responderAgentCodes;
 
     /**
      * MCP 编码列表（工作流模式时使用）
@@ -127,6 +144,26 @@ public class AgentBuildSpec {
 
         private int mode = 0;
 
+    }
+
+    /**
+     * 群聊上下文中的一条最近消息（含 sender），供决策层做「衔接判断」与「能力匹配」。
+     */
+    @Data
+    @Builder
+    public static class GroupRecentMessage {
+
+        /** 发言者编码（用户或 Agent） */
+        private String senderCode;
+
+        /** 发言者类型：USER / AGENT */
+        private String senderType;
+
+        /** 消息内容 */
+        private String content;
+
+        /** 透传 ChatMessage.messageType */
+        private String messageType;
     }
 }
 
