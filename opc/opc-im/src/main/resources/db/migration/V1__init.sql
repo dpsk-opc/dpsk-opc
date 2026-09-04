@@ -174,6 +174,7 @@ CREATE TABLE IF NOT EXISTS t_conversation (
     last_message_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '最后一条消息时间',
     last_sender_code VARCHAR(60) NOT NULL DEFAULT '' COMMENT '最后一条消息发送者ID',
     last_user_message_code VARCHAR(100) NOT NULL DEFAULT '' COMMENT '最后一条用户消息ID',
+    pin_msg_code VARCHAR(100) NOT NULL DEFAULT '' COMMENT '置顶(pin)消息编码',
     is_top TINYINT NOT NULL DEFAULT 0 COMMENT '是否置顶',
     ext_config TEXT NOT NULL DEFAULT '' COMMENT '扩展配置（JSON）',
     create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',

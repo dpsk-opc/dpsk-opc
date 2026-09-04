@@ -163,8 +163,8 @@ public class AgentTodoConsumer implements TaskConsumer {
 
         WorkflowTaskDto add = taskComponent.add(task);
 
-        // 发起任务
-        agentBridge.dispatchWorkflow("", todo.getContent(), add.getCode(), todo.getRefCode(), todo.getConversationCode());
+        // 发起任务（todo 无直接用户消息 code，userMessageCode 传 null，L0 走会话兜底）
+        agentBridge.dispatchWorkflow("", todo.getContent(), add.getCode(), todo.getRefCode(), todo.getConversationCode(), null);
 
         // 更新状态
         todoItemDao.lambdaUpdate().set(TodoItemDO::getStatus, TodoItemDO.STATUS_DONE).eq(TodoItemDO::getCode, todoCode).eq(TodoItemDO::getStatus, TodoItemDO.STATUS_IN_PROGRESS).update();

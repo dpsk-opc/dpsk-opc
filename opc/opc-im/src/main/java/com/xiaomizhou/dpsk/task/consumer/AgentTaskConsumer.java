@@ -128,6 +128,8 @@ public class AgentTaskConsumer implements TaskConsumer {
                     .userCode(userId)
                     .targetAgentCode(agentCode)
                     .userContent(triggerContent)
+                    // 锚定本次定时触发的用户消息（模拟触发入库的那条 USER 消息），L0 记忆在窗口挤出时精确取回
+                    .userMessageCode(msgCode)
                     .conversationCode(conversationCode)
                     .taskContext(taskContext)
                     .build();

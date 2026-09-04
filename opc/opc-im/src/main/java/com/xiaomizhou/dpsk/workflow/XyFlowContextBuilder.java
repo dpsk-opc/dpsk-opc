@@ -32,6 +32,8 @@ public final class XyFlowContextBuilder {
 
     /**
      * 构建 WorkflowContext（专家团模板工作流专用，conversationType=WORKFLOW）。
+     *
+     * @param userMessageCode 触发本工作流的原始用户消息编码，可为 null
      */
     public static WorkflowContext build(XyFlow xyFlow,
                                         WorkflowTaskDto task,
@@ -39,6 +41,7 @@ public final class XyFlowContextBuilder {
                                         String targetId,
                                         String conversationCode,
                                         String contextData,
+                                        String userMessageCode,
                                         AtomicBoolean cancelFlag,
                                         WorkflowConfirmManager confirmManager,
                                         AgentOrchestrator orchestrator,
@@ -48,7 +51,7 @@ public final class XyFlowContextBuilder {
                                         AgentDefProvider agentDefProvider,
                                         WorkflowTaskExecuteComponent workflowTaskExecuteComponent) {
         return build(xyFlow, task, userId, targetId, conversationCode,
-                ConversationType.WORKFLOW.name(), null, contextData, cancelFlag, confirmManager,
+                ConversationType.WORKFLOW.name(), null, contextData, userMessageCode, cancelFlag, confirmManager,
                 orchestrator, workflowTaskComponent, chatMessageComponent, tokenUsageDao,
                 agentDefProvider, workflowTaskExecuteComponent);
     }
@@ -58,6 +61,7 @@ public final class XyFlowContextBuilder {
      *
      * @param conversationType GROUP / WORKFLOW，AgentInvoker 据此切消息归属
      * @param groupCode        群聊时的群编码，非群聊传 null
+     * @param userMessageCode  触发本工作流的原始用户消息编码，可为 null
      */
     public static WorkflowContext build(XyFlow xyFlow,
                                         WorkflowTaskDto task,
@@ -67,6 +71,7 @@ public final class XyFlowContextBuilder {
                                         String conversationType,
                                         String groupCode,
                                         String contextData,
+                                        String userMessageCode,
                                         AtomicBoolean cancelFlag,
                                         WorkflowConfirmManager confirmManager,
                                         AgentOrchestrator orchestrator,
@@ -111,6 +116,7 @@ public final class XyFlowContextBuilder {
                 .conversationCode(conversationCode)
                 .conversationType(conversationType)
                 .groupCode(groupCode)
+                .userMessageCode(userMessageCode)
                 .orchestrator(orchestrator)
                 .workflowTaskComponent(workflowTaskComponent)
                 .chatMessageComponent(chatMessageComponent)

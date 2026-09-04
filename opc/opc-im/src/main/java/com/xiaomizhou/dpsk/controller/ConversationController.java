@@ -86,6 +86,34 @@ public class ConversationController {
         return Results.ok(conversationDao.setTop(param.getConversationCode(), param.getTop()));
     }
 
+    /**
+     * 置顶（pin）一条消息：让 AI 沉淀出的通用知识/结论在长项目中随每次 L0 窗口常驻，
+     * 即使它已不在最近窗口内。
+     */
+    @PostMapping(value = "pin")
+    public Response<Boolean> pin(@RequestBody Request<ConversationHttp> request) {
+        ConversationHttp param = request.getParam();
+        if (param == null || StringUtils.isBlank(param.getConversationCode())) {
+            return Results.fail("conversationCode 不能为空");
+        }
+        if (StringUtils.isBlank(param.getPinMsgCode())) {
+            return Results.fail("pinMsgCode 不能为空");
+        }
+        return Results.ok(conversationDao.setPinMsg(param.getConversationCode(), param.getPinMsgCode()));
+    }
+
+    /**
+     * 取消置顶（pin）。
+     */
+    @PostMapping(value = "unpin")
+    public Response<Boolean> unpin(@RequestBody Request<ConversationHttp> request) {
+        ConversationHttp param = request.getParam();
+        if (param == null || StringUtils.isBlank(param.getConversationCode())) {
+            return Results.fail("conversationCode 不能为空");
+        }
+        return Results.ok(conversationDao.setPinMsg(param.getConversationCode(), null));
+    }
+
     @PostMapping(value = "chat/cancel")
     public Response<Boolean> cancelChat(@RequestBody Request<ConversationHttp> request) {
         ConversationHttp param = request.getParam();

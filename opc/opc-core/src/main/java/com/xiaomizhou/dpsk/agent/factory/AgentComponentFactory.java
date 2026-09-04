@@ -249,7 +249,7 @@ public class AgentComponentFactory {
 
     /** 构建 ChatMemory（L0 工作记忆） */
     public ChatMemory createChatMemory(AgentBuildSpec spec) {
-        Object memoryId;
+        String memoryId;
 
         String conversationCode = spec.getConversationCode();
         String groupCode = spec.getGroupCode();
@@ -269,6 +269,9 @@ public class AgentComponentFactory {
             memoryId = MemoryConfig.buildMemoryId(conversationCode, agentCode);
             prompt = assembleSystemPrompt(spec);
         }
+
+        // 在 memoryId 末尾追加本次锚定的用户消息 code，供 L0 窗口在 UserMessage 被挤出时精确保回真实用户需求
+        memoryId = MemoryConfig.appendUserMessageCode(memoryId, spec.getUserMessageCode());
 
         return MessageWindowChatMemory.builder()
                 .maxMessages(MemoryConfig.L0_MAX_MESSAGES)

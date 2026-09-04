@@ -12,6 +12,7 @@ import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.*;
 import dev.langchain4j.store.memory.chat.ChatMemoryStore;
 import org.apache.commons.collections.CollectionUtils;
+import org.apache.commons.collections.MapUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -111,33 +112,212 @@ public class DatabaseChatMemoryStore implements ChatMemoryStore {
 
         result.addAll(dbMessages);
 
-        // 最终兜底：确保返回的完整消息列表中至少存在一条 UserMessage。
+        // 最终兜底：确保返回的完整消息列表中至少存在一条 UserMessage，且优先保住「本次锚定的真实用户消息」。
         // 原因：LangChain4j 在 refreshDynamicProviders 中会执行
         //   UserMessage.findLast(messages).orElseThrow()
         // 当工具调用密集导致 UserMessage 被裁剪（trimKeepLatest）挤出窗口时，
-        // 最终列表会没有任何 UserMessage，从而抛出 NoSuchElementException。
+        // 最终列表会没有任何 UserMessage（或只剩更早的历史 UserMessage），从而
+        //   1) 抛出 NoSuchElementException；
+        //   2) 模型丢失本轮用户的原始需求（本次要执行的任务目标）。
+        //
+        // 修复：memoryId 末尾携带本次锚定的 userMessageCode（见 MemoryKey/MemoryConfig.appendUserMessageCode），
+        // 一旦发现窗口内缺失「该 code 对应的真实用户消息」，就按 code 从库精确取回并补到列表末尾。
+        // 这样即便窗口里还残留更早的历史 UserMessage，也能把本轮真正的原始需求牢牢锚住。
         //
         // 关键：补的 UserMessage 必须放在「列表末尾」，而不能放在 SystemMessage 之后（index 1）。
         // 因为 MessageWindowChatMemory.messages() 在拿到 store.getMessages() 的返回值后，
         // 还会再调用 ensureCapacity(messages, maxMessages) 从「头部」逐出最早的非 SystemMessage。
         // 若补在 index 1，会第一个被 ensureCapacity 逐出，等于白补。
-        // 补在末尾（最新位置）则不会被 ensureCapacity 从头部逐出，findLast 能稳定命中；
-        // 且 messagesToSend() 里 UserMessage.replaceLast() 会把它替换成当前真实用户消息，语义正确。
-        if (UserMessage.findLast(result).isEmpty()) {
-            log.warn("No UserMessage in final memory window after trimming, padding one back. memoryId: {}", memoryId);
-            String conversationCode = key.getConversationCode();
-            String lastUserContent = conversationRepository.getLastUserContent(conversationCode);
-            if (StringUtils.isNotBlank(lastUserContent)) {
-                result.add(UserMessage.from(lastUserContent));
-                log.warn("a real lastUserContent: {}", lastUserContent);
+        // 补在末尾（最新位置）则不会被 ensureCapacity 从头部逐出，findLast 能稳定命中。
+        if (!containsAnchoredUserMessage(result, key)) {
+            ChatMessage anchored = fetchAnchoredUserMessage(key);
+            if (anchored != null) {
+                result.add(anchored);
+                log.warn("UserMessage(code={}) was trimmed out of window, re-anchored at tail. memoryId: {}",
+                        key.getUserMessageCode(), memoryId);
             } else {
-                // 无用的，避免底层爆异常
-                result.add(UserMessage.from("xxxxx"));
-                log.warn("a empty lastUserContent: {}", lastUserContent);
+                // 无锚定 code 或库中查不到：退回按会话拉取最后一条真实用户内容，避免框架抛异常。
+                // 禁止用伪造占位消息（如 "xxxxx"）充数，宁可兜底为空格也不把乱写的内容喂给模型。
+                String conversationCode = key.getConversationCode();
+                String lastUserContent = conversationRepository.getLastUserContent(conversationCode);
+                if (StringUtils.isNotBlank(lastUserContent)) {
+                    result.add(UserMessage.from(lastUserContent));
+                    log.warn("No anchored UserMessage available, fallback to lastUserContent. memoryId: {}", memoryId);
+                } else {
+                    log.warn("No UserMessage in final memory window and no fallback content found. memoryId: {}", memoryId);
+                }
             }
         }
 
+        // 置顶（pin）消息注入：会话级通用知识，需随每次 L0 窗口常驻。
+        // 若窗口内缺失被 pin 的消息（通常因超出最近窗口），按 code 从库取回并补到列表末尾，
+        // 这样能躲过 ensureCapacity 从头部逐出，保证 AI 沉淀出的通用知识/结论长期可被模型记住。
+        ensurePinnedMessage(result, key, memoryId);
+
+        // 同类消息 content 去重：避免重复内容喂给模型。按需可注释掉此调用停用。
+        deduplicateMessages(result);
+
         return new ArrayList<>(result);
+    }
+
+    /**
+     * 对「同类型且 content 完全相同的消息」去重，保留最后一次出现的位置（更靠后的那条）。
+     * <p>
+     * 仅在同一类型内部去重：UserMessage 只与 UserMessage 比，AiMessage 只与 AiMessage 比，
+     * 不会把用户消息和 AI 消息误当重复（即便内容一样）。SystemMessage / 工具消息不参与去重。
+     * <p>
+     * 场景：锚定补回、兜底拉取、文件注入等导致同一内容在窗口中出现多次，对 LLM 意义不大，可去掉。
+     * 若不需要该优化，注释掉 getMessages 中对其的调用即可。
+     *
+     * @param messages 完整窗口消息列表（含 SystemMessage，就地修改）
+     */
+    private void deduplicateMessages(List<ChatMessage> messages) {
+        if (messages == null || messages.size() <= 1) {
+            return;
+        }
+        Set<String> seenKeys = new HashSet<>();
+        List<Integer> toRemove = new ArrayList<>();
+        // 从后往前扫描：先记录靠后的消息，遇到同类型同内容的更早消息则标记删除，从而保留最后一次出现的位置
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            ChatMessage msg = messages.get(i);
+            if (msg instanceof SystemMessage) {
+                continue;
+            }
+            String key = dedupeKey(msg);
+            if (key == null) {
+                continue;
+            }
+            if (!seenKeys.add(key)) {
+                toRemove.add(i);
+            }
+        }
+        if (!toRemove.isEmpty()) {
+            // 倒序删除，避免下标错乱
+            toRemove.sort(Collections.reverseOrder());
+            for (int idx : toRemove) {
+                messages.remove(idx);
+            }
+            log.debug("deduplicateMessages removed {} duplicated message(s)", toRemove.size());
+        }
+    }
+
+    /**
+     * 生成用于去重的 key：类型前缀 + 归一化文本内容。
+     * <p>
+     * 仅对 UserMessage 与纯文本 AiMessage 生成 key（二者类型前缀不同，不会互相去重）；
+     * SystemMessage、含工具调用的 AiMessage、工具结果等返回 null，不参与去重。
+     */
+    private String dedupeKey(ChatMessage msg) {
+        if (msg instanceof UserMessage um) {
+            return "U:" + MemoryUtils.toSingleContent(um);
+        }
+        if (msg instanceof AiMessage am) {
+            // 含工具调用（THINKING）的 AiMessage：其 text 常为空、真正内容在 toolExecutionRequests 里，
+            // 不应与纯文本回复混同，也不应与其它工具调用消息互相去重（避免工具链断裂）
+            if (am.hasToolExecutionRequests()) {
+                return null;
+            }
+            String text = am.text();
+            // 无实际文本内容的 AiMessage 不去重（避免多条空文本节点被误判重复而误删）
+            if (text == null || text.isBlank()) {
+                return null;
+            }
+            return "A:" + text;
+        }
+        return null;
+    }
+
+    /**
+     * 确保窗口内包含会话置顶（pin）的消息。
+     * <p>
+     * pin 用于让 AI 在长项目中沉淀出的通用知识/结论长期生效。每次构建 L0 窗口时，
+     * 若窗口里没有该 code 对应的消息，就按 code 从库取回并补到列表末尾。
+     *
+     * @param messages 已组装好的窗口消息（含 SystemMessage 与裁剪后的历史）
+     * @param key      记忆键（含 conversationCode）
+     * @param memoryId 原始 memoryId（仅日志）
+     */
+    private void ensurePinnedMessage(List<ChatMessage> messages, MemoryKey key, Object memoryId) {
+        if (key == null || key.getConversationCode() == null) {
+            return;
+        }
+        String pinMsgCode = conversationRepository.getPinMsgCode(key.getConversationCode());
+        if (StringUtils.isBlank(pinMsgCode)) {
+            return;
+        }
+        // 窗口内已包含该 pin 消息则无需重复注入
+        if (containsMessageCode(messages, pinMsgCode)) {
+            return;
+        }
+        ChatMessage pinned = messageRepository.findByCode(pinMsgCode);
+        if (pinned == null) {
+            log.warn("Pinned message not found by code: code={}, memoryId={}", pinMsgCode, memoryId);
+            return;
+        }
+        messages.add(pinned);
+        log.debug("Pinned message re-injected into window: code={}, memoryId={}", pinMsgCode, memoryId);
+    }
+
+    /**
+     * 判断消息列表中是否已存在指定 code 的消息。
+     * code 存储在各子类（User/Ai/Tool）的 attributes 中，此处按类型兼容读取。
+     */
+    private boolean containsMessageCode(List<ChatMessage> messages, String code) {
+        if (code == null || messages == null) {
+            return false;
+        }
+        for (ChatMessage msg : messages) {
+            String msgCode = null;
+            if (msg instanceof UserMessage um) {
+                msgCode = um.attributes() == null ? null : MapUtils.getString(um.attributes(), "code");
+            } else if (msg instanceof AiMessage am) {
+                msgCode = am.attributes() == null ? null : MapUtils.getString(am.attributes(), "code");
+            } else if (msg instanceof ToolExecutionResultMessage tm) {
+                msgCode = tm.attributes() == null ? null : MapUtils.getString(tm.attributes(), "code");
+            }
+            if (code.equals(msgCode)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 判断窗口内是否已包含「本次锚定的用户消息」。
+     * <p>
+     * 若 MemoryKey 携带了 userMessageCode，则要求存在 code 与之匹配的 UserMessage（精确锚定本轮原始需求）；
+     * 若未携带 code（如定时任务、部分工作流），则退化为「只要存在任意 UserMessage」即可。
+     */
+    private boolean containsAnchoredUserMessage(List<ChatMessage> messages, MemoryKey key) {
+        String anchoredCode = key == null ? null : key.getUserMessageCode();
+        for (ChatMessage msg : messages) {
+            if (msg instanceof UserMessage um) {
+                if (anchoredCode == null || anchoredCode.isEmpty()) {
+                    return true;
+                }
+                String msgCode = um.attributes() == null ? null : MapUtils.getString(um.attributes(), "code");
+                if (anchoredCode.equals(msgCode)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 按 MemoryKey 中锚定的 userMessageCode 从库精确取回该条真实用户消息。
+     * code 为空或查询不到时返回 null。
+     */
+    private ChatMessage fetchAnchoredUserMessage(MemoryKey key) {
+        if (key == null || StringUtils.isBlank(key.getUserMessageCode())) {
+            return null;
+        }
+        ChatMessage msg = messageRepository.findByCode(key.getUserMessageCode());
+        if (msg instanceof UserMessage) {
+            return msg;
+        }
+        log.warn("Anchored userMessageCode not found or not a UserMessage: code={}", key.getUserMessageCode());
+        return null;
     }
 
     @Override
@@ -156,14 +336,18 @@ public class DatabaseChatMemoryStore implements ChatMemoryStore {
         // 计算新快照的消息指纹
         List<String> newFingerprints = computeFingerprints(filtered);
 
+        // snapshot 以「稳定 memoryId」为键（去掉末尾锚定的 userMessageCode），
+        // 确保同一会话即便 memoryId 因携带不同 code 而变化，移出检测与摘要仍基于统一存储空间累积。
+        String stableMemoryId = key.toStableMemoryId();
+
         // 获取旧快照
-        List<String> oldFingerprints = snapshotMap.getOrDefault(memoryId, List.of());
+        List<String> oldFingerprints = snapshotMap.getOrDefault(stableMemoryId, List.of());
 
         // 持久化到数据库（仅持久化 User/AI 消息）
         messageRepository.saveMessages(key, new ArrayList<>(filtered));
 
         // 更新内存快照
-        snapshotMap.put(memoryId, newFingerprints);
+        snapshotMap.put(stableMemoryId, newFingerprints);
 
         // 检测移出窗口的消息
         if (memoryManager != null && !oldFingerprints.isEmpty()) {
@@ -182,7 +366,8 @@ public class DatabaseChatMemoryStore implements ChatMemoryStore {
 
     @Override
     public void deleteMessages(Object memoryId) {
-        snapshotMap.remove(memoryId);
+        MemoryKey key = MemoryConfig.parseMemoryId(memoryId);
+        snapshotMap.remove(key == null ? memoryId : key.toStableMemoryId());
         log.debug("deleteMessages called for memoryId: {}", memoryId);
     }
 

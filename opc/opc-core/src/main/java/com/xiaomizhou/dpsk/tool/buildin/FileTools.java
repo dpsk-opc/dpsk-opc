@@ -3,6 +3,7 @@ package com.xiaomizhou.dpsk.tool.buildin;
 import com.xiaomizhou.dpsk.tool.ToolMeta;
 import dev.langchain4j.agent.tool.P;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 
@@ -236,8 +237,17 @@ public class FileTools {
 
     // 工具方法：路径解析与安全检查
     private Path resolvePath(String userPath) throws IOException {
-        Path p = Paths.get(userPath).normalize();
-        return p;
+
+        if (StringUtils.isBlank(userPath)) {
+            throw new IOException("路径不能为空");
+        }
+
+        try {
+            return Paths.get(userPath).normalize();
+
+        } catch (Exception e) {
+            throw new IOException("路径不存在或者解析失败: " + e.getMessage());
+        }
     }
 
 }

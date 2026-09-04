@@ -242,6 +242,7 @@ CREATE TABLE IF NOT EXISTS `t_conversation` (
     `last_message_content` TEXT NOT NULL DEFAULT '' COMMENT '最后一条消息预览（前200字符）',
     `last_message_time` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '最后一条消息时间',
     `last_sender_code` VARCHAR(60) NOT NULL DEFAULT '' COMMENT '最后一条消息发送者ID',
+    `pin_msg_code` VARCHAR(100) NOT NULL DEFAULT '' COMMENT '置顶(pin)消息编码',
 
     -- 会话设置（预留）
     `is_top` TINYINT NOT NULL DEFAULT 0 COMMENT '是否置顶: 0=否, 1=是',

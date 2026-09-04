@@ -41,6 +41,15 @@ public class AgentBuildSpec {
     /** 用户当前消息内容 */
     private String userContent;
 
+    /**
+     * 本次触发执行的用户消息编码（即用户"原始需求"所在的消息）。
+     * <p>
+     * 当窗口因工具消息过多把 UserMessage 挤出时，L0 记忆会按此 code 精确取回该条真实用户消息，
+     * 锚定在窗口内，避免模型遗忘用户的原始需求。单聊/群聊由调用方从当次用户消息填充；
+     * 无真实用户消息的场景（如定时任务、部分工作流）可为空，为空时走原有兜底。
+     */
+    private String userMessageCode;
+
     /** 目标 Agent（单聊时使用） */
     private String targetAgentCode;
 

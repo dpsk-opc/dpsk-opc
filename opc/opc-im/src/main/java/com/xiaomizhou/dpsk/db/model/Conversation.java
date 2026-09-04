@@ -75,6 +75,13 @@ public class Conversation extends BaseModel {
     private String lastUserMessageCode;
 
     /**
+     * 置顶（pin）消息编码：AI 在长项目中沉淀出的通用知识/结论，需随每次 L0 窗口常驻。
+     * 为空表示未 pin。
+     */
+    @TableField("pin_msg_code")
+    private String pinMsgCode;
+
+    /**
      * 是否置顶: 0=否, 1=是
      */
     @TableField("is_top")

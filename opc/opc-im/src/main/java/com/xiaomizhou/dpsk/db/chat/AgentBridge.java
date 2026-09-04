@@ -186,8 +186,8 @@ public class AgentBridge {
                 String taskCode = dto.getTaskCode();
                 WorkflowTaskDto task = workflowTaskComponent.getByCode(taskCode);
 
-                // 重启任务
-                executorService.execute(() -> dispatchWorkflow(dto.getUserId(), "", taskCode, task.getTemplateCode(), task.getConversationCode()));
+                // 重启任务（无新用户输入，userMessageCode 传 null）
+                executorService.execute(() -> dispatchWorkflow(dto.getUserId(), "", taskCode, task.getTemplateCode(), task.getConversationCode(), null));
                 return true;
             }
 
@@ -258,7 +258,7 @@ public class AgentBridge {
 
             dispatchSingle(userId, msg, targetId, conversationCode, mcpCodes, skillPaths);
         } else if (ConversationType.WORKFLOW.getCode().equals(conv.getConversationType())) {
-            dispatchWorkflow(userId, msg.getContent(), msg.getTaskId(), targetId, conversationCode);
+        dispatchWorkflow(userId, msg.getContent(), msg.getTaskId(), targetId, conversationCode, msg.getCode());
         } else {
             throw new IllegalArgumentException("不支持的会话类型：" + conv.getConversationType());
         }
@@ -279,6 +279,8 @@ public class AgentBridge {
                     .userCode(userId)
                     .targetAgentCode(targetId)
                     .userContent(msg.getContent())
+                    // 锚定本次用户消息，L0 记忆在 UserMessage 被挤出时按此 code 精确取回
+                    .userMessageCode(msg.getCode())
                     .conversationCode(conversationCode)
                     .imageBuildSpec(AgentBuildSpec.ImageBuildSpec.builder()
                             .n(imageGenerateDto.getCount())
@@ -315,13 +317,15 @@ public class AgentBridge {
     /**
      * 工作流分发。
      *
-     * @param userId
-     * @param contextData
-     * @param taskCode
-     * @param targetId
-     * @param conversationCode
+     * @param userId           用户编码
+     * @param contextData      触发工作流的上下文数据；为空表示人工确认恢复执行（无新用户输入）
+     * @param taskCode         工作流任务编码
+     * @param targetId         目标 agent / 专家团编码
+     * @param conversationCode 会话编码
+     * @param userMessageCode  触发本工作流的原始用户消息编码（可为 null，恢复执行等无新输入场景传 null）
      */
-    public void dispatchWorkflow(String userId, String contextData, String taskCode, String targetId, String conversationCode) {
+    public void dispatchWorkflow(String userId, String contextData, String taskCode, String targetId, String conversationCode,
+                                 String userMessageCode) {
 
         WorkflowTaskDto task = workflowTaskComponent.getByCode(taskCode);
 
@@ -337,6 +341,9 @@ public class AgentBridge {
                 sendExpertHint(verdict, userId, task, conversationCode);
                 return;
             }
+        } else {
+            // 人工确认恢复执行等无新用户输入的场景，不锚定任何用户消息
+            userMessageCode = null;
         }
 
         XyFlow xyFlow = JsonUtils.toObj(task.getWorkflowJson(), XyFlow.class);
@@ -345,7 +352,7 @@ public class AgentBridge {
 
         // 构造引擎无关的 WorkflowContext（LangGraph4j 执行）
         WorkflowContext context = XyFlowContextBuilder.build(xyFlow, task, userId, targetId, conversationCode,
-                contextData, cancelFlag, confirmManager, orchestrator, workflowTaskComponent,
+                contextData, userMessageCode, cancelFlag, confirmManager, orchestrator, workflowTaskComponent,
                 chatMessageComponent, tokenUsageDao, agentDefProvider, workflowTaskExecuteComponent);
 
         // LangGraph 引擎执行专家团人工定义图（支持 switch / loop 等回路结构）
@@ -408,6 +415,8 @@ public class AgentBridge {
                     .userCode(userId)
                     .targetAgentCode(targetId)
                     .userContent(msg.getContent())
+                    // 锚定本次用户消息，L0 记忆在 UserMessage 被工具消息挤出时按此 code 精确取回原始需求
+                    .userMessageCode(msg.getCode())
                     .conversationCode(conversationCode)
                     .mcpCodes(mcpCodes)
                     .skillPaths(skillPaths)
@@ -509,6 +518,8 @@ public class AgentBridge {
                     .targetAgentCodes(agentCodes)
                     .groupCode(targetId)
                     .userContent(msg.getContent())
+                    // 锚定本次用户消息，L0 记忆在 UserMessage 被工具消息挤出时按此 code 精确取回原始需求
+                    .userMessageCode(msg.getCode())
                     .conversationCode(conversationCode)
                     .mcpCodes(mcpCodes)
                     .mentionedAgentCodes(mentionedAgentCodes)
@@ -646,7 +657,7 @@ public class AgentBridge {
                 // 4.2 构建上下文并执行（conversationType=GROUP，targetId=groupCode，thinking 落群会话）
                 WorkflowContext context = XyFlowContextBuilder.build(xyFlow, task, userId, targetId,
                         conversationCode, ConversationType.GROUP.name(), targetId, userContentForReplan,
-                        cancelFlag, confirmManager, orchestrator, workflowTaskComponent,
+                        msgCode, cancelFlag, confirmManager, orchestrator, workflowTaskComponent,
                         chatMessageComponent, tokenUsageDao, agentDefProvider, workflowTaskExecuteComponent);
 
                 LangGraphWorkflowEngine.ExecutionResult exec = new LangGraphWorkflowEngine().execute(xyFlow, context);

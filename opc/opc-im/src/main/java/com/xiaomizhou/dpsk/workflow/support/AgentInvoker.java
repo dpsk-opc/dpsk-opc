@@ -56,6 +56,8 @@ public final class AgentInvoker {
                 .userCode(wf.getUserId())
                 .targetAgentCode(node.getAgentCode())
                 .userContent(taskDetail)
+                // 锚定触发本工作流的原始用户消息，L0 记忆在 UserMessage 被工具消息挤出时按此 code 精确取回
+                .userMessageCode(wf.getUserMessageCode())
                 .conversationCode(wf.getConversationCode())
                 .mcpCodes(node.getMcpCodes())
                 .skillPaths(node.getSkillPaths())

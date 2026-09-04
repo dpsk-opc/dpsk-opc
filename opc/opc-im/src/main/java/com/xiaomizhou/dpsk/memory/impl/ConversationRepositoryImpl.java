@@ -39,4 +39,16 @@ public class ConversationRepositoryImpl implements ConversationRepository {
         }
         return msg.getContent();
     }
+
+    @Override
+    public String getPinMsgCode(String conversationCode) {
+        if (StringUtils.isBlank(conversationCode)) {
+            return null;
+        }
+        Conversation conv = conversationDao.getOneByCode(conversationCode);
+        if (Objects.isNull(conv) || StringUtils.isBlank(conv.getPinMsgCode())) {
+            return null;
+        }
+        return conv.getPinMsgCode();
+    }
 }
