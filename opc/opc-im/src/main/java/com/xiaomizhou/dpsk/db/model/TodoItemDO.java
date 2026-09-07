@@ -26,13 +26,26 @@ import java.util.Date;
 @Data
 public class TodoItemDO extends BaseModel {
 
+    public static final Integer REF_TYPE_AGENT = 0;
+
+    public static final Integer REF_TYPE_WORKFLOW = 1;
+
     /** 待办编码，唯一标识 */
     @TableField("code")
     private String code;
 
     /** 关联的联系人 Agent Code */
     @TableField("agent_code")
+    @Deprecated
     private String agentCode;
+
+    /** 关联的类型：0: agent / 1-workflow */
+    @TableField("ref_type")
+    private Integer refType;
+
+    /** 关联的编码 */
+    @TableField("ref_code")
+    private String refCode;
 
     /** 所属用户 Agent Code（创建者） */
     @TableField("owner_code")

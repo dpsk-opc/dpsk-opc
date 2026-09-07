@@ -50,6 +50,8 @@ CREATE TABLE IF NOT EXISTS t_agent (
     type VARCHAR(20) NOT NULL DEFAULT 'AGENT' COMMENT '类型: USER(真实用户), AGENT(AI智能体), SYSTEM(系统)',
     avatar VARCHAR(500) NOT NULL DEFAULT '' COMMENT '头像URL或本地路径',
     status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE' COMMENT '状态: ACTIVE(活跃), INACTIVE(停用), DELETING(删除中)',
+    modality tinyint(2) NOT NULL DEFAULT '0' COMMENT '模态: 0-TEXT, 1-IMAGE, 2-VIDEO, 3-AUDIO, 4-MIXED',
+    capabilities varchar(200) NOT NULL DEFAULT '[]' COMMENT '能力标签: []',
 
     -- 扩展配置（JSON格式，用于存储第三方Agent集成信息、能力标签等）
     integration_config TEXT NOT NULL DEFAULT ''  COMMENT '集成配置（JSON字符串），示例: {"protocol":"HTTP","endpoint":"https://api.example.com","auth":{"type":"BEARER","token":"xxx"},"capabilities":["text","image"]}',
@@ -240,6 +242,7 @@ CREATE TABLE IF NOT EXISTS `t_conversation` (
     `last_message_content` TEXT NOT NULL DEFAULT '' COMMENT '最后一条消息预览（前200字符）',
     `last_message_time` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '最后一条消息时间',
     `last_sender_code` VARCHAR(60) NOT NULL DEFAULT '' COMMENT '最后一条消息发送者ID',
+    `pin_msg_code` VARCHAR(100) NOT NULL DEFAULT '' COMMENT '置顶(pin)消息编码',
 
     -- 会话设置（预留）
     `is_top` TINYINT NOT NULL DEFAULT 0 COMMENT '是否置顶: 0=否, 1=是',

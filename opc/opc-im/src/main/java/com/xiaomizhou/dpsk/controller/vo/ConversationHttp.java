@@ -54,4 +54,9 @@ public class ConversationHttp {
      */
     private String msgCode;
 
+    /**
+     * 置顶（pin）消息编码
+     */
+    private String pinMsgCode;
+
 }

@@ -228,7 +228,33 @@ public class LangChain4JToolBridge implements ToolProvider {
                     specs = cache.get(beanName);
                 } else {
                     Object bean = applicationContext.getBean(beanName);
-                    specs = ToolSpecifications.toolSpecificationsFrom(bean);
+                    try {
+                        specs = new ArrayList<>(ToolSpecifications.toolSpecificationsFrom(bean));
+                    } catch (Exception e) {
+                        // langchain4j 反射生成 spec 失败（例如 @Tool 方法含其无法识别的自定义
+                        // ToolContext 参数，会把 ToolContext 当普通参数导致 spec 生成异常）
+                        log.warn("toolSpecificationsFrom failed for bean '{}', fallback to stored schema for tool '{}'",
+                                beanName, tool.getName(), e);
+                        specs = new ArrayList<>();
+                    }
+
+                    // 兜底：langchain4j 反射失败或生成的 spec 中没有匹配当前工具名的 spec 时，
+                    // 回退到注册时生成的干净 schema（只含 required 的 @P 参数），
+                    // 确保 ask_user 等含自定义 ToolContext 参数的工具能被正确加载、走正常执行路径，
+                    // 否则 LLM 调用会被 langchain4j 当作"幻觉工具"用空 context 执行。
+                    boolean matched = specs.stream().anyMatch(s -> s.name().equals(tool.getName()));
+                    if (!matched) {
+                        JsonObjectSchema params = McpSchemaConverter.convert(tool.getParametersSchema());
+                        if (params == null) {
+                            params = JsonObjectSchema.builder().build();
+                        }
+                        specs.add(ToolSpecification.builder()
+                                .name(tool.getName())
+                                .description(StringUtils.defaultString(tool.getDescription()))
+                                .parameters(params)
+                                .build());
+                        log.warn("No matching spec from langchain4j for tool '{}', fallback to stored schema", tool.getName());
+                    }
 
                     cache.put(beanName, specs);
                 }
@@ -309,7 +335,7 @@ public class LangChain4JToolBridge implements ToolProvider {
             return "Tool execution failed: " + result.getErrorMessage();
         }
 
-        return result.getResult() != null ? result.getResult() : "";
+        return result.toString();
     }
 
 

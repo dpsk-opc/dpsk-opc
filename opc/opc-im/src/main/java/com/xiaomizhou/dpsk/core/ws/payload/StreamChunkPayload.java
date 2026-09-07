@@ -9,6 +9,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
  */
 public record StreamChunkPayload(
         @JsonProperty("streamId") String streamId,
+        @JsonProperty("taskId") String taskId,
         @JsonProperty("delta") String delta,
         @JsonProperty("sequence") int sequence
 ) {

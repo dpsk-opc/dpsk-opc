@@ -13,6 +13,8 @@ import com.xiaomizhou.dpsk.db.model.Agent;
 import com.xiaomizhou.dpsk.db.model.AgentAuthToken;
 import com.xiaomizhou.dpsk.core.exceptions.BusinessException;
 import com.xiaomizhou.dpsk.db.model.KnowledgeLib;
+import com.xiaomizhou.dpsk.planning.CapabilityExtractor;
+import com.xiaomizhou.dpsk.utils.JsonUtils;
 import com.xiaomizhou.dpsk.utils.PasswordEncoder;
 import com.xiaomizhou.dpsk.utils.SequenceUtils;
 import com.xiaomizhou.dpsk.utils.TokenUtils;
@@ -22,6 +24,7 @@ import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.collections.MapUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -50,6 +53,12 @@ public class AgentComponent {
 
     private final AgentToolComponent agentToolComponent;
     private final KnowledgeLibComponent knowledgeLibComponent;
+
+    /**
+     * 能力标签提取器。使用 ObjectProvider 懒加载，打破
+     * AgentComponent → CapabilityExtractor → … → ImAgentDefProvider → AgentComponent 的构造期循环依赖。
+     */
+    private final ObjectProvider<CapabilityExtractor> capabilityExtractorProvider;
 
     /**
      * 是否是真实用户
@@ -114,6 +123,9 @@ public class AgentComponent {
                     .like(Agent::getNickname, param.getKeyword())
                     .or()
                     .like(Agent::getDescription, param.getKeyword()));
+        }
+        if (param.getModality() != null) {
+            wrapper.eq(Agent::getModality, param.getModality());
         }
         // 排除已删除的记录
         wrapper.eq(Agent::getIsDeleted, 0);
@@ -218,10 +230,22 @@ public class AgentComponent {
         agent.setDescription(cmd.getDescription());
         agent.setType(cmd.getType());
         agent.setAvatar(cmd.getAvatar());
+        agent.setModality(cmd.getModality());
         agent.setStatus("ACTIVE");
         agent.setIntegrationConfig("");
         agent.setLlmConfig(StringUtils.defaultString(cmd.getLlmConfig(), ""));
         agent.setLastActiveTime(new Date());
+
+        // 新增时同步提取能力标签（若 prompt 为空则跳过）
+        if (StringUtils.isNotBlank(cmd.getPrompt())) {
+            CapabilityExtractor extractor = capabilityExtractorProvider.getIfAvailable();
+            if (extractor != null) {
+                List<String> tags = extractor.extract(cmd.getPrompt());
+                if (!tags.isEmpty()) {
+                    agent.setCapabilities(JsonUtils.toJson(tags));
+                }
+            }
+        }
 
         agent.setCreateTime(new Date());
         agent.setUpdateTime(new Date());
@@ -256,6 +280,9 @@ public class AgentComponent {
             throw BusinessException.notFound("Agent不存在, code=" + cmd.getCode());
         }
 
+        // 捕获旧的 prompt（DB 现值），供下方判断"prompt 是否真的变化"使用（避免其被 setPrompt 覆盖后丢失）
+        String oldPrompt = agent.getPrompt();
+
         if (StringUtils.isNotBlank(cmd.getName())) {
             agent.setName(cmd.getName());
         }
@@ -288,6 +315,21 @@ public class AgentComponent {
         }
         if (cmd.getLlmConfig() != null) {
             agent.setLlmConfig(cmd.getLlmConfig());
+        }
+        if (cmd.getModality() != null) {
+            agent.setModality(cmd.getModality());
+        }
+
+        // 能力标签：优先前端手动指定；否则仅当 prompt 真正发生变化时才由 LLM 从 prompt 重新提取（同步）。
+        // 优化：仅修改 name/avatar 等无关字段而 prompt 未变（即便前端把整个 prompt 原样传回）时，不重复触发 LLM 抽取。
+        if (CollectionUtils.isNotEmpty(cmd.getCapabilities())) {
+            agent.setCapabilities(JsonUtils.toJson(cmd.getCapabilities()));
+        } else if (cmd.getPrompt() != null && !cmd.getPrompt().equals(oldPrompt)) {
+            CapabilityExtractor extractor = capabilityExtractorProvider.getIfAvailable();
+            if (extractor != null) {
+                List<String> tags = extractor.extract(cmd.getPrompt());
+                agent.setCapabilities(tags.isEmpty() ? null : JsonUtils.toJson(tags));
+            }
         }
 
         agent.setIntegrationConfig(cmd.getIntegrationConfig());
@@ -516,6 +558,8 @@ public class AgentComponent {
         dto.setStatus(agent.getStatus());
         dto.setIntegrationConfig(agent.getIntegrationConfig());
         dto.setLlmConfig(agent.getLlmConfig());
+        dto.setCapabilities(parseCapabilities(agent.getCapabilities()));
+        dto.setModality(agent.getModality());
         dto.setLastActiveTime(agent.getLastActiveTime());
         dto.setCreateTime(agent.getCreateTime());
         dto.setUpdateTime(agent.getUpdateTime());
@@ -523,5 +567,21 @@ public class AgentComponent {
         dto.setSlogan(agent.getSlogan());
 
         return dto;
+    }
+
+    /**
+     * 将 capabilities（JSON 数组字符串）解析为 List&lt;String&gt;；空/非法时返回空列表。
+     */
+    private List<String> parseCapabilities(String capabilities) {
+        if (StringUtils.isBlank(capabilities)) {
+            return Collections.emptyList();
+        }
+        try {
+            return JsonUtils.toObj(capabilities, new com.fasterxml.jackson.core.type.TypeReference<List<String>>() {
+            });
+        } catch (Exception e) {
+            log.warn("parse capabilities failed, raw={}", capabilities, e);
+            return Collections.emptyList();
+        }
     }
 }

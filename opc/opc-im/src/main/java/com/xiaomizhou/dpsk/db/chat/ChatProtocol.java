@@ -37,6 +37,8 @@ public class ChatProtocol {
 
         private String senderName;
 
+        private String nickname;
+
         private String msgCode;
     }
 
@@ -67,6 +69,8 @@ public class ChatProtocol {
         private String userName;
 
         private String avatar;
+
+        private String nickname;
     }
 
     @Data

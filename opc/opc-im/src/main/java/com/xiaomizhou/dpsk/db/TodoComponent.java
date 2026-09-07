@@ -12,6 +12,7 @@ import com.xiaomizhou.dpsk.utils.JsonUtils;
 import com.xiaomizhou.dpsk.utils.SequenceUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.springframework.stereotype.Component;
@@ -55,28 +56,33 @@ public class TodoComponent {
         entity.setAlarmSound(cmd.getAlarmSound());
         entity.setAlarmEnabled(cmd.getAlarmEnabled() != null && cmd.getAlarmEnabled() ? 1 : 0);
         entity.setStatus(cmd.getStatus());
-        entity.setConversationCode(code);
+        entity.setConversationCode(cmd.getConversationCode());
         entity.setCreateTime(new Date());
         entity.setUpdateTime(new Date());
+        entity.setRefCode(cmd.getRefCode());
+        entity.setRefType(cmd.getRefType());
 
         todoItemDao.save(entity);
 
-        if (cmd.getAlarmEnabled()) {
+        if (cmd.getAlarmEnabled() || TodoItemDO.REF_TYPE_WORKFLOW.equals(cmd.getRefType())) {
 
 
             Map<String, Object> map = Maps.newHashMap();
 
             map.put("todo_code", code);
             map.put("cron", dateToCron(cmd.getDueTime()));
-            map.put("agent_code", cmd.getAgentId());
+            map.put("agent_code", cmd.getRefCode());
+            map.put("ref_code", cmd.getRefCode());
+            map.put("ref_type", cmd.getRefType());
             map.put("conversation_code", cmd.getConversationCode());
 
             TaskCreateCmd task = new TaskCreateCmd();
             task.setSource(Task.SOURCE_USER);
-            task.setTaskType(Task.TYPE_TODO);
+
+            task.setTaskType(Task.TYPE_SCHEDULED);
             task.setName(cmd.getTitle());
             task.setParameters(JsonUtils.toJson(map));
-            task.setAgentCode(cmd.getAgentId());
+            task.setAgentCode(cmd.getRefCode());
             task.setConsumerKey(AgentTodoConsumer.CONSUMER_KEY);
 
             TaskDto dto = taskComponent.create(task);
@@ -122,13 +128,15 @@ public class TodoComponent {
 
         todoItemDao.updateById(existing);
 
-        if (cmd.getAlarmEnabled()) {
+        if (cmd.getAlarmEnabled() || TodoItemDO.REF_TYPE_WORKFLOW.equals(existing.getRefType())) {
 
 
             Map<String, Object> map = Maps.newHashMap();
             map.put("todo_code", existing.getCode());
             map.put("cron", dateToCron(cmd.getDueTime()));
             map.put("agent_code", existing.getAgentCode());
+            map.put("ref_code", existing.getRefCode());
+            map.put("ref_type", existing.getRefType());
             map.put("conversation_code", existing.getConversationCode());
 
             if (StringUtils.isNotBlank(existing.getTaskCode())) {
@@ -141,7 +149,7 @@ public class TodoComponent {
             } else {
                 TaskCreateCmd task = new TaskCreateCmd();
                 task.setSource(Task.SOURCE_USER);
-                task.setTaskType(Task.TYPE_TODO);
+                task.setTaskType(Task.TYPE_SCHEDULED);
                 task.setName(cmd.getTitle());
                 task.setParameters(JsonUtils.toJson(map));
                 task.setAgentCode(existing.getAgentCode());
@@ -199,14 +207,22 @@ public class TodoComponent {
      * @param pageNo    页码（从 1 开始）
      * @param pageSize  每页条数
      */
-    public ImmutablePair<Long, List<TodoItemDto>> pageByAgent(String agentCode, Integer status, int pageNo, int pageSize) {
+    public ImmutablePair<Long, List<TodoItemDto>> page(String refCode, Integer refType, int pageNo, int pageSize, Integer... status) {
         LambdaQueryWrapper<TodoItemDO> wrapper = new LambdaQueryWrapper<TodoItemDO>()
-                .eq(TodoItemDO::getAgentCode, agentCode)
+                .eq(TodoItemDO::getRefCode, refCode)
+                .eq(TodoItemDO::getRefType, refType)
+//                .in(ArrayUtils.isNotEmpty(status), TodoItemDO::getStatus, status)
                 .eq(TodoItemDO::getIsDeleted, 0);
 
-        if (Objects.nonNull(status)) {
-            wrapper.eq(TodoItemDO::getStatus, status);
+        if (Objects.isNull(status)) {
+            status = new Integer[]{};
         }
+
+        List<Integer> sts = Arrays.stream(status).filter(Objects::nonNull).toList();
+        if (!sts.isEmpty()) {
+            wrapper.in(TodoItemDO::getStatus, sts);
+        }
+
 
         long cnt = todoItemDao.count(wrapper);
         if (cnt == 0) {
@@ -241,6 +257,8 @@ public class TodoComponent {
         dto.setStatus(entity.getStatus());
         dto.setCreateTime(new Date());
         dto.setUpdateTime(new Date());
+        dto.setRefCode(entity.getRefCode());
+        dto.setRefType(entity.getRefType());
         return dto;
     }
 
@@ -257,12 +275,11 @@ public class TodoComponent {
         if (date == null) return null;
         Calendar cal = Calendar.getInstance();
         cal.setTime(date);
-        return String.format("0 %d %d %d %d ? %d",
+        return String.format("0 %d %d %d %d ?",
                 cal.get(Calendar.MINUTE),
                 cal.get(Calendar.HOUR_OF_DAY),
                 cal.get(Calendar.DAY_OF_MONTH),
-                cal.get(Calendar.MONTH) + 1,
-                cal.get(Calendar.YEAR));
+                cal.get(Calendar.MONTH) + 1);
     }
 
 }

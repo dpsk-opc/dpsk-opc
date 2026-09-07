@@ -15,9 +15,15 @@ import java.util.Date;
 @Data
 public class TodoCreateCmd {
 
-    /** 联系人 Agent Code（必填） */
-    @NotBlank(message = "agentId 不能为空")
+
     private String agentId;
+
+    /** 联系人 Agent Code（必填） */
+    @NotBlank(message = "refCode 不能为空")
+    private String refCode;
+
+    @NotBlank(message = "refType不能为空")
+    private Integer refType;
 
     /** 待办名称（必填） */
     @NotBlank(message = "title 不能为空")

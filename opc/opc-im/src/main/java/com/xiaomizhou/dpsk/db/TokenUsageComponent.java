@@ -6,15 +6,12 @@ import com.xiaomizhou.dpsk.db.dao.AgentDao;
 import com.xiaomizhou.dpsk.db.dao.ChatMessageDao;
 import com.xiaomizhou.dpsk.db.dao.ConversationDao;
 import com.xiaomizhou.dpsk.db.dao.TokenUsageDao;
-import com.xiaomizhou.dpsk.db.dto.AgentDto;
-import com.xiaomizhou.dpsk.db.dto.ChatMsgDto;
-import com.xiaomizhou.dpsk.db.dto.ConversationDto;
-import com.xiaomizhou.dpsk.db.dto.TokenUsageDto;
-import com.xiaomizhou.dpsk.db.dto.TokenUsagePageCmd;
+import com.xiaomizhou.dpsk.db.dto.*;
 import com.xiaomizhou.dpsk.db.model.Agent;
 import com.xiaomizhou.dpsk.db.model.ChatMessage;
 import com.xiaomizhou.dpsk.db.model.Conversation;
 import com.xiaomizhou.dpsk.db.model.TokenUsage;
+import com.xiaomizhou.dpsk.utils.SequenceUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections.CollectionUtils;
@@ -23,9 +20,13 @@ import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.springframework.beans.BeanUtils;
 import org.springframework.stereotype.Component;
 
-import java.util.*;
+import java.util.Collections;
+import java.util.Date;
+import java.util.List;
+import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+
 
 /**
  * Token用量管理组件
@@ -45,6 +46,35 @@ public class TokenUsageComponent {
     /**
      * 管理端 - 分页查询Token用量（含关联的会话和消息信息）
      */
+    /**
+     * 保存一次 LLM 调用的 token 用量。
+     * 任何异常都会被吞掉并打 warn，绝不阻断业务主流程。
+     */
+    public void saveUsage(UsageRecord record) {
+        if (record == null || record.getTokenUsage() == null) {
+            return;
+        }
+        try {
+            TokenUsage t = new TokenUsage();
+            t.setCode(SequenceUtils.generator().next("TKU"));
+            t.setAgentCode(record.getAgentCode());
+            t.setConversationCode(record.getConversationCode());
+            t.setMessageCode(record.getMessageCode());
+            t.setTaskId(record.getTaskId());
+            t.setUsageType(record.getUsageType());
+            t.setModelName(record.getModelName());
+            t.setProvider(record.getProvider());
+            t.setInputTokens(record.getTokenUsage().inputTokenCount());
+            t.setOutputTokens(record.getTokenUsage().outputTokenCount());
+            t.setTotalTokens(record.getTokenUsage().totalTokenCount());
+            t.setCreateTime(new Date());
+            t.setUpdateTime(new Date());
+            tokenUsageDao.save(t);
+        } catch (Exception e) {
+            log.warn("save token usage failed, agentCode={}, usageType={}", record.getAgentCode(), record.getUsageType(), e);
+        }
+    }
+
     public ImmutablePair<Long, List<TokenUsageDto>> page(TokenUsagePageCmd cmd) {
         LambdaQueryWrapper<TokenUsage> wrapper = new LambdaQueryWrapper<>();
 

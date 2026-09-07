@@ -1,28 +1,19 @@
 package com.xiaomizhou.dpsk.agent.builder;
 
-import com.google.common.collect.Maps;
 import com.xiaomizhou.dpsk.agent.*;
 import com.xiaomizhou.dpsk.agent.data.AgentDef;
 import com.xiaomizhou.dpsk.agent.data.AgentDefProvider;
-import com.xiaomizhou.dpsk.agent.event.AgentEvent;
-import com.xiaomizhou.dpsk.agent.event.AgentEventType;
 import com.xiaomizhou.dpsk.agent.factory.AgentComponentFactory;
 import dev.langchain4j.agentic.AgenticServices;
 import dev.langchain4j.agentic.UntypedAgent;
 import dev.langchain4j.memory.ChatMemory;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
-import dev.langchain4j.model.output.TokenUsage;
 import dev.langchain4j.service.TokenStream;
 import dev.langchain4j.service.tool.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
-import java.time.ZoneId;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 单聊模式 Builder。
@@ -89,9 +80,7 @@ public class SingleBuilder implements AgentBuilder {
 
                 // 幻觉情况 => 从上下文的信息找工具执行，但工具已经不再工具列表
                 .hallucinatedToolNameStrategy(factory.getToolExecutionResultMessageFunction())
-                .chatMemoryProvider(memoryId -> {
-                    return factory.createChatMemory(spec);
-                })
+                .chatMemoryProvider(memoryId -> chatMemory)
                 .returnType(TokenStream.class)
                 .maxToolCallingRoundTrips(25)
                 .build();
@@ -101,6 +90,7 @@ public class SingleBuilder implements AgentBuilder {
 
     /**
      * 单聊 Pipeline 实现。
+     * 流式事件处理统一复用 {@link StreamingAgentRunner}。
      */
     @Slf4j
     private static class SinglePipeline implements AgentPipeline {
@@ -117,148 +107,7 @@ public class SingleBuilder implements AgentBuilder {
 
         @Override
         public PipelineResult execute(AgentCallback callback) {
-            try {
-                TokenStream stream = (TokenStream) invokeAgent();
-                TokenUsage[] tokenHolder = new TokenUsage[1];
-                String[] contentHolder = new String[1];
-
-                AtomicInteger index = new AtomicInteger(0);
-
-                AtomicBoolean firstPartialMsg = new AtomicBoolean(true);
-
-                stream.onPartialThinkingWithContext((response,context) -> {
-                    if (callback.isCancelled()) {
-                        if (context.streamingHandle().isCancelled()) {
-                            return;
-                        }
-                        context.streamingHandle().cancel();
-                        callback.onEvent(new AgentEvent(AgentEventType.CANCELLED, agentDef.getCode(), null, null, null, null, null));
-                    }
-
-                    // 首次 thinking 发送 THINKING 事件
-                    if (index.get() == 0) {
-                        callback.onEvent(new AgentEvent(AgentEventType.THINKING, agentDef.getCode(), null, null, null, null, null));
-
-                        callback.onEvent(AgentEvent.streamChunk(agentDef.getCode(), response.text()));
-                        index.incrementAndGet();
-                        return;
-                    }
-                    // 后续 thinking 作为 STREAM_CHUNK
-                    callback.onEvent(AgentEvent.streamChunk(agentDef.getCode(), response.text()));
-
-                }).onPartialResponseWithContext((response, context) -> {
-
-                    log.debug("partial response: {}", response);
-
-                    if (callback.isCancelled()) {
-                        if (context.streamingHandle().isCancelled()) {
-                            return;
-                        }
-                        context.streamingHandle().cancel();
-                        callback.onEvent(new AgentEvent(AgentEventType.CANCELLED, agentDef.getCode(), null, null, null, null, null));
-
-                    }
-
-                    if (firstPartialMsg.get()) {
-
-                        // 有些模型没有返回 thinking 信息，需要在第一个 partial response 时发送 THINKING 事件
-                        if(0 == index.get()){
-                            callback.onEvent(new AgentEvent(AgentEventType.THINKING, agentDef.getCode(), null, null, null, null, null));
-                        }
-
-                        // stop the think chunk end
-                        callback.onEvent(AgentEvent.streamChunkEnd(agentDef.getCode()));
-
-                        // 发送 MESSAGE 事件
-                        callback.onEvent(new AgentEvent(AgentEventType.MESSAGE, agentDef.getCode(), null, null, null, null, null));
-
-                        // 发送第一个字符
-                        callback.onEvent(new AgentEvent(AgentEventType.MESSAGE_CHUNK, agentDef.getCode(), response.text(), null, null, null, null));
-                        firstPartialMsg.set(false);
-                        return;
-                    }
-
-                    callback.onEvent(new AgentEvent(AgentEventType.MESSAGE_CHUNK, agentDef.getCode(), response.text(), null, null, null, null));
-                }).onError(error -> {
-                    log.error("SinglePipeline stream error for agent={}", agentDef.getCode(), error);
-//                    callback.onEvent(AgentEvent.error(agentDef.getCode(), error.getMessage()));
-                }).beforeToolExecution(handle -> {
-                    // 检查取消
-                    if (callback.isCancelled()) {
-                        return;
-                    }
-                    log.debug("before tool execution: {}", handle.request().name());
-                    callback.onEvent(new AgentEvent(AgentEventType.TOOL_CALL, agentDef.getCode(), handle.request().id(), handle.request().name(), handle.request().arguments(), null, null));
-                }).onPartialToolCallWithContext((toolCall,context) -> {
-
-                    // 检查取消
-                    if (callback.isCancelled()) {
-                        if (context.streamingHandle().isCancelled()) {
-                            return;
-                        }
-                        context.streamingHandle().cancel();
-                        return;
-                    }
-                    log.debug("onPartialToolCall: {}", toolCall);
-//                    callback.onEvent(new AgentEvent(AgentEventType.TOOL_CALL, agentDef.getCode(), toolCall., toolCall.name(), toolCall.arguments(), null, null));
-                }).onToolExecuted(toolExecution -> {
-                    // 检查取消
-                    if (callback.isCancelled()) {
-                        return;
-                    }
-                    log.debug("onToolExecuted: {}", toolExecution.resultContents());
-                    Map<String,Object> meta = Maps.newHashMap();
-                    meta.put("startTime", toolExecution.startTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli());
-                    meta.put("finishTime", toolExecution.finishTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli());
-                    callback.onEvent(new AgentEvent(AgentEventType.TOOL_RESULT, agentDef.getCode(), toolExecution.request().id(), toolExecution.request().name(), toolExecution.request().arguments(), toolExecution.result(), meta));
-                }).onCompleteResponse(response -> {
-                    // 如果已取消，不发送完成事件
-                    if (callback.isCancelled()) {
-                        log.info("SinglePipeline cancelled, skip complete response for agent={}", agentDef.getCode());
-                        return;
-                    }
-
-                    callback.onEvent(new AgentEvent(AgentEventType.MESSAGE_CHUNK_END, agentDef.getCode(), null, null, null, null, null));
-
-                    String content = response.aiMessage().text();
-                    contentHolder[0] = content;
-                    tokenHolder[0] = response.tokenUsage();
-
-                    Map<String, Object> meta = new HashMap<>();
-                    meta.put("content", content);
-                    if (response.tokenUsage() != null) {
-                        meta.put("tokenUsage", response.tokenUsage());
-                    }
-                    callback.onEvent(AgentEvent.done(agentDef.getCode(), meta));
-                    callback.onComplete();
-                });
-
-                stream.start();
-
-                boolean cancelled = callback.isCancelled();
-                return PipelineResult.builder()
-                        .success(!cancelled)
-                        .outputText(contentHolder[0])
-                        .tokenUsage(tokenHolder[0])
-                        .build();
-
-            } catch (Exception e) {
-                log.error("SinglePipeline execution failed for agent={}", agentDef.getCode(), e);
-                callback.onEvent(AgentEvent.error(agentDef.getCode(), e.getMessage()));
-                callback.onError(e);
-                return PipelineResult.builder()
-                        .success(false)
-                        .outputText(null)
-                        .build();
-            }
-        }
-
-        private Object invokeAgent() {
-            try {
-                return agent.invoke(Map.of());
-            } catch (Exception e) {
-                throw new RuntimeException("Failed to invoke AgenticServices agent", e);
-            }
+            return StreamingAgentRunner.run(agent, agentDef, callback);
         }
     }
 }

@@ -139,6 +139,12 @@
             <artifactId>liteflow-el-builder</artifactId>
         </dependency>
 
+        <!-- langgraph4j 图执行引擎 -->
+        <dependency>
+            <groupId>org.bsc.langgraph4j</groupId>
+            <artifactId>langgraph4j-core</artifactId>
+        </dependency>
+
         <dependency>
             <groupId>junit</groupId>
             <artifactId>junit</artifactId>

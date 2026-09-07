@@ -54,4 +54,10 @@ public interface WsMsgType {
 
     // 任务确认
     String TASK_CONFIRM = "task_confirm";
+
+    // Agent 向用户提问（ask_user 工具）
+    String TOOL_ASK = "tool_ask";
+
+    // 提问超时/取消（后端 -> 前端）
+    String TOOL_ASK_TIMEOUT = "tool_ask_timeout";
 }

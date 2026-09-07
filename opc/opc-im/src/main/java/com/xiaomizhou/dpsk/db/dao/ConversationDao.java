@@ -78,6 +78,17 @@ public class ConversationDao extends ServiceImpl<ConversationMapper, Conversatio
         List<String> templateCodes = list.stream().filter(conversation -> conversation.getConversationType().equals(ConversationType.WORKFLOW.getCode())).map(Conversation::getTargetCode).toList();
         List<WorkflowTemplateDO> templates = CollectionUtils.isEmpty(templateCodes) ? List.of() : workflowTemplateDao.lambdaQuery().in(WorkflowTemplateDO::getCode, templateCodes).list();
 
+        // 批量查询本页会话的置顶（pin）消息（一次性 in 查询，避免循环查消息表）
+        List<String> pinMsgCodes = list.stream()
+                .map(Conversation::getPinMsgCode)
+                .filter(StringUtils::isNotBlank)
+                .distinct()
+                .toList();
+        Map<String, ChatMessage> pinMsgMap = CollectionUtils.isEmpty(pinMsgCodes) ? Collections.emptyMap()
+                : chatMessageDao.list(Wrappers.<ChatMessage>lambdaQuery().in(ChatMessage::getCode, pinMsgCodes))
+                        .stream()
+                        .collect(Collectors.toMap(ChatMessage::getCode, m -> m, (a, b) -> a));
+
         return ImmutablePair.of(cnt, list.stream().map(record -> {
 
             ConversationDto dto = new ConversationDto();
@@ -87,6 +98,19 @@ public class ConversationDao extends ServiceImpl<ConversationMapper, Conversatio
             dto.setCode(record.getCode());
             dto.setTargetCode(record.getTargetCode());
 
+            // 组装 pin 消息对象（直接从批量查询结果 map 取，避免二次查询）
+            if (StringUtils.isNotBlank(record.getPinMsgCode())) {
+                ChatMessage pinned = pinMsgMap.get(record.getPinMsgCode());
+                if (Objects.nonNull(pinned)) {
+                    ConversationDto.PinMsg pinMsg = new ConversationDto.PinMsg();
+                    pinMsg.setMsgCode(pinned.getCode());
+                    pinMsg.setContent(pinned.getContent());
+                    pinMsg.setMessageType(pinned.getMessageType());
+                    pinMsg.setSenderCode(pinned.getSenderCode());
+                    dto.setPinMsg(pinMsg);
+                }
+            }
+
 
             if (ConversationType.SINGLE.getCode().equals(record.getConversationType())) {
                 Agent at = agents.stream().filter(agent -> agent.getCode().equals(record.getTargetCode())).findFirst().orElse(null);
@@ -95,6 +119,7 @@ public class ConversationDao extends ServiceImpl<ConversationMapper, Conversatio
                     dto.setTargetName(at.getName());
                     dto.setTargetAvatar(at.getAvatar());
                     dto.setTargetType(at.getType());
+                    dto.setModality(at.getModality());
 
                     if (StringUtils.isNotBlank(at.getLlmConfig())) {
                         HashMap map = JsonUtils.toObj(at.getLlmConfig(), HashMap.class);
@@ -293,8 +318,9 @@ public class ConversationDao extends ServiceImpl<ConversationMapper, Conversatio
             if (Objects.nonNull(senderAgent)) {
                 sender = new ChatProtocol.User(
                         senderAgent.getCode(),
-                        senderAgent.getNickname() != null ? senderAgent.getNickname() : senderAgent.getName(),
-                        senderAgent.getAvatar()
+                        senderAgent.getName(),
+                        senderAgent.getAvatar(),
+                        senderAgent.getNickname()
                 );
             }
 
@@ -323,11 +349,16 @@ public class ConversationDao extends ServiceImpl<ConversationMapper, Conversatio
             if (quotedMessageMap.containsKey(msg.getParentId())) {
 
                 try {
-                    quotedMessage = ChatProtocol.QuotedMessage.builder()
-                            .content(quotedMessageMap.get(msg.getParentId()).getContent())
-                            .senderName(agentMap.get(quotedMessageMap.get(msg.getParentId()).getSenderCode()).getNickname())
-                            .msgCode(quotedMessageMap.get(msg.getParentId()).getCode())
-                            .build();
+                    ChatMessage cm = quotedMessageMap.get(msg.getParentId());
+                    if (Objects.nonNull(cm) && Objects.nonNull(agentMap.get(cm.getCode()))) {
+                        Agent agent = agentMap.get(cm.getCode());
+                        quotedMessage = ChatProtocol.QuotedMessage.builder()
+                                .content(quotedMessageMap.get(msg.getParentId()).getContent())
+                                .senderName(agent.getName())
+                                .nickname(agent.getNickname())
+                                .msgCode(quotedMessageMap.get(msg.getParentId()).getCode())
+                                .build();
+                    }
                 } catch (Exception e) {
                     log.error("Error building quoted message", e);
                 }
@@ -360,5 +391,23 @@ public class ConversationDao extends ServiceImpl<ConversationMapper, Conversatio
             return false;
         }
         return update(Wrappers.<Conversation>lambdaUpdate().eq(Conversation::getCode, conversationCode).set(Conversation::getIsTop, top));
+    }
+
+    /**
+     * 设置会话置顶（pin）消息编码。
+     * <p>
+     * pinMsgCode 为空表示取消 pin（清空）。会话不存在时返回 false。
+     *
+     * @param conversationCode 会话编码
+     * @param pinMsgCode       置顶消息编码（取消 pin 传 null/空）
+     * @return 是否更新成功
+     */
+    public boolean setPinMsg(String conversationCode, String pinMsgCode) {
+        if (StringUtils.isBlank(conversationCode)) {
+            return false;
+        }
+        return update(Wrappers.<Conversation>lambdaUpdate()
+                .eq(Conversation::getCode, conversationCode)
+                .set(Conversation::getPinMsgCode, StringUtils.isBlank(pinMsgCode) ? "" : pinMsgCode));
     }
 }

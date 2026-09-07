@@ -57,6 +57,11 @@ public class AgentQueryParam {
     private String keyword;
 
     /**
+     * 模态: 0-TEXT, 1-IMAGE, 2-VIDEO, 3-AUDIO, 4-MIXED
+     */
+    private Integer modality;
+
+    /**
      * 页码
      */
     private int pageNo = 1;

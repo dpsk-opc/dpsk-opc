@@ -11,6 +11,7 @@ import com.xiaomizhou.dpsk.core.ws.SenderInfo;
 public record StreamStartPayload(
         @JsonProperty("streamId") String streamId,
         @JsonProperty("conversationId") String conversationId,
+        @JsonProperty("taskId") String taskId,
         @JsonProperty("sender") SenderInfo sender,
         @JsonProperty("timestamp") long timestamp) {
 }

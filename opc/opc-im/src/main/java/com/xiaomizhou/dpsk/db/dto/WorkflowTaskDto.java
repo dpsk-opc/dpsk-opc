@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonFormat;
 import lombok.Data;
 
 import java.util.Date;
+import java.util.List;
 
 /**
  * 工作流任务响应 DTO。
@@ -81,6 +82,12 @@ public class WorkflowTaskDto {
 
     /** 创建者编码 */
     private String ownerCode;
+
+    /** 任务信息 */
+    private String taskInfo;
+
+    /** 已执行/已到达的节点链（按执行顺序，含当前节点；不含未执行的未来节点） */
+    private List<WorkflowNodeProgressDto> progressChain;
 
     /** 创建时间 */
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss", timezone = "GMT+8")

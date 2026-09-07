@@ -69,7 +69,7 @@ public class ContextAssembler {
         this.toolRegistry = toolRegistry;
     }
 
-    public AssembledPrompt assembledForWorkflow(AgentBuildSpec spec){
+    public AssembledPrompt assembledForWorkflow(AgentBuildSpec spec) {
         StringBuilder historyPart = new StringBuilder();
 
         // === System 部分 ===
@@ -80,15 +80,25 @@ public class ContextAssembler {
 
         StringBuffer sb = new StringBuffer();
         if (CollectionUtils.isNotEmpty(agents)) {
-
             AgentDef target = agents.stream().filter(a -> a.getCode().equals(targetAgentCode)).findFirst().orElse(null);
-
             // ai的信息
             if (Objects.nonNull(target)) {
-                sb.append("[你的信息] 名字:%s,你现在处于任务模式，使用客观的描述说明你已经完成的工作，后续节点需要根据你的输出开展后续的工作。prompt:%s\n".formatted(target.getName(), spec.getPrompt()));
+                sb.append("""
+                        [你的信息]
+                        你的身份：%s（任务执行节点）。
+                        当前模式：任务完成汇报模式。
+                        目标：以客观、准确、结构化的方式，输出你已完成的所有工作，包括执行过程、关键数据、产出物、状态标记及潜在异常。
+                        输出要求（必须严格遵守）：
+                        - 准确性：输出内容必须与实际执行结果完全一致
+                        - 完整性：输出内容必须足以让下游节点无需回溯即可启动其后续工作
+                        - 结构化：输出内容必须以结构化的方式呈现，包括但不限于表格、图表、流程图、文档、链接等
+                        - 可读性：输出内容必须以易于阅读的格式呈现，包括但不限于文本、图片、视频等
+                        
+                        """.formatted(target.getName())).append("\n");
             }
         }
 
+        sb.append("[你的职责] %s".formatted(spec.getPrompt())).append("\n");
         sb.append("[强制要求] 1. 禁止使用emoji输出回答！\n 2. 回复尽量简短客观，避免使用任何情绪化、主观化的语言。\n 3. 回答禁止任何形式的互动，反问！");
 
         // 工具信息

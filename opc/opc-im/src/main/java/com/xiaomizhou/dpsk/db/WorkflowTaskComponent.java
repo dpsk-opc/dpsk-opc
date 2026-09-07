@@ -5,17 +5,21 @@ import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.xiaomizhou.dpsk.constant.ConversationType;
 import com.xiaomizhou.dpsk.core.exceptions.BusinessException;
 import com.xiaomizhou.dpsk.db.dao.ConversationDao;
+import com.xiaomizhou.dpsk.db.dao.WorkflowNodeLogDao;
 import com.xiaomizhou.dpsk.db.dao.WorkflowTaskDao;
 import com.xiaomizhou.dpsk.db.dao.WorkflowTemplateDao;
+import com.xiaomizhou.dpsk.db.dto.WorkflowNodeProgressDto;
 import com.xiaomizhou.dpsk.db.dto.WorkflowTaskDto;
 import com.xiaomizhou.dpsk.db.dto.WorkflowTaskQueryParam;
 import com.xiaomizhou.dpsk.db.dto.WorkflowTemplateDto;
 import com.xiaomizhou.dpsk.db.model.Conversation;
+import com.xiaomizhou.dpsk.db.model.WorkflowNodeLogDO;
 import com.xiaomizhou.dpsk.db.model.WorkflowTaskDO;
 import com.xiaomizhou.dpsk.db.model.WorkflowTemplateDO;
 import com.xiaomizhou.dpsk.utils.SequenceUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.springframework.beans.BeanUtils;
@@ -24,6 +28,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Date;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 import static com.xiaomizhou.dpsk.utils.SequenceUtils.UUIDSequenceGenerator.CONVERSATION_PREFIX;
@@ -48,6 +53,8 @@ public class WorkflowTaskComponent {
 
     private final ConversationDao conversationDao;
 
+    private final WorkflowNodeLogDao workflowNodeLogDao;
+
 
     /**
      * 根据编码查询任务。
@@ -57,15 +64,21 @@ public class WorkflowTaskComponent {
                 new LambdaQueryWrapper<WorkflowTaskDO>()
                         .eq(WorkflowTaskDO::getCode, code)
                         .eq(WorkflowTaskDO::getIsDeleted, 0));
-        return convertToDto(entity);
-    }
 
+        if (entity == null) {
+            return null;
+        }
+
+        List<WorkflowNodeLogDO> logs = workflowNodeLogDao.getLogs(entity.getCode());
+
+        return convertToDto(entity,logs);
+    }
 
 
     /**
      * 分页查询任务列表。
      */
-    public ImmutablePair<Long, List<WorkflowTaskDto>> page(WorkflowTaskQueryParam param,int pageNo,int pageSize) {
+    public ImmutablePair<Long, List<WorkflowTaskDto>> page(WorkflowTaskQueryParam param, int pageNo, int pageSize) {
         LambdaQueryWrapper<WorkflowTaskDO> wrapper = new LambdaQueryWrapper<WorkflowTaskDO>()
                 .eq(WorkflowTaskDO::getIsDeleted, 0);
 
@@ -95,7 +108,9 @@ public class WorkflowTaskComponent {
                 wrapper.last("limit %s,%s".formatted((pn - 1) * ps, ps))
                         .orderByDesc(WorkflowTaskDO::getCreateTime));
 
-        List<WorkflowTaskDto> dtos = list.stream().map(this::convertToDto).toList();
+        Map<String, List<WorkflowNodeLogDO>> logs = workflowNodeLogDao.getLogsByTaskCodes(list.stream().map(WorkflowTaskDO::getCode).toList());
+
+        List<WorkflowTaskDto> dtos = list.stream().map(entity -> convertToDto(entity, logs.get(entity.getCode()))).toList();
         return ImmutablePair.of(cnt, dtos);
     }
 
@@ -145,7 +160,7 @@ public class WorkflowTaskComponent {
 
     // ======================== 模型转换 ========================
 
-    private WorkflowTaskDto convertToDto(WorkflowTaskDO entity) {
+    private WorkflowTaskDto convertToDto(WorkflowTaskDO entity,List<WorkflowNodeLogDO> logs) {
         if (entity == null) return null;
 
         WorkflowTaskDto dto = new WorkflowTaskDto();
@@ -172,7 +187,21 @@ public class WorkflowTaskComponent {
         dto.setOwnerCode(entity.getOwnerCode());
         dto.setCreateTime(entity.getCreateTime());
         dto.setUpdateTime(entity.getUpdateTime());
+        dto.setTaskInfo(entity.getTaskInfo());
         dto.setAvatar(entity.getAvatar());
+
+        if (CollectionUtils.isNotEmpty(logs)) {
+            dto.setProgressChain(logs.stream().map(log -> {
+                WorkflowNodeProgressDto p = new WorkflowNodeProgressDto();
+                p.setStatus(log.getStatus());
+                p.setAgentCode(log.getAgentCode());
+                p.setNodeId(log.getNodeId());
+                p.setNodeName(log.getNodeName());
+                p.setNodeType(log.getNodeType());
+                return p;
+            }).toList());
+        }
+
         return dto;
     }
 
@@ -229,6 +258,7 @@ public class WorkflowTaskComponent {
         model.setStatus(WorkflowTaskDO.STATUS_PENDING);
         model.setSource(WorkflowTaskDO.SOURCE_USER);
         model.setName(task.getName());
+        model.setTaskInfo(task.getContextData());
 
 
         if (StringUtils.isBlank(task.getAvatar())) {
@@ -270,6 +300,94 @@ public class WorkflowTaskComponent {
         BeanUtils.copyProperties(dto, model);
         return workflowTaskDao.update(model, Wrappers.<WorkflowTaskDO>lambdaUpdate()
                 .eq(WorkflowTaskDO::getCode, dto.getCode()));
+    }
+
+    /**
+     * 无模板落库（群聊自主规划专用）：不校验 templateCode 发布状态，
+     * workflow_json 直接取入参；source = SOURCE_AGENT；返回落库后的任务 DTO（含 code）。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public WorkflowTaskDto addByPlan(WorkflowTaskDto task, String workflowJson) {
+        WorkflowTaskDO model = new WorkflowTaskDO();
+        model.setCode(SequenceUtils.generator().next(WFK_PREFIX));
+        model.setName(task.getName());
+        model.setOwnerCode(task.getOwnerCode());
+        model.setConversationCode(task.getConversationCode());
+        model.setAgentCode(task.getAgentCode());
+        model.setWorkflowJson(workflowJson);
+        model.setContextData(task.getContextData());
+        model.setTemplateCode("");
+        model.setTemplateVersion(0);
+        model.setStatus(WorkflowTaskDO.STATUS_PENDING);
+        model.setSource(WorkflowTaskDO.SOURCE_AGENT);
+        model.setAvatar(StringUtils.isNotBlank(task.getAvatar()) ? task.getAvatar() : "");
+        model.setInputParams("");
+        model.setScheduledTaskCode("");
+        model.setCurrentNodeId("");
+        model.setCurrentStep(0);
+        model.setTaskInfo(task.getTaskInfo());
+        model.setErrorMessage("");
+        model.setCreateTime(new Date());
+        model.setUpdateTime(new Date());
+        workflowTaskDao.save(model);
+
+        WorkflowTaskDto result = new WorkflowTaskDto();
+        result.setCode(model.getCode());
+        result.setAvatar(model.getAvatar());
+        result.setConversationCode(model.getConversationCode());
+        result.setName(model.getName());
+        result.setStatus(model.getStatus());
+        return result;
+    }
+
+    /**
+     * replan 覆盖：全量替换 workflow_json + status 回 RUNNING + currentNodeId 清空 + errorMessage 清空。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void updateWorkflowJsonAndReset(String taskCode, String workflowJson) {
+        workflowTaskDao.lambdaUpdate()
+                .eq(WorkflowTaskDO::getCode, taskCode)
+                .eq(WorkflowTaskDO::getIsDeleted, 0)
+                .set(WorkflowTaskDO::getWorkflowJson, workflowJson)
+                .set(WorkflowTaskDO::getStatus, WorkflowTaskDO.STATUS_RUNNING)
+                .set(WorkflowTaskDO::getCurrentNodeId, "")
+                .set(WorkflowTaskDO::getCurrentStep, 0)
+                .set(WorkflowTaskDO::getErrorMessage, "")
+                .set(WorkflowTaskDO::getUpdateTime, new Date())
+                .update();
+        log.info("replan workflow json reset. taskCode={}", taskCode);
+    }
+
+    /**
+     * 任务成功收尾：status → SUCCESS，记录结束时间。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void completeByCode(String taskCode) {
+        workflowTaskDao.lambdaUpdate()
+                .eq(WorkflowTaskDO::getCode, taskCode)
+                .eq(WorkflowTaskDO::getIsDeleted, 0)
+                .set(WorkflowTaskDO::getStatus, WorkflowTaskDO.STATUS_SUCCESS)
+                .set(WorkflowTaskDO::getErrorMessage, "")
+                .set(WorkflowTaskDO::getEndTime, new Date())
+                .set(WorkflowTaskDO::getUpdateTime, new Date())
+                .update();
+        log.info("workflow task completed. taskCode={}", taskCode);
+    }
+
+    /**
+     * 任务失败收尾：status → FAILED，记录失败原因。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void failByCode(String taskCode, String errorMessage) {
+        workflowTaskDao.lambdaUpdate()
+                .eq(WorkflowTaskDO::getCode, taskCode)
+                .eq(WorkflowTaskDO::getIsDeleted, 0)
+                .set(WorkflowTaskDO::getStatus, WorkflowTaskDO.STATUS_FAILED)
+                .set(WorkflowTaskDO::getErrorMessage, errorMessage)
+                .set(WorkflowTaskDO::getEndTime, new Date())
+                .set(WorkflowTaskDO::getUpdateTime, new Date())
+                .update();
+        log.info("workflow task failed. taskCode={}, err={}", taskCode, errorMessage);
     }
 
     /**

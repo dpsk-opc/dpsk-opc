@@ -67,4 +67,15 @@ public class ToolExecutionResult {
                 .errorMessage(errorMessage)
                 .build();
     }
+
+    @Override
+    public String toString() {
+        return "ToolExecutionResult{" +
+                "status='" + status + '\'' +
+                ", result='" + result + '\'' +
+                ", errorMessage='" + errorMessage + '\'' +
+                ", pendingRequestId='" + pendingRequestId + '\'' +
+                ", executionTimeMs=" + executionTimeMs +
+                '}';
+    }
 }

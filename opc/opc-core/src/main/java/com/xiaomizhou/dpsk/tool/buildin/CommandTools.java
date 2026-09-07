@@ -49,7 +49,7 @@ public class CommandTools {
         }
 
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("command", command);
+//        result.put("command", command);
 
         long timeout = (timeoutSeconds != null && timeoutSeconds > 0)
                 ? Math.min(timeoutSeconds, MAX_TIMEOUT_SECONDS)

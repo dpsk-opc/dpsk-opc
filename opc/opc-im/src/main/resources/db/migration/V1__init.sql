@@ -42,6 +42,8 @@ CREATE TABLE IF NOT EXISTS t_agent (
     type VARCHAR(20) NOT NULL DEFAULT 'AGENT' COMMENT '类型: USER, AGENT, SYSTEM',
     avatar VARCHAR(500) NOT NULL DEFAULT '' COMMENT '头像URL',
     status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE' COMMENT '状态: ACTIVE, INACTIVE, DELETING',
+    modality tinyint(2) NOT NULL DEFAULT '0' COMMENT '模态: 0-TEXT, 1-IMAGE, 2-VIDEO, 3-AUDIO, 4-MIXED',
+    capabilities varchar(200) NOT NULL DEFAULT '[]' COMMENT '能力标签: []',
     integration_config TEXT NOT NULL DEFAULT '' COMMENT '集成配置（JSON）',
     llm_config TEXT NOT NULL DEFAULT '' COMMENT 'LLM配置（JSON）',
     last_active_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '最后活跃时间',
@@ -172,6 +174,7 @@ CREATE TABLE IF NOT EXISTS t_conversation (
     last_message_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '最后一条消息时间',
     last_sender_code VARCHAR(60) NOT NULL DEFAULT '' COMMENT '最后一条消息发送者ID',
     last_user_message_code VARCHAR(100) NOT NULL DEFAULT '' COMMENT '最后一条用户消息ID',
+    pin_msg_code VARCHAR(100) NOT NULL DEFAULT '' COMMENT '置顶(pin)消息编码',
     is_top TINYINT NOT NULL DEFAULT 0 COMMENT '是否置顶',
     ext_config TEXT NOT NULL DEFAULT '' COMMENT '扩展配置（JSON）',
     create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -531,6 +534,8 @@ CREATE TABLE IF NOT EXISTS t_todo_item (
     id            BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '主键ID',
     code          VARCHAR(100)  NOT NULL DEFAULT '' COMMENT '待办编码，唯一标识',
     agent_code    VARCHAR(100)  NOT NULL DEFAULT '' COMMENT '关联的联系人 Agent Code',
+    ref_code    VARCHAR(100)  NOT NULL DEFAULT '' COMMENT '关联的联系人编码',
+    ref_type    TINYINT(1)  NOT NULL DEFAULT '0' COMMENT '关联的联系人类系，0-agent，1-专家团',
     owner_code    VARCHAR(100)  NOT NULL DEFAULT '' COMMENT '所属用户 Agent Code（当前登录用户）',
     title         VARCHAR(500)  NOT NULL DEFAULT '' COMMENT '待办名称',
     content       TEXT          NOT NULL COMMENT '待办内容',
@@ -550,6 +555,7 @@ CREATE INDEX IF NOT EXISTS idx_todo_item_agent ON t_todo_item (agent_code, is_de
 CREATE INDEX IF NOT EXISTS idx_todo_item_owner ON t_todo_item (owner_code, is_deleted);
 CREATE INDEX IF NOT EXISTS idx_todo_item_status ON t_todo_item (status, is_deleted);
 CREATE INDEX IF NOT EXISTS idx_todo_item_due_time ON t_todo_item (due_time, is_deleted);
+CREATE INDEX IF NOT EXISTS idx_todo_item_type ON t_todo_item ( ref_code,ref_type,status);
 
 
 -- =============================================
@@ -612,6 +618,7 @@ CREATE TABLE IF NOT EXISTS t_workflow_task (
     avatar VARCHAR(500) NOT NULL DEFAULT '' COMMENT '头像URL',
     scheduled_task_code VARCHAR(100) NOT NULL DEFAULT '' COMMENT '关联定时任务编码',
     owner_code VARCHAR(100) NOT NULL DEFAULT '' COMMENT '创建者编码',
+    task_info text NOT NULL DEFAULT '' COMMENT '任务信息',
     create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间',
     is_deleted TINYINT(1) NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0=未删除, 1=已删除',

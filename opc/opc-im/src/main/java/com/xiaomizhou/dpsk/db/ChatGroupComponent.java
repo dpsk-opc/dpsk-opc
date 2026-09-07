@@ -172,7 +172,7 @@ public class ChatGroupComponent {
             ChatMemberDto dto = new ChatMemberDto();
             dto.setType(agent.getType());
             dto.setName(agent.getName());
-            dto.setNicknameInGroup(member.getNicknameInGroup());
+            dto.setNickname(agent.getNickname());
             dto.setAvatar(agent.getAvatar());
             dto.setRoleInGroup(member.getRole());
             dto.setCode(agent.getCode());

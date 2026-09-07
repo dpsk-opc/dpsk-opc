@@ -2,6 +2,7 @@ package com.xiaomizhou.dpsk.config;
 
 import com.xiaomizhou.dpsk.agent.AgentOrchestrator;
 import com.xiaomizhou.dpsk.agent.builder.GroupBuilder;
+import com.xiaomizhou.dpsk.agent.builder.ImageAgentBuilder;
 import com.xiaomizhou.dpsk.agent.builder.SingleBuilder;
 import com.xiaomizhou.dpsk.agent.builder.WorkflowBuilder;
 import com.xiaomizhou.dpsk.agent.data.AgentDefProvider;
@@ -62,14 +63,14 @@ public class AgentOrchestrationConfiguration {
 
     @Bean
     public SingleBuilder singleBuilder(AgentDefProvider agentDefProvider,
-                                        AgentComponentFactory factory) {
+                                       AgentComponentFactory factory) {
         log.info("Creating SingleBuilder");
         return new SingleBuilder(agentDefProvider, factory);
     }
 
     @Bean
     public GroupBuilder groupBuilder(AgentDefProvider agentDefProvider,
-                                      AgentComponentFactory factory) {
+                                     AgentComponentFactory factory) {
         log.info("Creating GroupBuilder");
         return new GroupBuilder(agentDefProvider, factory);
     }
@@ -82,14 +83,23 @@ public class AgentOrchestrationConfiguration {
     }
 
     @Bean
+    public ImageAgentBuilder imageAgentBuilder(AgentDefProvider agentDefProvider,
+                                               AgentComponentFactory factory) {
+        log.info("Creating ImageAgentBuilder");
+        return new ImageAgentBuilder(agentDefProvider, factory);
+    }
+
+    @Bean
     public AgentOrchestrator agentOrchestrator(SingleBuilder singleBuilder,
-                                                GroupBuilder groupBuilder,
-                                                WorkflowBuilder workflowBuilder) {
-        log.info("Creating AgentOrchestrator with builders: SINGLE, GROUP, WORKFLOW");
+                                               GroupBuilder groupBuilder,
+                                               WorkflowBuilder workflowBuilder,
+                                               ImageAgentBuilder imageAgentBuilder) {
+        log.info("Creating AgentOrchestrator with builders: SINGLE, GROUP, WORKFLOW,IMAGE");
         AgentOrchestrator orchestrator = new AgentOrchestrator();
         orchestrator.registerBuilder(singleBuilder);
         orchestrator.registerBuilder(groupBuilder);
         orchestrator.registerBuilder(workflowBuilder);
+        orchestrator.registerBuilder(imageAgentBuilder);
         return orchestrator;
     }
 }

@@ -50,6 +50,11 @@ public class AgentDef {
 
     private String slogan;
 
+    /**
+     * 能力标签列表（由 LLM 从 prompt 提取，供群聊 Picker 做能力匹配）。
+     */
+    private List<String> capabilities;
+
     public String toPersonaText() {
         return """
                 Your name:%s

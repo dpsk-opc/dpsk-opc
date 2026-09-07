@@ -92,9 +92,19 @@ public class AgentDto {
     private String llmConfig;
 
     /**
+     * 能力标签列表，如 ["代码开发","数据分析"]，由 LLM 从 prompt 提取，UI 直接展示
+     */
+    private List<String> capabilities;
+
+    /**
      * 最后活跃时间
      */
     private Date lastActiveTime;
+
+    /**
+     * 模态: 0-TEXT, 1-IMAGE, 2-VIDEO, 3-AUDIO, 4-MIXED
+     */
+    private Integer modality;
 
     /**
      * 部门

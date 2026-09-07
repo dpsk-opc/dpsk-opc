@@ -66,6 +66,7 @@ public class ImAgentDefProvider implements AgentDefProvider {
                 .sex(dto.getSex())
                 .slogan(dto.getSlogan())
                 .llmConfig(dto.getLlmConfig())
+                .capabilities(dto.getCapabilities() == null ? Collections.emptyList() : dto.getCapabilities())
                 .build();
     }
 }

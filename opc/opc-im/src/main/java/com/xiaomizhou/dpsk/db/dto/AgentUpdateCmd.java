@@ -3,6 +3,7 @@ package com.xiaomizhou.dpsk.db.dto;
 import lombok.Data;
 
 import javax.validation.constraints.NotNull;
+import java.util.List;
 
 
 /**
@@ -85,4 +86,14 @@ public class AgentUpdateCmd {
      * 示例: {"model":"gpt-3.5-turbo","access_key":"xxx","temperature":0.7,"max_tokens":1024}
      */
     private String llmConfig;
+
+    /**
+     * 模态: 0-TEXT, 1-IMAGE, 2-VIDEO, 3-AUDIO, 4-MIXED
+     */
+    private Integer modality;
+
+    /**
+     * 能力标签列表，可选。为空时由 LLM 从 prompt 提取。
+     */
+    private List<String> capabilities;
 }

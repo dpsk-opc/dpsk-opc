@@ -3,12 +3,10 @@ package com.xiaomizhou.dpsk;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.google.common.collect.Maps;
 import com.xiaomizhou.dpsk.utils.JsonUtils;
-import com.xiaomizhou.dpsk.workflow.AgentNodeProcessor;
-import com.xiaomizhou.dpsk.workflow.EndNodeProcessor;
-import com.xiaomizhou.dpsk.workflow.StartNodeProcessor;
-import com.xiaomizhou.dpsk.workflow.SwitchNodeProcessor;
+import com.xiaomizhou.dpsk.workflow.liteflow.LiteFlowCommonNodeAdapter;
+import com.xiaomizhou.dpsk.workflow.liteflow.LiteFlowSwitchNodeAdapter;
+import com.xiaomizhou.dpsk.workflow.liteflow.XyFlowToLiteFlowUtils;
 import com.xiaomizhou.dpsk.workflow.xyflow.XyFlow;
-import com.xiaomizhou.dpsk.workflow.xyflow.XyFlowToLiteFlowUtils;
 import com.yomahub.liteflow.builder.LiteFlowNodeBuilder;
 import com.yomahub.liteflow.builder.el.LiteFlowChainELBuilder;
 import com.yomahub.liteflow.core.FlowExecutor;
@@ -65,24 +63,24 @@ public class WorkflowUtilsTests {
 
         LiteFlowNodeBuilder.createCommonNode().setId("a")
                 .setName("a")
-                .setClazz(StartNodeProcessor.class)
+                .setClazz(LiteFlowCommonNodeAdapter.class)
                 .build();
 
 
         LiteFlowNodeBuilder.createCommonNode().setId("b")
                 .setName("b")
-                .setClazz(AgentNodeProcessor.class)
+                .setClazz(LiteFlowCommonNodeAdapter.class)
                 .build();
 
         LiteFlowNodeBuilder.createSwitchNode().setId("d")
                 .setName("d")
-                .setClazz(SwitchNodeProcessor.class)
+                .setClazz(LiteFlowSwitchNodeAdapter.class)
                 .build();
 
 
         LiteFlowNodeBuilder.createCommonNode().setId("e")
                 .setName("e")
-                .setClazz(EndNodeProcessor.class)
+                .setClazz(LiteFlowCommonNodeAdapter.class)
                 .build();
 
 

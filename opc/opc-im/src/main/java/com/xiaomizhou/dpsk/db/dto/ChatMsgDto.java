@@ -80,4 +80,32 @@ public class ChatMsgDto {
      */
     private String status;
 
+    private ImageGenerateDto imageParam;
+
+
+    @Data
+    public static class ImageGenerateDto {
+
+        /**
+         * 0-生成图片，1-生成视频，注意：mode = 1图生图模式时,fileCodes是图片url列表
+         *
+         */
+        private int mode = 0;
+
+        /**
+         * 图片大小，默认1024 * 768
+         */
+        private String size = "1024*768";
+
+        private String format = "PNG";     // PNG
+
+        /**
+         * 生成图片数量，默认1
+         */
+        private int count = 1;
+
+        private List<String> urls;
+
+    }
+
 }

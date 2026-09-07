@@ -18,6 +18,7 @@
         <module>opc-service</module>
         <module>opc-core</module>
         <module>opc-im</module>
+        <module>opc-plugin</module>
     </modules>
 
 
@@ -28,6 +29,7 @@
         <spring-boot.version>3.4.2</spring-boot.version>
         <spring-version>6.2.2</spring-version>
         <liteflow.version>2.16.0</liteflow.version>
+        <langgraph4j.version>1.8.20</langgraph4j.version> <!-- Check for the actual latest version -->
     </properties>
 
 
@@ -233,6 +235,14 @@
                 <groupId>com.yomahub</groupId>
                 <artifactId>liteflow-el-builder</artifactId>
                 <version>${liteflow.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.bsc.langgraph4j</groupId>
+                <artifactId>langgraph4j-bom</artifactId>
+                <version>${langgraph4j.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
             </dependency>
 
         </dependencies>

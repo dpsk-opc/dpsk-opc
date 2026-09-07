@@ -24,9 +24,12 @@ import lombok.extern.slf4j.Slf4j;
 public class ToolInvocationInterceptor {
 
     private final ToolRegistry registry;
+
     private final ToolAuditLogger auditLogger;
+
     private final ToolConfirmationManager confirmationManager;
 
+    private final PrivateParameterReplacer privateParameterReplacer;
     /**
      * 拦截并执行工具调用。
      *
@@ -56,12 +59,15 @@ public class ToolInvocationInterceptor {
         // 3. 动态补全参数
         enrichParameters(call, context, metadata);
 
-        // 4. 路由并执行
+        // 4. 替换敏感参数
+        ToolCall newCall = privateParameterReplacer.replace(call);
+
+        // 5. 路由并执行
         String result;
         String status;
         String errorMessage = null;
         try {
-            result = registry.getExecutorRouter().execute(metadata, call, context);
+            result = registry.getExecutorRouter().execute(metadata, newCall, context);
             status = ToolExecutionResult.STATUS_SUCCESS;
             log.debug("Tool '{}' executed successfully in {}ms", 
                     call.getName(), System.currentTimeMillis() - startTime);
@@ -75,7 +81,7 @@ public class ToolInvocationInterceptor {
         long executionTimeMs = System.currentTimeMillis() - startTime;
 
         // 5. 审计日志（异步写入，不阻塞）
-        auditLogger.log(call, metadata, context, result, status, executionTimeMs, errorMessage);
+        auditLogger.log(newCall, metadata, context, result, status, executionTimeMs, errorMessage);
 
         if (ToolExecutionResult.STATUS_SUCCESS.equals(status)) {
             return ToolExecutionResult.success(result, executionTimeMs);
@@ -109,5 +115,7 @@ public class ToolInvocationInterceptor {
         if (context.getTraceId() != null && !call.getParameters().containsKey("traceId")) {
             call.getParameters().put("traceId", context.getTraceId());
         }
+
+
     }
 }

@@ -9,6 +9,7 @@ import com.xiaomizhou.dpsk.memory.impl.JVectorEmbeddingStoreImpl;
 import com.xiaomizhou.dpsk.memory.impl.LocalEmbeddingClient;
 import com.xiaomizhou.dpsk.memory.impl.SummaryGeneratorImpl;
 import com.xiaomizhou.dpsk.memory.manager.FactManager;
+import com.xiaomizhou.dpsk.memory.repository.ConversationRepository;
 import com.xiaomizhou.dpsk.memory.repository.LongTermFactRepository;
 import com.xiaomizhou.dpsk.memory.repository.MemorySummaryRepository;
 import com.xiaomizhou.dpsk.memory.repository.MessageRepository;
@@ -78,7 +79,8 @@ public class MemoryConfiguration {
                                      FactManager.EmbeddingClient embeddingClient,
                                      ToolRegistry toolRegistry,
                                      AgentDefProvider agentDefProvider,
-                                     ExecutorService executorService) {
+                                     ExecutorService executorService,
+                                     ConversationRepository conversationRepository) {
         log.info("Building MemorySystem with L0+L1+L2 (full stack, pure RAG)");
         return MemorySystem.builder()
                 .messageRepository(messageRepository)
@@ -88,6 +90,7 @@ public class MemoryConfiguration {
                 .embeddingClient(embeddingClient)
                 .executorService(executorService)
                 .agentDefProvider(agentDefProvider)
+                .conversationRepository(conversationRepository)
                 .toolRegistry(toolRegistry)
                 .build();
     }

@@ -24,14 +24,19 @@ public class ChatWsChannel {
 
     private Session session;
 
+    /**
+     * 统一发送锁，保证同一连接上的所有发送（PING/PONG 与业务推送）串行，避免并发写入冲突
+     */
+    private final Object writeLock = new Object();
+
     public ChatWsChannel() {
         WsUtils.channel = this;
     }
 
     @OnMessage
-    public void onMessage(String message) {
+    public void onMessage(String message) throws IOException {
 
-        log.info("received message: {}", message);
+        log.debug("received message: {}", message);
 
         WsMessage wm = JsonUtils.toObj(message, WsMessage.class);
 
@@ -39,7 +44,7 @@ public class ChatWsChannel {
 
         switch (type) {
             case WsMsgType.PING:
-                session.getAsyncRemote().sendText(JsonUtils.toJson(new WsMessage(WsMsgType.PONG, new PingPongPayload(System.nanoTime()))));
+                send(JsonUtils.toJson(new WsMessage(WsMsgType.PONG, new PingPongPayload(System.nanoTime()))));
                 break;
         }
     }
@@ -101,10 +106,16 @@ public class ChatWsChannel {
         if (session == null) {
             throw new WsCloseException("ws closed.");
         }
-        synchronized (session) {
-            session.getBasicRemote().sendText(JsonUtils.toJson(msg));
-        }
+        send(JsonUtils.toJson(msg));
         return true;
+    }
+
+    private void send(String json) throws IOException {
+        synchronized (writeLock) {
+            if (session != null && session.isOpen()) {
+                session.getBasicRemote().sendText(json);
+            }
+        }
     }
 
 }

@@ -1,6 +1,7 @@
 package com.xiaomizhou.dpsk.db.chat;
 
 import com.xiaomizhou.dpsk.db.ChatMessageComponent;
+import com.xiaomizhou.dpsk.db.dto.ChatMsgDto;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -28,12 +29,12 @@ public class ChatService {
      * @param msgCode
      * @param userId  发送
      */
-    public void doChat(String userId, String msgCode, List<String> mcpCodes, List<String> skillPaths) {
+    public void doChat(String userId, String msgCode, List<String> mcpCodes, List<String> skillPaths, ChatMsgDto.ImageGenerateDto imageGenerateDto) {
 
         if (StringUtils.isBlank(msgCode)) {
             return;
         }
-        agentBridge.dispatch(userId, msgCode, mcpCodes, skillPaths);
+        agentBridge.dispatch(userId, msgCode, mcpCodes, skillPaths,imageGenerateDto);
     }
 
     /**

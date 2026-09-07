@@ -8,10 +8,12 @@ import com.xiaomizhou.dpsk.db.TodoComponent;
 import com.xiaomizhou.dpsk.db.dto.TodoCreateCmd;
 import com.xiaomizhou.dpsk.db.dto.TodoItemDto;
 import com.xiaomizhou.dpsk.db.dto.TodoUpdateCmd;
+import com.xiaomizhou.dpsk.db.model.TodoItemDO;
 import com.xiaomizhou.dpsk.utils.AuthContext;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -45,15 +47,13 @@ public class TodoController {
         Map<String, String> param = request.getParam();
         String agentCode = param != null ? param.get("agentCode") : null;
         String status = param != null ? param.get("status") : null;
-
-        if (agentCode == null || agentCode.isBlank()) {
-            return Results.fail("agentCode 不能为空");
-        }
+        String refType = param != null ? param.get("refType") : null;
+        String refCode = param != null ? param.get("refCode") : null;
 
         int pageNo = request.pageNo() > 0 ? request.pageNo() : 1;
         int pageSize = request.pageSize() > 0 ? request.pageSize() : 10;
 
-        ImmutablePair<Long, List<TodoItemDto>> pair = todoComponent.pageByAgent(agentCode, status != null ? Integer.parseInt(status) : null, pageNo, pageSize);
+        ImmutablePair<Long, List<TodoItemDto>> pair = todoComponent.page(refCode, StringUtils.isNumeric(refType) ? Integer.parseInt(refType) : null, pageNo, pageSize, status != null ? Integer.parseInt(status) : null);
         return Results.page(pair.getRight(), pageNo, pageSize, pair.getLeft());
     }
 

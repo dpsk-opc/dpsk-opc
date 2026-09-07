@@ -20,6 +20,10 @@ public class TodoItemDto {
     /** 联系人 Agent Code */
     private String agentId;
 
+    private Integer refType;
+
+    private String refCode;
+
     /** 待办名称 */
     private String title;
 

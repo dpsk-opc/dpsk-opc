@@ -41,7 +41,7 @@ public class TaskDO extends BaseModel {
     private String conversationCode;
 
     /**
-     * 来源：1-user，2-系统，3-agent
+     * 来源：1-user，2-系统，3-agent，4-专家团
      */
     @TableField("source")
     private Integer source;

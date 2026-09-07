@@ -76,6 +76,12 @@ public class WorkflowTaskDO extends BaseModel {
     @TableField("context_data")
     private String contextData;
 
+    /**
+     * 任务信息
+     */
+    @TableField("task_info")
+    private String taskInfo;
+
     /** 任务开始时间 */
     @TableField("start_time")
     private Date startTime;

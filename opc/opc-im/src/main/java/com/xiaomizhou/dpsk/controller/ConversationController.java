@@ -1,22 +1,26 @@
 package com.xiaomizhou.dpsk.controller;
 
+import com.xiaomizhou.dpsk.agent.AgentBuildSpec;
 import com.xiaomizhou.dpsk.constant.ConversationType;
 import com.xiaomizhou.dpsk.controller.vo.ConversationHttp;
 import com.xiaomizhou.dpsk.core.exceptions.BusinessException;
+import com.xiaomizhou.dpsk.core.exceptions.OpErrorCode;
 import com.xiaomizhou.dpsk.core.model.Results;
 import com.xiaomizhou.dpsk.core.model.request.Request;
 import com.xiaomizhou.dpsk.core.model.response.PageResponse;
 import com.xiaomizhou.dpsk.core.model.response.Response;
 import com.xiaomizhou.dpsk.db.ChatMessageComponent;
+import com.xiaomizhou.dpsk.db.FileRecordComponent;
+import com.xiaomizhou.dpsk.db.FileService;
 import com.xiaomizhou.dpsk.db.chat.ChatProtocol;
 import com.xiaomizhou.dpsk.db.chat.ChatService;
 import com.xiaomizhou.dpsk.db.dao.ConversationDao;
-import com.xiaomizhou.dpsk.db.dto.ChatMsgDto;
-import com.xiaomizhou.dpsk.db.dto.ConversationDto;
-import com.xiaomizhou.dpsk.db.dto.UnreadCountDto;
+import com.xiaomizhou.dpsk.db.dto.*;
+import com.xiaomizhou.dpsk.db.model.ChatMessage;
 import com.xiaomizhou.dpsk.utils.AuthContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -26,6 +30,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.stream.Collectors;
 
@@ -47,6 +52,8 @@ public class ConversationController {
     private final ChatService chatService;
 
     private final ExecutorService executorService;
+
+    private final FileRecordComponent fileRecordComponent;
 
     @PostMapping(value = "list")
     public Response<PageResponse<ConversationDto>> list(@RequestBody Request<ConversationHttp> request) {
@@ -77,6 +84,34 @@ public class ConversationController {
     public Response<Boolean> setTop(@RequestBody Request<ConversationHttp> request) {
         ConversationHttp param = request.getParam() != null ? request.getParam() : new ConversationHttp();
         return Results.ok(conversationDao.setTop(param.getConversationCode(), param.getTop()));
+    }
+
+    /**
+     * 置顶（pin）一条消息：让 AI 沉淀出的通用知识/结论在长项目中随每次 L0 窗口常驻，
+     * 即使它已不在最近窗口内。
+     */
+    @PostMapping(value = "pin")
+    public Response<Boolean> pin(@RequestBody Request<ConversationHttp> request) {
+        ConversationHttp param = request.getParam();
+        if (param == null || StringUtils.isBlank(param.getConversationCode())) {
+            return Results.fail("conversationCode 不能为空");
+        }
+        if (StringUtils.isBlank(param.getPinMsgCode())) {
+            return Results.fail("pinMsgCode 不能为空");
+        }
+        return Results.ok(conversationDao.setPinMsg(param.getConversationCode(), param.getPinMsgCode()));
+    }
+
+    /**
+     * 取消置顶（pin）。
+     */
+    @PostMapping(value = "unpin")
+    public Response<Boolean> unpin(@RequestBody Request<ConversationHttp> request) {
+        ConversationHttp param = request.getParam();
+        if (param == null || StringUtils.isBlank(param.getConversationCode())) {
+            return Results.fail("conversationCode 不能为空");
+        }
+        return Results.ok(conversationDao.setPinMsg(param.getConversationCode(), null));
     }
 
     @PostMapping(value = "chat/cancel")
@@ -128,7 +163,7 @@ public class ConversationController {
      * @return
      */
     @PostMapping(value = "chat/save")
-    public Response<String> addChat(@RequestBody Request<ChatMsgDto> request) {
+    public Response<SaveMsgDto> addChat(@RequestBody Request<ChatMsgDto> request) {
         ChatMsgDto dto = request.getParam();
         if (dto == null) {
             return Results.fail("参数不能为空");
@@ -139,21 +174,37 @@ public class ConversationController {
         Integer type = dto.getConversationType();
 
         dto.setMessageType("USER");
+        String msgCode = "";
         if (ConversationType.SINGLE.getCode().equals(type)) {
             String code = chatMessageComponent.newSingleChatMsg(sendCode, dto, null, "");
-            chatService.doChat(sendCode, code, dto.getMcpCodes(), dto.getSkillPaths());
-            return Results.ok(code);
+
+            if (CollectionUtils.isNotEmpty(dto.getFileCodes()) && Objects.equals(AgentBuildSpec.ImageBuildSpec.TYPE_IMAGE2IMAGE, dto.getImageParam().getMode())) {
+                dto.getImageParam().setUrls(dto.getFileCodes().stream().map(fileRecordComponent::getByCode).map(FileRecordDto::getFilePath).collect(Collectors.toList()));
+            }
+
+            chatService.doChat(sendCode, code, dto.getMcpCodes(), dto.getSkillPaths(), dto.getImageParam());
+            msgCode = code;
         } else if (ConversationType.GROUP.getCode().equals(type)) {
             String code = chatMessageComponent.newGroupChatMsg(sendCode, dto, null, null);
             executorService.submit(() -> {
-                chatService.doChat(sendCode, code, dto.getMcpCodes(), dto.getSkillPaths());
+                chatService.doChat(sendCode, code, dto.getMcpCodes(), dto.getSkillPaths(), dto.getImageParam());
             });
-            return Results.ok(code);
+            msgCode = code;
         } else if (ConversationType.WORKFLOW.getCode().equals(type)) {
             String code = chatMessageComponent.newWorkflowMsg(sendCode, dto, null, null);
-            executorService.execute(() -> chatService.doChat(sendCode, code, dto.getMcpCodes(), dto.getSkillPaths()));
-            return Results.ok(code);
+            executorService.execute(() -> chatService.doChat(sendCode, code, dto.getMcpCodes(), dto.getSkillPaths(), dto.getImageParam()));
+            msgCode = code;
         }
-        return Results.fail("会话类型不支持");
+
+        ChatMessage msg = chatMessageComponent.getByCode(msgCode);
+        if (Objects.isNull(msg)) {
+            throw new BusinessException(OpErrorCode.INTERNAL_ERROR, "Unknow error.");
+        }
+
+        return Results.ok(SaveMsgDto.builder()
+                .conversationCode(msg.getConversationCode())
+                .conversationType(msg.getContentType())
+                .msgCode(msgCode)
+                .build());
     }
 }

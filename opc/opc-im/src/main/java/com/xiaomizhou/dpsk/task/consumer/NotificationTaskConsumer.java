@@ -10,10 +10,13 @@ import com.xiaomizhou.dpsk.core.ws.WsMsgType;
 import com.xiaomizhou.dpsk.core.ws.payload.MessagePayload;
 import com.xiaomizhou.dpsk.db.AgentComponent;
 import com.xiaomizhou.dpsk.db.ChatMessageComponent;
+import com.xiaomizhou.dpsk.db.dao.ConversationDao;
 import com.xiaomizhou.dpsk.db.dto.AgentDto;
 import com.xiaomizhou.dpsk.db.dto.ChatMsgDto;
+import com.xiaomizhou.dpsk.db.model.Conversation;
 import com.xiaomizhou.dpsk.task.model.Task;
 import com.xiaomizhou.dpsk.task.model.TaskConsumeResult;
+import dev.langchain4j.model.output.TokenUsage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -45,6 +48,8 @@ public class NotificationTaskConsumer implements TaskConsumer {
 
     private final AgentComponent agentComponent;
 
+    private final ConversationDao conversationDao;
+
     @Override
     public String getConsumerKey() {
         return CONSUMER_KEY;
@@ -73,21 +78,25 @@ public class NotificationTaskConsumer implements TaskConsumer {
             String agentCode = StringUtils.defaultIfBlank(task.getAgentCode(), userId);
             String conversationCode = task.getConversationCode();
 
-            // 2. 创建通知消息入库
+            // 2. 根据会话编码判断实际会话类型（专家团/群聊/单聊），而非写死 SINGLE，
+            //    避免在专家团/群聊会话下错误创建出多余的单聊会话。
+            ConversationType conversationType = resolveConversationType(conversationCode);
+
+            // 3. 创建通知消息入库（按实际会话类型）
             String notificationContent = "[提醒: " + task.getName() + "]\n" + message;
 
-            String msgCode = chatMessageComponent.newSingleChatMsg(agentCode,
-                    ChatMsgDto.builder()
-                            .targetId(userId)
-                            .sendId(agentCode)
-                            .message(notificationContent)
-                            .messageType("SYSTEM")
-                            .conversationType(ConversationType.SINGLE.getCode())
-                            .conversationCode(conversationCode)
-                            .taskId(taskCode)
-                            .status("IGNORE")
-                            .build(),
-                    null, null);
+            ChatMsgDto dto = ChatMsgDto.builder()
+                    .targetId(userId)
+                    .sendId(agentCode)
+                    .message(notificationContent)
+                    .messageType("SYSTEM")
+                    .conversationType(conversationType.getCode())
+                    .conversationCode(conversationCode)
+                    .taskId(taskCode)
+                    .status("IGNORE")
+                    .build();
+
+            String msgCode = saveMessage(agentCode, dto, conversationType, null, null);
 
             if (StringUtils.isBlank(msgCode)) {
                 return TaskConsumeResult.fail("Failed to create notification message");
@@ -99,17 +108,18 @@ public class NotificationTaskConsumer implements TaskConsumer {
 
             // 3. WebSocket 推送
             try {
-                SenderInfo senderInfo = new SenderInfo(agentCode, Objects.isNull(agent) ? "" : agent.getName(), Objects.isNull(agent) ? "" : agent.getAvatar());
+                SenderInfo senderInfo = new SenderInfo(agentCode, Objects.isNull(agent) ? "" : agent.getName(), Objects.isNull(agent) ? "" : agent.getAvatar(), Objects.isNull(agent) ? "" : agent.getNickname());
                 WsUtils.send(new WsMessage(WsMsgType.MESSAGE,
                         new MessagePayload(
-                                msgCode,
-                                conversationCode,
-                                "text",
-                                notificationContent,
-                                senderInfo,
-                                System.currentTimeMillis(),
-                                taskCode,
-                                Map.of()
+                                msgCode,                 // messageId
+                                conversationCode,        // conversationId
+                                taskCode,                // taskId
+                                "text",                  // messageType
+                                notificationContent,     // content
+                                senderInfo,              // sender
+                                System.currentTimeMillis(), // timestamp
+                                null,                    // replyToId
+                                Map.of()                 // metadata
                         )));
             } catch (Exception e) {
                 log.warn("Failed to push notification via WebSocket: msgCode={}", msgCode, e);
@@ -121,6 +131,38 @@ public class NotificationTaskConsumer implements TaskConsumer {
         } catch (Exception e) {
             log.error("NotificationTaskConsumer failed: task={}", taskCode, e);
             return TaskConsumeResult.fail(e.getMessage());
+        }
+    }
+
+    /**
+     * 根据会话编码解析实际会话类型；查不到时回退为单聊。
+     */
+    private ConversationType resolveConversationType(String conversationCode) {
+        if (StringUtils.isNotBlank(conversationCode)) {
+            Conversation conv = conversationDao.getOneByCode(conversationCode);
+            if (conv != null && conv.getConversationType() != null) {
+                ConversationType type = ConversationType.getByCode(conv.getConversationType());
+                if (type != null) {
+                    return type;
+                }
+            }
+        }
+        return ConversationType.SINGLE;
+    }
+
+    /**
+     * 按实际会话类型选择入库方法（WORKFLOW/群聊复用现有会话，避免创建多余单聊会话）。
+     */
+    private String saveMessage(String sendId, ChatMsgDto dto, ConversationType type,
+                               TokenUsage token, String modelName) {
+        switch (type) {
+            case WORKFLOW:
+                return chatMessageComponent.newWorkflowMsg(sendId, dto, token, modelName);
+            case GROUP:
+                return chatMessageComponent.newGroupChatMsg(sendId, dto, token, modelName);
+            case SINGLE:
+            default:
+                return chatMessageComponent.newSingleChatMsg(sendId, dto, token, modelName);
         }
     }
 

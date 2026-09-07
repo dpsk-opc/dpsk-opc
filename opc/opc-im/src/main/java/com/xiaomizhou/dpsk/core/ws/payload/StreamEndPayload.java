@@ -10,5 +10,6 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 public record StreamEndPayload(
         @JsonProperty("streamId") String streamId,
         @JsonProperty("fullMessageId") String fullMessageId,   // 消息入库后的ID
+        @JsonProperty("taskId") String taskId,
         @JsonProperty("fullContent") Object fullContent        // 完整内容（可选）
 ) {}
