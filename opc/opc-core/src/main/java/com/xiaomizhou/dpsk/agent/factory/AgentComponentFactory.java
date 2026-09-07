@@ -57,13 +57,13 @@ public class AgentComponentFactory {
     /**
      * 构造工厂。
      *
-     * @param memorySystem           记忆系统
-     * @param toolRegistry           工具注册中心
+     * @param memorySystem              记忆系统
+     * @param toolRegistry              工具注册中心
      * @param toolInvocationInterceptor 工具调用拦截器
-     * @param applicationContext     Spring 上下文
-     * @param apiKey                 LLM API Key
-     * @param baseUrl                LLM API Base URL
-     * @param modelName              LLM 模型名称
+     * @param applicationContext        Spring 上下文
+     * @param apiKey                    LLM API Key
+     * @param baseUrl                   LLM API Base URL
+     * @param modelName                 LLM 模型名称
      */
     public AgentComponentFactory(MemorySystem memorySystem,
                                  ToolRegistry toolRegistry,
@@ -81,7 +81,9 @@ public class AgentComponentFactory {
         this.modelName = modelName;
     }
 
-    /** 构建流式 LLM 模型（单聊使用） */
+    /**
+     * 构建流式 LLM 模型（单聊使用）
+     */
     public OpenAiStreamingChatModel createStreamingModel() {
         return OpenAiStreamingChatModel.builder()
                 .apiKey(apiKey)
@@ -106,7 +108,7 @@ public class AgentComponentFactory {
                     .apiKey(coalesce(override.getAccessKey(), apiKey))
                     .baseUrl(coalesce(override.getBaseUrl(), baseUrl))
                     .modelName(coalesce(override.getModelName(), modelName))
-                    .size(imageBuildSpec.getSize().replace("*","x"))
+                    .size(imageBuildSpec.getSize().replace("*", "x"))
                     .logRequests(true)
                     .logResponses(true)
                     .build();
@@ -196,7 +198,9 @@ public class AgentComponentFactory {
         return builder.build();
     }
 
-    /** 构建同步 LLM 模型（群聊 Supervisor 使用） */
+    /**
+     * 构建同步 LLM 模型（群聊 Supervisor 使用）
+     */
     public OpenAiChatModel createChatModel() {
         return OpenAiChatModel.builder()
                 .modelName(modelName)
@@ -247,7 +251,9 @@ public class AgentComponentFactory {
         return builder.build();
     }
 
-    /** 构建 ChatMemory（L0 工作记忆） */
+    /**
+     * 构建 ChatMemory（L0 工作记忆）
+     */
     public ChatMemory createChatMemory(AgentBuildSpec spec) {
         String memoryId;
 
@@ -283,7 +289,7 @@ public class AgentComponentFactory {
     /**
      * 获取 Agent 绑定的工具列表
      */
-    public List<ToolProvider> getToolProviders(String agentCode, String userCode, String conversationCode,List<String> mcpCodes) {
+    public List<ToolProvider> getToolProviders(String agentCode, String userCode, String conversationCode, List<String> mcpCodes) {
         LangChain4JToolBridge bridge = LangChain4JToolBridge.forAgent(
                 toolRegistry, toolInvocationInterceptor, applicationContext, agentCode, userCode, conversationCode, mcpCodes);
         return Collections.singletonList(bridge);
@@ -304,13 +310,13 @@ public class AgentComponentFactory {
 
         @Override
         public ToolExecutionResultMessage apply(ToolExecutionRequest toolExecutionRequest) {
-            ToolCall toolCall = ToolUtils.toToolCall(toolExecutionRequest);
-            ToolExecutionResult result = toolInvocationInterceptor.execute(toolCall, ToolContext.builder().build());
-            return ToolExecutionResultMessage.toolExecutionResultMessage(toolExecutionRequest, String.valueOf(result));
+//            ToolCall toolCall = ToolUtils.toToolCall(toolExecutionRequest);
+//            ToolExecutionResult result = toolInvocationInterceptor.execute(toolCall, ToolContext.builder().build());
+//            return ToolExecutionResultMessage.toolExecutionResultMessage(toolExecutionRequest, String.valueOf(result));
+            return ToolExecutionResultMessage.toolExecutionResultMessage(toolExecutionRequest, "执行错误，tool没有加载，请先用调用 [%s] 添加 [%s] 后再使用.".formatted(LangChain4JToolBridge.ADD_TOOLS_TOOL_NAME, toolExecutionRequest.name()));
         }
-
-
     }
+
     /**
      * 组装完整 System Prompt（人设 + L2 长期事实 + L1 摘要 + @引用 + 历史）
      */
@@ -324,43 +330,56 @@ public class AgentComponentFactory {
      * 组装完整 System Prompt（人设 + L2 长期事实 + L1 摘要 + @引用 + 历史）
      */
     public ContextAssembler.AssembledPrompt assembleSystemPrompt(/*AgentDef def,*/
-                                                                 AgentBuildSpec spec) {
+            AgentBuildSpec spec) {
         ContextAssembler assembler = memorySystem.getContextAssembler();
         return assembler.assemble(spec);
     }
 
-    /** 注入 L2 长期事实到 System Prompt（群聊使用） */
+    /**
+     * 注入 L2 长期事实到 System Prompt（群聊使用）
+     */
     public String enrichSystemPrompt(AgentDef def, String targetCode) {
         ContextAssembler assembler = memorySystem.getContextAssembler();
         return assembler.enrichSystemPrompt(def.toPersonaText(), def.getCode(), targetCode);
     }
 
-    /** 获取 MemorySystem 实例 */
+    /**
+     * 获取 MemorySystem 实例
+     */
     public MemorySystem getMemorySystem() {
         return memorySystem;
     }
 
-    /** 获取 ToolRegistry 实例 */
+    /**
+     * 获取 ToolRegistry 实例
+     */
     public ToolRegistry getToolRegistry() {
         return toolRegistry;
     }
 
-    /** 获取 ToolInvocationInterceptor 实例 */
+    /**
+     * 获取 ToolInvocationInterceptor 实例
+     */
     public ToolInvocationInterceptor getToolInvocationInterceptor() {
         return toolInvocationInterceptor;
     }
 
-    /** 获取 ApplicationContext 实例 */
+    /**
+     * 获取 ApplicationContext 实例
+     */
     public ApplicationContext getApplicationContext() {
         return applicationContext;
     }
 
-    /** 获取当前默认模型名称 */
+    /**
+     * 获取当前默认模型名称
+     */
     public String getModelName() {
         return modelName;
     }
 
     // ---- 私有辅助方法 ----
+
     /**
      * 解析 JSON 字符串为 LlmConfigOverride，解析失败或为空时返回 null。
      */
