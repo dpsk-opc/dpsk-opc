@@ -280,6 +280,9 @@ public class AgentComponent {
             throw BusinessException.notFound("Agent不存在, code=" + cmd.getCode());
         }
 
+        // 捕获旧的 prompt（DB 现值），供下方判断"prompt 是否真的变化"使用（避免其被 setPrompt 覆盖后丢失）
+        String oldPrompt = agent.getPrompt();
+
         if (StringUtils.isNotBlank(cmd.getName())) {
             agent.setName(cmd.getName());
         }
@@ -317,10 +320,11 @@ public class AgentComponent {
             agent.setModality(cmd.getModality());
         }
 
-        // 能力标签：优先前端手动指定；否则在 prompt 变化时由 LLM 从 prompt 提取（同步）
+        // 能力标签：优先前端手动指定；否则仅当 prompt 真正发生变化时才由 LLM 从 prompt 重新提取（同步）。
+        // 优化：仅修改 name/avatar 等无关字段而 prompt 未变（即便前端把整个 prompt 原样传回）时，不重复触发 LLM 抽取。
         if (CollectionUtils.isNotEmpty(cmd.getCapabilities())) {
             agent.setCapabilities(JsonUtils.toJson(cmd.getCapabilities()));
-        } else if (cmd.getPrompt() != null) {
+        } else if (cmd.getPrompt() != null && !cmd.getPrompt().equals(oldPrompt)) {
             CapabilityExtractor extractor = capabilityExtractorProvider.getIfAvailable();
             if (extractor != null) {
                 List<String> tags = extractor.extract(cmd.getPrompt());

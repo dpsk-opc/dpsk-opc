@@ -36,7 +36,7 @@ public class ChatWsChannel {
     @OnMessage
     public void onMessage(String message) throws IOException {
 
-        log.info("received message: {}", message);
+        log.debug("received message: {}", message);
 
         WsMessage wm = JsonUtils.toObj(message, WsMessage.class);
 
