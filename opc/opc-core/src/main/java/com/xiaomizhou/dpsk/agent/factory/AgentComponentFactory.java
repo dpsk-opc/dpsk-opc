@@ -27,6 +27,7 @@ import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.compress.utils.IOUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.context.ApplicationContext;
 
 import java.io.IOException;
@@ -311,7 +312,16 @@ public class AgentComponentFactory {
         @Override
         public ToolExecutionResultMessage apply(ToolExecutionRequest toolExecutionRequest) {
 //            ToolCall toolCall = ToolUtils.toToolCall(toolExecutionRequest);
-//            ToolExecutionResult result = toolInvocationInterceptor.execute(toolCall, ToolContext.builder().build());
+//            try {
+//                ToolExecutionResult result = toolInvocationInterceptor.execute(toolCall, ToolContext.builder().build());
+//                if (Objects.nonNull(result) && ToolExecutionResult.STATUS_SUCCESS.equals(result.getStatus())) {
+//                    if (StringUtils.isBlank(result.getErrorMessage())) {
+//                        return ToolExecutionResultMessage.toolExecutionResultMessage(toolExecutionRequest, String.valueOf(result));
+//                    }
+//                }
+//            } catch (Exception e) {
+//                log.error("工具执行出错! toolExecutionRequest: {}", toolExecutionRequest, e);
+//            }
 //            return ToolExecutionResultMessage.toolExecutionResultMessage(toolExecutionRequest, String.valueOf(result));
             return ToolExecutionResultMessage.toolExecutionResultMessage(toolExecutionRequest, "执行错误，tool没有加载，请先用调用 [%s] 添加 [%s] 后再使用.".formatted(LangChain4JToolBridge.ADD_TOOLS_TOOL_NAME, toolExecutionRequest.name()));
         }
