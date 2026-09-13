@@ -6,6 +6,7 @@ import com.xiaomizhou.dpsk.db.dto.ChatMemberDto;
 import com.xiaomizhou.dpsk.db.dto.GroupAddMemberCmd;
 import com.xiaomizhou.dpsk.db.dto.GroupListCmd;
 import com.xiaomizhou.dpsk.db.dto.GroupNewCmd;
+import com.xiaomizhou.dpsk.db.dto.GroupRemoveMemberCmd;
 import com.xiaomizhou.dpsk.db.dto.GroupUpdateCmd;
 import com.xiaomizhou.dpsk.core.model.Results;
 import com.xiaomizhou.dpsk.core.model.request.Request;
@@ -126,6 +127,27 @@ public class GroupController {
     }
 
     /**
+     * 移除群组成员（仅群主可操作）
+     *
+     * @param request 移除成员参数（群编码 + 成员编码列表）
+     * @return 是否移除成功
+     */
+    @PostMapping(value = "removeMember")
+    public Response<Boolean> removeGroupMembers(@RequestBody Request<GroupRemoveMemberCmd> request) {
+        GroupRemoveMemberCmd cmd = request.getParam();
+        if (cmd == null) {
+            return Results.fail("参数不能为空");
+        }
+
+        boolean result = chatGroupComponent.removeGroupMembers(
+                cmd.getGroupCode(),
+                cmd.getMemberCodes(),
+                AuthContext.getAgentCode());
+
+        return result ? Results.ok(true) : Results.fail("移除群成员失败，群聊不存在或无权操作");
+    }
+
+    /**
      * 获取群组成员列表
      *
      * @param request 群组编码
@@ -154,6 +176,26 @@ public class GroupController {
 
         String conversationCode = chatGroupComponent.getGroupConversationCode(userId, groupCode);
         return Results.ok(conversationCode);
+    }
+
+    /**
+     * 删除群聊
+     * <p>
+     * 群主调用：解散群聊（群、群成员关系、群会话一并删除）；
+     * 普通成员调用：退出群聊（仅移除自己，不影响群内其他人）。
+     *
+     * @param request 群组编码
+     * @return 是否删除成功
+     */
+    @PostMapping(value = "delete")
+    public Response<Boolean> delete(@RequestBody Request<String> request) {
+        String groupCode = request.getParam();
+        if (StringUtils.isBlank(groupCode)) {
+            return Results.fail("群组编码不能为空");
+        }
+
+        boolean result = chatGroupComponent.deleteGroup(groupCode, AuthContext.getAgentCode());
+        return result ? Results.ok(true) : Results.fail("删除群聊失败，群聊不存在或无权操作");
     }
 
 }

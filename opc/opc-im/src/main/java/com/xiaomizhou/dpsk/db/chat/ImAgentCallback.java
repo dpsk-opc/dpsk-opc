@@ -9,6 +9,7 @@ import com.xiaomizhou.dpsk.agent.event.AgentEvent;
 import com.xiaomizhou.dpsk.agent.event.AgentEventType;
 import com.xiaomizhou.dpsk.constant.ConversationType;
 import com.xiaomizhou.dpsk.core.utils.WsUtils;
+import com.xiaomizhou.dpsk.core.ws.ErrorNotifier;
 import com.xiaomizhou.dpsk.core.ws.SenderInfo;
 import com.xiaomizhou.dpsk.core.ws.WsMessage;
 import com.xiaomizhou.dpsk.core.ws.WsMsgType;
@@ -61,6 +62,9 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
     // 累计 Token
     private TokenUsage accumulatedToken;
 
+    // 是否已向该 stream 下发过错误，保证同一次执行只推一条 ERROR
+    private final AtomicBoolean errorNotified = new AtomicBoolean(false);
+
     public ImAgentCallback(String userId,
                            String conversationCode,
                            String conversationType,
@@ -97,7 +101,11 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
     @Override
     public void setSenderInfo(String agentCode) {
         AgentDef agent = agentDefProvider.getByCode(agentCode);
-        this.senderInfo = new SenderInfo(agentCode, agent.getNickname(), agent.getAvatar(),agent.getNickname());
+        if (agent == null) {
+            this.senderInfo = new SenderInfo(agentCode, agentCode, "", "");
+            return;
+        }
+        this.senderInfo = new SenderInfo(agentCode, agent.getName(), agent.getAvatar(), agent.getNickname());
     }
 
     /**
@@ -324,12 +332,7 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
 
     private void handleError(AgentEvent event) {
         log.error("Agent error: agent={}, message={}", event.agentCode(), event.text());
-        try {
-            WsUtils.send(new WsMessage(WsMsgType.ERROR,
-                    Map.of("code", "AGENT_ERROR", "message", event.text(), "agent", event.agentCode())));
-        } catch (Exception e) {
-            log.warn("Failed to send error event", e);
-        }
+        sendError("AGENT_ERROR", event.text(), event.agentCode(), null);
     }
 
     @Override
@@ -339,13 +342,31 @@ public class ImAgentCallback implements AgentCallback, GroupAgentCallback {
 
     @Override
     public void onError(Throwable error) {
-        log.error("Agent execution error for stream={}: {}", streamCode, error.getMessage());
-        try {
-            WsUtils.send(new WsMessage(WsMsgType.ERROR,
-                    Map.of("code", "EXECUTION_ERROR", "message", error.getMessage())));
-        } catch (Exception e) {
-            log.warn("Failed to send error notification", e);
+        // 注意：Throwable 必须作为日志最后一个参数传入，否则不会打印完整堆栈
+        log.error("Agent execution error for stream={}, conversation={}, task={}",
+                streamCode, conversationCode, taskId, error);
+        sendError("EXECUTION_ERROR", error != null ? error.getMessage() : null,
+                senderInfo != null ? senderInfo.userId() : null, error);
+    }
+
+    /**
+     * 是否已经下发过错误事件，供上游（AgentBridge 等）判断，
+     * 避免同一次执行重复推送 ERROR（例如 pipeline 内 onError 已推、外层再推一次）。
+     */
+    public boolean hasNotifiedError() {
+        return errorNotified.get();
+    }
+
+    /**
+     * 统一通过 WebSocket 推送错误信息给前端（含错误码、消息、异常类型、根因、堆栈与上下文）。
+     * 同一次执行（同一 callback 实例）只下发一次，避免前端收到重复的 ERROR 事件。
+     */
+    private void sendError(String code, String message, String agentCode, Throwable error) {
+        if (!errorNotified.compareAndSet(false, true)) {
+            log.warn("Duplicate error suppressed: stream={}, code={}, message={}", streamCode, code, message);
+            return;
         }
+        ErrorNotifier.send(code, message, conversationCode, streamCode, taskId, agentCode, error);
     }
 
     /**

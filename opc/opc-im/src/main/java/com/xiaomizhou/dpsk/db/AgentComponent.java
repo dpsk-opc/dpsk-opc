@@ -364,6 +364,31 @@ public class AgentComponent {
     }
 
     /**
+     * 删除好友关系（仅解除好友关系，不删除 Agent 本身）
+     * <p>
+     * 好友关系是双向的（t_contact 中两个方向各一条），这里两个方向都会清理，
+     * 保证双方的好友列表都不再出现对方。
+     * 若需要彻底删除 Agent（含其知识库、工具绑定等），请调用 {@link #delete(String)}。
+     *
+     * @param ownerCode  当前登录用户 code
+     * @param friendCode 好友 code
+     * @return 是否删除成功
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public boolean deleteFriend(String ownerCode, String friendCode) {
+        if (StringUtils.isAnyBlank(ownerCode, friendCode) || Strings.CS.equals(ownerCode, friendCode)) {
+            return false;
+        }
+
+        boolean removed = contactDao.deleteByOwnerAndFriend(ownerCode, friendCode);
+        // 反向关系同步清理，避免对方好友列表仍能看到已删除的好友
+        contactDao.deleteByOwnerAndFriend(friendCode, ownerCode);
+
+        log.info("删除好友关系, owner={}, friend={}, removed={}", ownerCode, friendCode, removed);
+        return removed;
+    }
+
+    /**
      * 更新最后活跃时间
      */
     public void updateLastActiveTime(Long id) {

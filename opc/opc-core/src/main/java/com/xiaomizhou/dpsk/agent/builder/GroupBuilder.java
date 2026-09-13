@@ -153,6 +153,7 @@ public class GroupBuilder implements AgentBuilder {
             // 汇总执行结果
             StringBuilder output = new StringBuilder();
             boolean anyFailed = false;
+            String firstError = null;
 
             for (String code : responders) {
                 // 中途取消 → 跳过后续所有 Agent
@@ -180,6 +181,9 @@ public class GroupBuilder implements AgentBuilder {
 
                 if (!result.isSuccess()) {
                     anyFailed = true;
+                    if (firstError == null) {
+                        firstError = result.getErrorMessage();
+                    }
                 }
                 if (result.getOutputText() != null) {
                     output.append(result.getOutputText()).append("\n");
@@ -194,6 +198,7 @@ public class GroupBuilder implements AgentBuilder {
             return PipelineResult.builder()
                     .success(!anyFailed)
                     .outputText(output.length() > 0 ? output.toString().strip() : null)
+                    .errorMessage(firstError)
                     .build();
         }
 

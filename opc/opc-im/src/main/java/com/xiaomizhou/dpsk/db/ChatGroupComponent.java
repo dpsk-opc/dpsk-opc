@@ -21,6 +21,7 @@ import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
 import java.util.function.Function;
@@ -298,6 +299,115 @@ public class ChatGroupComponent {
         return groupCode;
     }
 
+
+    /**
+     * 移除群组成员（仅群主可操作）
+     * <p>
+     * 将指定成员从群内移除（物理删除成员关系），群主自身不可被移除。
+     * 采用物理删除而非逻辑删除，避免唯一索引 uk_group_member 被已删除记录占位，
+     * 导致被移除成员重新入群时唯一键冲突。
+     *
+     * @param groupCode    群组编码
+     * @param memberCodes  待移除的成员编码列表
+     * @param operatorCode 操作人（当前登录用户，须为群主）
+     * @return 是否移除成功
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public boolean removeGroupMembers(String groupCode, List<String> memberCodes, String operatorCode) {
+        if (StringUtils.isAnyBlank(groupCode, operatorCode) || CollectionUtils.isEmpty(memberCodes)) {
+            return false;
+        }
+
+        ChatGroup group = chatGroupDao.getByCode(groupCode);
+        if (Objects.isNull(group)) {
+            return false;
+        }
+
+        // 仅群主可移除群成员
+        if (!Strings.CS.equals(group.getOwnerCode(), operatorCode)) {
+            log.warn("非群主无权移除群成员, groupCode={}, operator={}", groupCode, operatorCode);
+            return false;
+        }
+
+        // 过滤空值、去重，并排除群主自身
+        List<String> targets = memberCodes.stream()
+                .filter(StringUtils::isNotBlank)
+                .distinct()
+                .filter(code -> !Strings.CS.equals(code, group.getOwnerCode()))
+                .collect(Collectors.toList());
+        if (CollectionUtils.isEmpty(targets)) {
+            return false;
+        }
+
+        // 仅处理群内已存在的成员关系
+        List<ChatGroupMember> members = chatGroupMemberDao.lambdaQuery()
+                .eq(ChatGroupMember::getChatGroupCode, groupCode)
+                .in(ChatGroupMember::getAgentCode, targets)
+                .list();
+        if (CollectionUtils.isEmpty(members)) {
+            return false;
+        }
+
+        int removed = 0;
+        for (ChatGroupMember member : members) {
+            if (chatGroupMemberDao.physicalDeleteById(member.getId())) {
+                removed++;
+            }
+        }
+
+        log.info("移除群成员完成, groupCode={}, operator={}, removed={}", groupCode, operatorCode, removed);
+        return removed > 0;
+    }
+
+    /**
+     * 删除/解散群聊
+     * <p>
+     * 群主调用：解散群聊。物理删除群、群成员关系以及该群的群聊会话（群会话全群只有一条，归属群主）。
+     * 普通成员调用：退出群聊。物理删除自己的成员关系，不影响群内其他人。
+     * <p>
+     * 采用物理删除而非逻辑删除，避免 t_chat_group.uk_group_code、
+     * t_chat_group_member.uk_group_member、t_conversation.udx_conversation_owner_target
+     * 等唯一索引被已删除记录占位，导致重新建群/重新入群时唯一键冲突。
+     *
+     * @param groupCode    群组编码
+     * @param operatorCode 操作人（当前登录用户）
+     * @return 是否删除成功
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public boolean deleteGroup(String groupCode, String operatorCode) {
+        if (StringUtils.isAnyBlank(groupCode, operatorCode)) {
+            return false;
+        }
+
+        ChatGroup group = chatGroupDao.getByCode(groupCode);
+        if (Objects.isNull(group)) {
+            return false;
+        }
+
+        // 群主：解散群聊（物理删除群、群成员关系与群会话）
+        if (Strings.CS.equals(group.getOwnerCode(), operatorCode)) {
+            chatGroupDao.physicalDeleteByCode(groupCode);
+            chatGroupMemberDao.physicalDeleteByGroupCode(groupCode);
+            conversationDao.physicalDeleteByTypeAndTarget(ConversationType.GROUP.getCode(), groupCode);
+
+            log.info("解散群聊成功, groupCode={}, owner={}", groupCode, operatorCode);
+            return true;
+        }
+
+        // 普通成员：退出群聊（物理删除自己的成员关系）
+        ChatGroupMember member = chatGroupMemberDao.lambdaQuery()
+                .eq(ChatGroupMember::getChatGroupCode, groupCode)
+                .eq(ChatGroupMember::getAgentCode, operatorCode)
+                .one();
+        if (Objects.isNull(member)) {
+            return false;
+        }
+
+        chatGroupMemberDao.physicalDeleteById(member.getId());
+
+        log.info("退出群聊成功, groupCode={}, member={}", groupCode, operatorCode);
+        return true;
+    }
 
     /**
      * 获取群组对话的code

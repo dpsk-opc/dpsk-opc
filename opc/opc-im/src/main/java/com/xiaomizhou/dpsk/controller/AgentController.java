@@ -14,6 +14,7 @@ import com.xiaomizhou.dpsk.utils.AuthContext;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -82,6 +83,23 @@ public class AgentController {
     public Response<Object> delete(@RequestBody AgentUpdateCmd request) {
         agentComponent.delete(request.getCode());
         return Results.ok();
+    }
+
+    /**
+     * 删除好友（仅解除好友关系，不删除 Agent 本身）
+     * <p>
+     * 入参为好友的 Agent Code；关系双向解除，双方好友列表都会移除。
+     * 如需彻底删除 Agent 请调用 delete。
+     */
+    @PostMapping(value = "deleteFriend")
+    public Response<Boolean> deleteFriend(@RequestBody Request<String> request) {
+        String friendCode = request.getParam();
+        if (StringUtils.isBlank(friendCode)) {
+            return Results.fail("好友编码不能为空");
+        }
+
+        boolean result = agentComponent.deleteFriend(AuthContext.getAgentCode(), friendCode);
+        return result ? Results.ok(true) : Results.fail("删除好友失败，好友关系不存在");
     }
 
 }

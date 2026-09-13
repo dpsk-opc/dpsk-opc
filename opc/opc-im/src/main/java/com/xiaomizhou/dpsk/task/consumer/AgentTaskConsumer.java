@@ -15,6 +15,7 @@ import com.xiaomizhou.dpsk.db.dao.TokenUsageDao;
 import com.xiaomizhou.dpsk.db.dto.AgentDto;
 import com.xiaomizhou.dpsk.db.dto.ChatMsgDto;
 import com.xiaomizhou.dpsk.db.model.Conversation;
+import com.xiaomizhou.dpsk.core.ws.ErrorNotifier;
 import com.xiaomizhou.dpsk.core.ws.SenderInfo;
 import com.xiaomizhou.dpsk.memory.repository.MessageRepository;
 import com.xiaomizhou.dpsk.task.TaskCreationContext;
@@ -165,6 +166,8 @@ public class AgentTaskConsumer implements TaskConsumer {
 
         } catch (Exception e) {
             log.error("AgentTaskConsumer failed: task={}", taskCode, e);
+            // 回推前端，避免定时任务执行失败时前端无感知
+            ErrorNotifier.send("EXECUTION_ERROR", task.getConversationCode(), null, taskCode, task.getAgentCode(), e);
             return TaskConsumeResult.fail(e.getMessage());
         }
     }

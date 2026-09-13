@@ -17,4 +17,12 @@ public record SenderInfo(
         @JsonProperty("avatar") String avatar,
         @JsonProperty("nickname") String nickname
 ) {
+
+    /**
+     * 兼容前端 username 字段，取值与 name 一致，保证 username / name 均可正常输出。
+     */
+    @JsonProperty("username")
+    public String username() {
+        return name;
+    }
 }
