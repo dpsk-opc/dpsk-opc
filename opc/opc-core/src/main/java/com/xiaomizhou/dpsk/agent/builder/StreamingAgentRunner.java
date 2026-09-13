@@ -57,7 +57,10 @@ public final class StreamingAgentRunner {
 
             AtomicInteger index = new AtomicInteger(0);
             AtomicBoolean firstPartialMsg = new AtomicBoolean(true);
+            // 标记流式过程是否出错：出错时 outputText 为空，若不单独标记会被上层误判为执行成功
+            AtomicBoolean failed = new AtomicBoolean(false);
             CountDownLatch latch = new CountDownLatch(1);
+            String[] errorHolder = new String[1];
 
             stream.onPartialThinkingWithContext((response, context) -> {
                 if (callback.isCancelled()) {
@@ -111,7 +114,23 @@ public final class StreamingAgentRunner {
 
                 callback.onEvent(new AgentEvent(AgentEventType.MESSAGE_CHUNK, agentCode, response.text(), null, null, null, null));
             }).onError(error -> {
+                // 这类异常是模型侧错误（如 model_not_found / 鉴权失败 / 限流 / 连接中断），
+                // 必须回推前端，否则用户只看到转圈、完全没有失败原因。
                 log.error("StreamingAgentRunner stream error for agent={}", agentCode, error);
+                errorHolder[0] = error != null ? error.getMessage() : null;
+                failed.set(true);
+                try {
+                    // 注意 1：langchain4j 在 ServerSentEventListenerUtils.ignoringExceptions 中执行本回调，
+                    //         这里抛出的任何异常都会被静默吞掉，因此 callback.onError 必须包住，
+                    //         且 latch.countDown() 必须放在 finally，否则调用线程会永久阻塞。
+                    // 注意 2：错误只通过 onError 下发一次（onError 携带原始 Throwable），不要再调用
+                    //         onEvent(AgentEvent.error(...))，否则前端会收到两条重复的 ERROR。
+                    callback.onError(error);
+                } catch (Exception callbackError) {
+                    log.error("callback.onError failed for agent={}", agentCode, callbackError);
+                } finally {
+                    latch.countDown();
+                }
             }).beforeToolExecution(handle -> {
                 if (callback.isCancelled()) {
                     return;
@@ -139,6 +158,8 @@ public final class StreamingAgentRunner {
             }).onCompleteResponse(response -> {
                 if (callback.isCancelled()) {
                     log.info("StreamingAgentRunner cancelled, skip complete response for agent={}", agentCode);
+                    // 取消场景同样需要释放 latch，否则调用线程会永久阻塞
+                    latch.countDown();
                     return;
                 }
 
@@ -163,18 +184,26 @@ public final class StreamingAgentRunner {
 
             boolean cancelled = callback.isCancelled();
             return PipelineResult.builder()
-                    .success(!cancelled)
+                    // 出错（failed）必须视为失败：模型报错时 outputText 为 null，
+                    // 若仍返回 success=true 会让上层把失败当成功（任务标记完成、群聊失败判定失效）
+                    .success(!cancelled && !failed.get())
                     .outputText(contentHolder[0])
+                    .errorMessage(errorHolder[0])
                     .tokenUsage(tokenHolder[0])
                     .build();
 
         } catch (Exception e) {
             log.error("StreamingAgentRunner execution failed for agent={}", agentCode, e);
-            callback.onEvent(AgentEvent.error(agentCode, e.getMessage()));
-            callback.onError(e);
+            // 只通过 onError 下发一次，避免前端收到重复的 ERROR 事件
+            try {
+                callback.onError(e);
+            } catch (Exception callbackError) {
+                log.error("callback.onError failed for agent={}", agentCode, callbackError);
+            }
             return PipelineResult.builder()
                     .success(false)
                     .outputText(null)
+                    .errorMessage(e.getMessage())
                     .build();
         }
     }

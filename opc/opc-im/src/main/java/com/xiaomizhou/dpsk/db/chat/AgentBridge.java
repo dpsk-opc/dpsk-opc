@@ -8,6 +8,7 @@ import com.xiaomizhou.dpsk.agent.data.AgentDefProvider;
 import com.xiaomizhou.dpsk.agent.event.AgentEvent;
 import com.xiaomizhou.dpsk.constant.ConversationType;
 import com.xiaomizhou.dpsk.core.utils.WsUtils;
+import com.xiaomizhou.dpsk.core.ws.ErrorNotifier;
 import com.xiaomizhou.dpsk.core.ws.SenderInfo;
 import com.xiaomizhou.dpsk.core.ws.WsMessage;
 import com.xiaomizhou.dpsk.core.ws.WsMsgType;
@@ -187,7 +188,16 @@ public class AgentBridge {
                 WorkflowTaskDto task = workflowTaskComponent.getByCode(taskCode);
 
                 // 重启任务（无新用户输入，userMessageCode 传 null）
-                executorService.execute(() -> dispatchWorkflow(dto.getUserId(), "", taskCode, task.getTemplateCode(), task.getConversationCode(), null));
+                executorService.execute(() -> {
+                    try {
+                        dispatchWorkflow(dto.getUserId(), "", taskCode, task.getTemplateCode(),
+                                task.getConversationCode(), null);
+                    } catch (Exception e) {
+                        log.error("resume workflow failed: taskCode={}", taskCode, e);
+                        ErrorNotifier.send("EXECUTION_ERROR", task.getConversationCode(), null,
+                                taskCode, task.getTemplateCode(), e);
+                    }
+                });
                 return true;
             }
 
@@ -226,41 +236,55 @@ public class AgentBridge {
             return;
         }
 
-        // 1. 查询消息
-        com.xiaomizhou.dpsk.db.model.ChatMessage msg = chatMessageComponent.getByCode(msgCode);
-        if (msg == null) {
-            return;
-        }
-
-        String targetId = msg.getReceiverCode();
-
-        // 2. 获取会话编码
-        Conversation conv = conversationDao.getOneByCode(msg.getConversationCode());
-        if (Objects.isNull(conv)) {
-            return;
-        }
-        String conversationCode = conv.getCode();
-
-        if (CollectionUtils.isNotEmpty(skillPaths)) {
-            String template = "%s/%s/skills/%s/";
-            skillPaths = skillPaths.stream().map(path -> template.formatted(skillPathPrefix, targetId, path)).toList();
-        }
-
-        // 3. 判断会话类型并组装 AgentBuildSpec
-        if (ConversationType.GROUP.getCode().equals(conv.getConversationType())) {
-            dispatchGroup(userId, msg, targetId, conversationCode, mcpCodes);
-        } else if (ConversationType.SINGLE.getCode().equals(conv.getConversationType())) {
-
-            if (Objects.nonNull(imageGenerateDto)) {
-                dispatchImageGenerate(userId, msg, targetId, conversationCode, imageGenerateDto);
+        String targetId = null;
+        String conversationCode = null;
+        try {
+            // 1. 查询消息
+            com.xiaomizhou.dpsk.db.model.ChatMessage msg = chatMessageComponent.getByCode(msgCode);
+            if (msg == null) {
+                log.warn("dispatch skipped: message not found, msgCode={}", msgCode);
                 return;
             }
 
-            dispatchSingle(userId, msg, targetId, conversationCode, mcpCodes, skillPaths);
-        } else if (ConversationType.WORKFLOW.getCode().equals(conv.getConversationType())) {
-        dispatchWorkflow(userId, msg.getContent(), msg.getTaskId(), targetId, conversationCode, msg.getCode());
-        } else {
-            throw new IllegalArgumentException("不支持的会话类型：" + conv.getConversationType());
+            targetId = msg.getReceiverCode();
+
+            // 2. 获取会话编码
+            Conversation conv = conversationDao.getOneByCode(msg.getConversationCode());
+            if (Objects.isNull(conv)) {
+                log.warn("dispatch skipped: conversation not found, msgCode={}, conversationCode={}",
+                        msgCode, msg.getConversationCode());
+                return;
+            }
+            conversationCode = conv.getCode();
+
+            if (CollectionUtils.isNotEmpty(skillPaths)) {
+                String template = "%s/%s/skills/%s/";
+                final String target = targetId;
+                skillPaths = skillPaths.stream()
+                        .map(path -> template.formatted(skillPathPrefix, target, path))
+                        .toList();
+            }
+
+            // 3. 判断会话类型并组装 AgentBuildSpec
+            if (ConversationType.GROUP.getCode().equals(conv.getConversationType())) {
+                dispatchGroup(userId, msg, targetId, conversationCode, mcpCodes);
+            } else if (ConversationType.SINGLE.getCode().equals(conv.getConversationType())) {
+
+                if (Objects.nonNull(imageGenerateDto)) {
+                    dispatchImageGenerate(userId, msg, targetId, conversationCode, imageGenerateDto);
+                    return;
+                }
+
+                dispatchSingle(userId, msg, targetId, conversationCode, mcpCodes, skillPaths);
+            } else if (ConversationType.WORKFLOW.getCode().equals(conv.getConversationType())) {
+                dispatchWorkflow(userId, msg.getContent(), msg.getTaskId(), targetId, conversationCode, msg.getCode());
+            } else {
+                throw new IllegalArgumentException("不支持的会话类型：" + conv.getConversationType());
+            }
+        } catch (Exception e) {
+            // 兜底：任何未捕获异常都必须回推前端，避免“后端报错但前端无感知”
+            log.error("dispatch failed: user={}, msgCode={}, conversation={}", userId, msgCode, conversationCode, e);
+            ErrorNotifier.send("DISPATCH_ERROR", conversationCode, null, null, targetId, e);
         }
     }
 
@@ -309,8 +333,14 @@ public class AgentBridge {
             log.info("Single image chat completed: agent={}, success={}, contentLen={}",
                     targetId, result.isSuccess(),
                     result.getOutputText() != null ? result.getOutputText().length() : 0);
+            if (!result.isSuccess() && !callback.isCancelled() && !callback.hasNotifiedError()) {
+                ErrorNotifier.send("EXECUTION_ERROR",
+                        result.getErrorMessage() != null ? result.getErrorMessage() : result.getOutputText(),
+                        conversationCode, streamCode, msg.getTaskId(), targetId, null);
+            }
         } catch (Exception e) {
             log.error("dispatchImageGenerate error", e);
+            ErrorNotifier.send("EXECUTION_ERROR", conversationCode, null, msg.getTaskId(), targetId, e);
         }
     }
 
@@ -356,7 +386,11 @@ public class AgentBridge {
                 chatMessageComponent, tokenUsageDao, agentDefProvider, workflowTaskExecuteComponent);
 
         // LangGraph 引擎执行专家团人工定义图（支持 switch / loop 等回路结构）
-        new LangGraphWorkflowEngine().execute(xyFlow, context);
+        LangGraphWorkflowEngine.ExecutionResult exec = new LangGraphWorkflowEngine().execute(xyFlow, context);
+        if (!exec.isSuccess()) {
+            ErrorNotifier.send("EXECUTION_ERROR", exec.getReason(), conversationCode, null,
+                    taskCode, targetId, null);
+        }
     }
 
     /**
@@ -372,6 +406,17 @@ public class AgentBridge {
     }
 
     /**
+     * 构造用户发送者信息，补全真实 name/nickname/avatar，避免 ws 仅输出 userId、昵称为空。
+     */
+    private SenderInfo buildUserSender(String userCode) {
+        AgentDef user = agentDefProvider.getByCode(userCode);
+        if (user == null) {
+            return new SenderInfo(userCode, userCode, "", "");
+        }
+        return new SenderInfo(userCode, user.getName(), user.getAvatar(), user.getNickname());
+    }
+
+    /**
      * 向用户推送专家团入口提示消息（非任务 / 任务与专家团不相关）。
      */
     private void sendExpertHint(ExpertIntentClassifier.Verdict verdict, String userId,
@@ -380,7 +425,7 @@ public class AgentBridge {
                 ? "这里是「" + (task != null && StringUtils.isNotBlank(task.getName()) ? task.getName() : "专家团") + "」任务模式，请输入具体任务描述，我会帮你执行。"
                 : "您输入的内容与本专家团的能力不匹配，请描述一个与当前专家团定位相符的具体任务。";
         try {
-            SenderInfo sender = new SenderInfo(userId, userId, "", "");
+            SenderInfo sender = buildUserSender(userId);
             WsUtils.send(new WsMessage(WsMsgType.MESSAGE_DONE,
                     new MessagePayload(SequenceUtils.generator().next("MSG"), conversationCode,
                             Objects.isNull(task) ? "" : task.getCode(),
@@ -443,6 +488,14 @@ public class AgentBridge {
             log.info("Single chat completed: agent={}, success={}, contentLen={}",
                     targetId, result.isSuccess(),
                     result.getOutputText() != null ? result.getOutputText().length() : 0);
+            if (!result.isSuccess() && !callback.isCancelled() && !callback.hasNotifiedError()) {
+                ErrorNotifier.send("EXECUTION_ERROR",
+                        result.getErrorMessage() != null ? result.getErrorMessage() : result.getOutputText(),
+                        conversationCode, streamCode, msg.getTaskId(), targetId, null);
+            }
+        } catch (Exception e) {
+            log.error("dispatchSingle failed: agent={}, conversation={}", targetId, conversationCode, e);
+            ErrorNotifier.send("EXECUTION_ERROR", conversationCode, null, msg.getTaskId(), targetId, e);
         } finally {
             clearCancelFlag(msgCode);
         }
@@ -534,7 +587,7 @@ public class AgentBridge {
                     ConversationType.GROUP.name(), targetId, msg.getTaskId(),
                     chatMessageComponent, tokenUsageDao, agentDefProvider);
             callback.setStreamCode(streamCode);
-            callback.setSenderInfo(new SenderInfo(userId, userId, "", ""));
+            callback.setSenderInfo(buildUserSender(userId));
             callback.setCancelFlag(cancelFlag);
 
             callback.onEvent(AgentEvent.msgRead(userId, msg.getCode()));
@@ -542,6 +595,14 @@ public class AgentBridge {
             PipelineResult result = orchestrator.execute(spec, callback);
             log.info("Group chat (CHAT) completed: group={}, agentCount={}, success={}",
                     targetId, agentCodes.size(), result.isSuccess());
+            if (!result.isSuccess() && !callback.isCancelled() && !callback.hasNotifiedError()) {
+                ErrorNotifier.send("EXECUTION_ERROR",
+                        result.getErrorMessage() != null ? result.getErrorMessage() : result.getOutputText(),
+                        conversationCode, streamCode, msg.getTaskId(), targetId, null);
+            }
+        } catch (Exception e) {
+            log.error("dispatchGroupChat failed: group={}, conversation={}", targetId, conversationCode, e);
+            ErrorNotifier.send("EXECUTION_ERROR", conversationCode, null, msg.getTaskId(), targetId, e);
         } finally {
             clearCancelFlag(msgCode);
         }
@@ -622,6 +683,9 @@ public class AgentBridge {
                 if (failed != null && StringUtils.isNotBlank(failed.getCode())) {
                     workflowTaskComponent.failByCode(failed.getCode(), "规划校验不通过");
                 }
+                // 规划失败同样要回推前端，避免前端只有转圈、看不到失败原因
+                ErrorNotifier.send("PLAN_ERROR", "任务规划校验不通过，请调整描述后重试",
+                        conversationCode, null, null, targetId, null);
                 return;
             }
 
@@ -649,6 +713,8 @@ public class AgentBridge {
                             history, true);
                     if (xyFlow == null) {
                         workflowTaskComponent.failByCode(taskCode, "replan 规划校验不通过");
+                        ErrorNotifier.send("PLAN_ERROR", "任务重新规划校验不通过，请调整描述后重试",
+                                conversationCode, null, taskCode, targetId, null);
                         return;
                     }
                     workflowTaskComponent.updateWorkflowJsonAndReset(taskCode, JsonUtils.toJson(xyFlow));
@@ -674,11 +740,15 @@ public class AgentBridge {
 
                 if (round >= maxRounds) {
                     workflowTaskComponent.failByCode(taskCode, reason);
+                    ErrorNotifier.send("EXECUTION_ERROR", reason, conversationCode, null, taskCode, targetId, null);
                     return;
                 }
                 history = toNodeResultRefs(context, reason);
                 userContentForReplan = userContent + "\n[上一次执行失败，请重新规划] 失败原因：" + reason;
             }
+        } catch (Exception e) {
+            log.error("dispatchGroupTask failed: group={}, conversation={}", targetId, conversationCode, e);
+            ErrorNotifier.send("EXECUTION_ERROR", conversationCode, null, msg.getTaskId(), targetId, e);
         } finally {
             clearCancelFlag(msgCode);
         }

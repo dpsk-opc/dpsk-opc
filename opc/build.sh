@@ -13,7 +13,9 @@ VERSION="1.0"
 OUTPUT_PATH="output"
 
 # 可选：额外 JVM 参数（如内存限制）
-JAVA_OPTIONS="-Xmx512m"
+# 注意：中文 Windows 下 JVM 默认 file.encoding=GBK，会导致日志文件和控制台输出中文乱码，
+# 这里强制 UTF-8，保证 dpsk-opc.log 落盘编码、以及 Electron 读取子进程 stdout（按 UTF-8 解码）均正常。
+JAVA_OPTIONS="-Xmx512m -Dfile.encoding=UTF-8 -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -Dsun.stdout.encoding=UTF-8 -Dsun.stderr.encoding=UTF-8"
 
 
 # 外部配置：是否将示例配置文件复制到输出目录
@@ -58,9 +60,11 @@ if [ -n "$MAIN_CLASS" ]; then
     JPACKAGE_CMD="${JPACKAGE_CMD}"
 fi
 
-# 添加 JVM 参数
+# 添加 JVM 参数（逐项传入，避免含空格时 jpackage 解析异常）
 if [ -n "$JAVA_OPTIONS" ]; then
-    JPACKAGE_CMD="${JPACKAGE_CMD} --java-options \"${JAVA_OPTIONS}\""
+    for opt in ${JAVA_OPTIONS}; do
+        JPACKAGE_CMD="${JPACKAGE_CMD} --java-options \"${opt}\""
+    done
 fi
 
 # Windows 特有：保留控制台窗口（方便查看日志），若需要后台服务可去掉 --win-console

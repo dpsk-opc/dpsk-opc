@@ -11,6 +11,7 @@ import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
@@ -121,8 +122,8 @@ public class McpToolExecutor implements ToolExecutor {
 
         Process process = pb.start();
 
-        try (BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(process.getOutputStream()));
-             BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+        try (BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8));
+             BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
 
             // 发送 JSON-RPC 请求
             writer.write(jsonRpcRequest);

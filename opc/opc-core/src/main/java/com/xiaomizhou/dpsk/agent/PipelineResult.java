@@ -22,6 +22,9 @@ public class PipelineResult {
     /** 最终输出文本 */
     private String outputText;
 
+    /** 失败原因（success=false 时用于上层兜底回推前端；模型报错场景下 outputText 为 null） */
+    private String errorMessage;
+
     /** Token 用量 */
     private TokenUsage tokenUsage;
 

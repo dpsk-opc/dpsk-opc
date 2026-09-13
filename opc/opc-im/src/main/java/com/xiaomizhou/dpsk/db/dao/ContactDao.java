@@ -1,6 +1,5 @@
 package com.xiaomizhou.dpsk.db.dao;
 
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.xiaomizhou.dpsk.db.mapper.ContactMapper;
 import com.xiaomizhou.dpsk.db.model.Contact;
@@ -44,7 +43,10 @@ public class ContactDao extends ServiceImpl<ContactMapper, Contact> {
     }
 
     /**
-     * 根据 ownerCode 删除其所有好友关系
+     * 根据 ownerCode 物理删除其所有好友关系
+     * <p>
+     * 用物理删除（DELETE）而非逻辑删除，避免唯一索引 udx_contact_owner_friend 占位，
+     * 导致删除后重新加好友时唯一键冲突。
      *
      * @param ownerCode 用户 code
      */
@@ -52,11 +54,11 @@ public class ContactDao extends ServiceImpl<ContactMapper, Contact> {
         if (StringUtils.isBlank(ownerCode)) {
             return;
         }
-        remove(Wrappers.<Contact>lambdaUpdate().eq(Contact::getOwnerCode, ownerCode));
+        baseMapper.physicalDeleteByOwnerCode(ownerCode);
     }
 
     /**
-     * 根据 friendCode 删除所有将其标记为好友的关系
+     * 根据 friendCode 物理删除所有将其标记为好友的关系
      *
      * @param friendCode 好友 code
      */
@@ -64,7 +66,21 @@ public class ContactDao extends ServiceImpl<ContactMapper, Contact> {
         if (StringUtils.isBlank(friendCode)) {
             return;
         }
-        remove(Wrappers.<Contact>lambdaUpdate().eq(Contact::getFriendCode, friendCode));
+        baseMapper.physicalDeleteByFriendCode(friendCode);
+    }
+
+    /**
+     * 物理删除指定的单向好友关系（ownerCode -&gt; friendCode）
+     *
+     * @param ownerCode  用户 code
+     * @param friendCode 好友 code
+     * @return 是否删除成功
+     */
+    public boolean deleteByOwnerAndFriend(String ownerCode, String friendCode) {
+        if (StringUtils.isAnyBlank(ownerCode, friendCode)) {
+            return false;
+        }
+        return baseMapper.physicalDeleteByOwnerAndFriend(ownerCode, friendCode) > 0;
     }
 
     /**

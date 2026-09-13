@@ -19,6 +19,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.collections.MapUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.springframework.stereotype.Component;
 
@@ -409,5 +410,53 @@ public class ConversationDao extends ServiceImpl<ConversationMapper, Conversatio
         return update(Wrappers.<Conversation>lambdaUpdate()
                 .eq(Conversation::getCode, conversationCode)
                 .set(Conversation::getPinMsgCode, StringUtils.isBlank(pinMsgCode) ? "" : pinMsgCode));
+    }
+
+    /**
+     * 删除会话（物理删除，仅从会话列表移除，聊天记录保留）
+     * <p>
+     * 仅允许会话归属人（ownerCode）或单聊会话的对方删除：群聊会话全群共享一条（归属群主），
+     * 只能由归属人删除，避免误删整群会话。
+     * <p>
+     * 采用物理删除而非逻辑删除，避免唯一索引 udx_conversation_owner_target 占位，
+     * 导致删除后重新创建同一会话时唯一键冲突。
+     *
+     * @param code         会话编码
+     * @param operatorCode 操作人（当前登录用户）
+     * @return 是否删除成功
+     */
+    public boolean deleteByCode(String code, String operatorCode) {
+        if (StringUtils.isAnyBlank(code, operatorCode)) {
+            return false;
+        }
+
+        Conversation conversation = getOneByCode(code);
+        if (Objects.isNull(conversation)) {
+            return false;
+        }
+
+        boolean isOwner = Strings.CS.equals(conversation.getOwnerCode(), operatorCode);
+        boolean isSingleTarget = ConversationType.SINGLE.getCode().equals(conversation.getConversationType())
+                && Strings.CS.equals(conversation.getTargetCode(), operatorCode);
+        if (!isOwner && !isSingleTarget) {
+            log.warn("无权删除会话, code={}, operator={}, owner={}", code, operatorCode, conversation.getOwnerCode());
+            return false;
+        }
+
+        return baseMapper.physicalDeleteById(conversation.getId()) > 0;
+    }
+
+    /**
+     * 物理删除指定类型 + target 的会话（解散群聊时清理群会话）
+     *
+     * @param conversationType 会话类型
+     * @param targetCode       目标编码
+     * @return 影响行数
+     */
+    public int physicalDeleteByTypeAndTarget(Integer conversationType, String targetCode) {
+        if (Objects.isNull(conversationType) || StringUtils.isBlank(targetCode)) {
+            return 0;
+        }
+        return baseMapper.physicalDeleteByTypeAndTarget(conversationType, targetCode);
     }
 }

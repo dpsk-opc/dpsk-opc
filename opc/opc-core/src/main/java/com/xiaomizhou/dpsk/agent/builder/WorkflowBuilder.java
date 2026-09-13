@@ -75,7 +75,10 @@ public class WorkflowBuilder implements AgentBuilder {
 
                 AtomicInteger index = new AtomicInteger(0);
                 AtomicBoolean firstPartialMsg = new AtomicBoolean(true);
+                // 标记流式过程是否出错：出错时 outputText 为空，若不单独标记会被上层误判为执行成功
+                AtomicBoolean failed = new AtomicBoolean(false);
                 CountDownLatch latch = new CountDownLatch(1);
+                String[] errorHolder = new String[1];
 
                 stream.onPartialThinkingWithContext((response,context) -> {
                     if (callback.isCancelled()) {
@@ -131,8 +134,20 @@ public class WorkflowBuilder implements AgentBuilder {
 
                     callback.onEvent(new AgentEvent(AgentEventType.MESSAGE_CHUNK, agentDef.getCode(), response.text(), null, null, null, null));
                 }).onError(error -> {
+                    // 模型侧错误（model_not_found / 鉴权 / 限流 / 连接中断）必须回推前端
                     log.error("SinglePipeline stream error for agent={}", agentDef.getCode(), error);
-//                    callback.onEvent(AgentEvent.error(agentDef.getCode(), error.getMessage()));
+                    errorHolder[0] = error != null ? error.getMessage() : null;
+                    failed.set(true);
+                    try {
+                        // langchain4j 在 ignoringExceptions 中执行本回调，抛出的异常会被静默吞掉，
+                        // 因此 callback.onError 必须包住、latch.countDown() 必须放 finally。
+                        // 错误只通过 onError 下发一次，不要再调用 onEvent(AgentEvent.error(...))。
+                        callback.onError(error);
+                    } catch (Exception callbackError) {
+                        log.error("callback.onError failed for agent={}", agentDef.getCode(), callbackError);
+                    } finally {
+                        latch.countDown();
+                    }
                 }).beforeToolExecution(handle -> {
                     // 检查取消
                     if (callback.isCancelled()) {
@@ -166,6 +181,8 @@ public class WorkflowBuilder implements AgentBuilder {
                     // 如果已取消，不发送完成事件
                     if (callback.isCancelled()) {
                         log.info("SinglePipeline cancelled, skip complete response for agent={}", agentDef.getCode());
+                        // 取消场景同样需要释放 latch，否则调用线程会永久阻塞
+                        latch.countDown();
                         return;
                     }
 
@@ -190,18 +207,25 @@ public class WorkflowBuilder implements AgentBuilder {
                 latch.await();
                 boolean cancelled = callback.isCancelled();
                 return PipelineResult.builder()
-                        .success(!cancelled)
+                        // 出错（failed）必须视为失败，避免模型报错被当成成功
+                        .success(!cancelled && !failed.get())
                         .outputText(contentHolder[0])
+                        .errorMessage(errorHolder[0])
                         .tokenUsage(tokenHolder[0])
                         .build();
 
             } catch (Exception e) {
                 log.error("SinglePipeline execution failed for agent={}", agentDef.getCode(), e);
-                callback.onEvent(AgentEvent.error(agentDef.getCode(), e.getMessage()));
-                callback.onError(e);
+                // 只通过 onError 下发一次，避免前端收到重复的 ERROR 事件
+                try {
+                    callback.onError(e);
+                } catch (Exception callbackError) {
+                    log.error("callback.onError failed for agent={}", agentDef.getCode(), callbackError);
+                }
                 return PipelineResult.builder()
                         .success(false)
                         .outputText(null)
+                        .errorMessage(e.getMessage())
                         .build();
             }
         }

@@ -24,6 +24,10 @@
 
     <properties>
         <java.version>17</java.version>
+        <!-- 统一编码，避免中文 Windows 下 javac 以 GBK 读取 UTF-8 源码导致中文字符串乱码 -->
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+        <maven.compiler.encoding>UTF-8</maven.compiler.encoding>
         <spring-ai.version>1.1.6</spring-ai.version>
         <spring-shell.version>3.4.2</spring-shell.version>
         <spring-boot.version>3.4.2</spring-boot.version>

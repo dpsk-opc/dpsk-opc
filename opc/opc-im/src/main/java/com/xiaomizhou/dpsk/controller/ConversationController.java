@@ -114,6 +114,20 @@ public class ConversationController {
         return Results.ok(conversationDao.setPinMsg(param.getConversationCode(), null));
     }
 
+    /**
+     * 删除会话（从当前用户的会话列表中移除，物理删除会话记录，聊天记录保留）
+     */
+    @PostMapping(value = "delete")
+    public Response<Boolean> delete(@RequestBody Request<ConversationHttp> request) {
+        ConversationHttp param = request.getParam();
+        if (param == null || StringUtils.isBlank(param.getConversationCode())) {
+            return Results.fail("conversationCode 不能为空");
+        }
+
+        boolean result = conversationDao.deleteByCode(param.getConversationCode(), AuthContext.getAgentCode());
+        return result ? Results.ok(true) : Results.fail("删除会话失败，会话不存在或无权删除");
+    }
+
     @PostMapping(value = "chat/cancel")
     public Response<Boolean> cancelChat(@RequestBody Request<ConversationHttp> request) {
         ConversationHttp param = request.getParam();
