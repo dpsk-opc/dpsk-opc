@@ -3,10 +3,13 @@ package com.xiaomizhou.dpsk.tool;
 import com.xiaomizhou.dpsk.tool.model.ToolAuditLog;
 import com.xiaomizhou.dpsk.tool.model.ToolCall;
 import com.xiaomizhou.dpsk.tool.model.ToolContext;
+import com.xiaomizhou.dpsk.tool.model.ToolExecutionResult;
 import com.xiaomizhou.dpsk.tool.model.ToolMetadata;
+import com.xiaomizhou.dpsk.tool.model.ToolResult;
 import com.xiaomizhou.dpsk.tool.repository.ToolAuditLogRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 
 import java.time.Instant;
 import java.util.UUID;
@@ -27,6 +30,25 @@ public class ToolAuditLogger {
 
     /** 敏感参数关键词 */
     private static final String[] SENSITIVE_KEYS = {"password", "secret", "token", "apiKey", "api_key", "key"};
+
+    /**
+     * 记录工具调用审计日志（结构化结果版）。
+     *
+     * @param call    工具调用
+     * @param metadata 工具元数据
+     * @param context 执行上下文
+     * @param result  结构化执行结果
+     */
+    public void log(ToolCall call, ToolMetadata metadata, ToolContext context, ToolResult result) {
+        String status = (result == null || result.isSuccess())
+                ? ToolExecutionResult.STATUS_SUCCESS
+                : ToolExecutionResult.STATUS_FAIL;
+        log(call, metadata, context,
+                result == null ? null : result.getResultText(),
+                status,
+                result == null ? 0L : result.getExecutionTimeMs(),
+                result == null ? null : result.getErrorMessage());
+    }
 
     /**
      * 记录工具调用审计日志。

@@ -3,7 +3,9 @@ package com.xiaomizhou.dpsk.tool.executor;
 import com.xiaomizhou.dpsk.tool.ToolExecutor;
 import com.xiaomizhou.dpsk.tool.model.ToolCall;
 import com.xiaomizhou.dpsk.tool.model.ToolContext;
+import com.xiaomizhou.dpsk.tool.model.ToolExecutionResult;
 import com.xiaomizhou.dpsk.tool.model.ToolMetadata;
+import com.xiaomizhou.dpsk.tool.model.ToolResult;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -18,8 +20,9 @@ import lombok.extern.slf4j.Slf4j;
 public class ScriptToolExecutor implements ToolExecutor {
 
     @Override
-    public String execute(ToolCall call, ToolContext context, ToolMetadata metadata) throws Exception {
+    public ToolResult execute(ToolCall call, ToolContext context, ToolMetadata metadata) {
         log.warn("Script tool execution is not yet implemented. Tool: {}", call.getName());
-        throw new UnsupportedOperationException("Script tool execution is not yet implemented. Tool: " + call.getName());
+        return ToolResult.fail(ToolExecutionResult.ERROR_EXECUTION_ERROR,
+                "脚本类工具尚未实现: " + call.getName());
     }
 }

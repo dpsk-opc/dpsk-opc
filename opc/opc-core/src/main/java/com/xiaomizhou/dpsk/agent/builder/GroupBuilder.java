@@ -110,8 +110,9 @@ public class GroupBuilder implements AgentBuilder {
                         return ToolErrorHandlerResult.text("工具参数错误. e:" + error.getMessage());
                     }
                 })
-                // 幻觉情况 => 从上下文的信息找工具执行，但工具已经不再工具列表
-                .hallucinatedToolNameStrategy(factory.getToolExecutionResultMessageFunction())
+                // 幻觉情况 => 先尝试执行，失败再引导 add_tools
+                .hallucinatedToolNameStrategy(factory.getToolExecutionResultMessageFunction(
+                        agentDef.getCode(), spec.getUserCode(), spec.getConversationCode(), spec.getMcpCodes()))
                 .chatMemoryProvider(memoryId -> factory.createChatMemory(agentSpec))
                 .returnType(TokenStream.class)
                 .maxToolCallingRoundTrips(25)

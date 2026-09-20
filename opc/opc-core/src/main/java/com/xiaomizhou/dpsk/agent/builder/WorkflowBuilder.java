@@ -273,8 +273,9 @@ public class WorkflowBuilder implements AgentBuilder {
                     }
                 })
 
-                // 幻觉情况 => 从上下文的信息找工具执行，但工具已经不再工具列表
-                .hallucinatedToolNameStrategy(factory.getToolExecutionResultMessageFunction())
+                // 幻觉情况 => 先尝试执行，失败再引导 add_tools
+                .hallucinatedToolNameStrategy(factory.getToolExecutionResultMessageFunction(
+                        targetAgentCode, spec.getUserCode(), spec.getConversationCode(), spec.getMcpCodes()))
                 .chatMemoryProvider(memoryId -> {
                     return factory.createChatMemory(spec);
                 })

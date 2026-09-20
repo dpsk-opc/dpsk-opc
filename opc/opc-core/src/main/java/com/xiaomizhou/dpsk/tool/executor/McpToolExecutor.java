@@ -56,12 +56,13 @@ public class McpToolExecutor implements ToolExecutor {
     }
 
     @Override
-    public String execute(ToolCall call, ToolContext context, ToolMetadata metadata) throws Exception {
+    public ToolResult execute(ToolCall call, ToolContext context, ToolMetadata metadata) {
         // 1. 从 sourceRef 解析 bindingCode + toolName
         // sourceRef 格式: "{bindingCode}:{toolName}"
         String sourceRef = (String) call.getParameters().get("__sourceRef__");
         if (sourceRef == null || !sourceRef.contains(":")) {
-            throw new IllegalArgumentException("Invalid sourceRef for MCP tool: " + sourceRef);
+            return ToolResult.fail(ToolExecutionResult.ERROR_BEAN_OR_METHOD_NOT_FOUND,
+                    "MCP 工具 sourceRef 非法，期望 {bindingCode}:{toolName}，实际: " + sourceRef);
         }
 
         String[] parts = sourceRef.split(":", 2);
@@ -72,12 +73,13 @@ public class McpToolExecutor implements ToolExecutor {
 
         // 2. 查询绑定信息
         if (bindingRepository == null) {
-            throw new IllegalStateException("McpBindingRepository not available");
+            return ToolResult.fail(ToolExecutionResult.ERROR_EXECUTION_ERROR, "McpBindingRepository 不可用");
         }
 
         McpBindingInfo binding = bindingRepository.findByCode(bindingCode);
         if (binding == null) {
-            throw new IllegalArgumentException("MCP binding not found: " + bindingCode);
+            return ToolResult.fail(ToolExecutionResult.ERROR_BEAN_OR_METHOD_NOT_FOUND,
+                    "MCP 绑定不存在: " + bindingCode);
         }
 
         // 3. 分离上下文参数与工具参数
@@ -95,15 +97,30 @@ public class McpToolExecutor implements ToolExecutor {
             }
         }
 
-        String jsonRpcRequest = buildJsonRpcRequest(toolName, toolArgs);
-        log.debug("JSON-RPC request: {}", jsonRpcRequest);
-
         // 4. 根据 runtimeEnv 分发执行
         // runtimeEnv: 1-electron, 2-backend
-        if (binding.getRuntimeEnv() != null && binding.getRuntimeEnv() == 1) {
-            return executeViaElectron(binding, toolName, toolArgs, ctx);
-        } else {
-            return executeViaBackend(binding, jsonRpcRequest);
+        try {
+            String result;
+            if (binding.getRuntimeEnv() != null && binding.getRuntimeEnv() == 1) {
+                result = executeViaElectron(binding, toolName, toolArgs, ctx);
+            } else {
+                String jsonRpcRequest = buildJsonRpcRequest(toolName, toolArgs);
+                log.debug("JSON-RPC request: {}", jsonRpcRequest);
+                result = executeViaBackend(binding, jsonRpcRequest);
+            }
+            return ToolResult.builder()
+                    .success(true)
+                    .data(result)
+                    .text(result)
+                    .build();
+        } catch (Exception e) {
+            log.error("MCP tool execution failed: {}", call.getName(), e);
+            String msg = e.getMessage() == null ? "" : e.getMessage();
+            if (msg.contains("timed out")) {
+                return ToolResult.fail(ToolExecutionResult.ERROR_TIMEOUT, "MCP 工具执行超时: " + call.getName(), e);
+            }
+            return ToolResult.fail(ToolExecutionResult.ERROR_EXECUTION_ERROR,
+                    "MCP 工具执行失败: " + call.getName(), e);
         }
     }
 

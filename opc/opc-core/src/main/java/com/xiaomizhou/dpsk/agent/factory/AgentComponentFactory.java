@@ -296,34 +296,81 @@ public class AgentComponentFactory {
         return Collections.singletonList(bridge);
     }
 
-    public Function<ToolExecutionRequest, ToolExecutionResultMessage> getToolExecutionResultMessageFunction() {
-        return new ToolExecutionResultMessageFunction(toolInvocationInterceptor);
+    /**
+     * 幻觉兜底策略工厂方法。
+     * <p>
+     * 模型可能不先 add_tools 就直接调用工具（幻觉），langchain4j 会因为工具不在本轮列表里
+     * 而走到 hallucinatedToolNameStrategy。这里不再无脑要求 add_tools，而是
+     * <b>先尝试真实执行</b>：执行成功就返回真实结果；只有工具确实不存在/不可用（或执行失败）
+     * 时才回传引导信息，让模型决定调用 add_tools 或修正参数。
+     *
+     * @param agentCode        当前 Agent 编码（用于 Agent 作用域校验）
+     * @param userCode         用户编码
+     * @param conversationCode 会话编码
+     * @param mcpCodes         本次允许的 MCP 编码
+     */
+    public Function<ToolExecutionRequest, ToolExecutionResultMessage> getToolExecutionResultMessageFunction(
+            String agentCode, String userCode, String conversationCode, List<String> mcpCodes) {
+        return new ToolExecutionResultMessageFunction(agentCode, userCode, conversationCode, mcpCodes);
     }
 
-    public static class ToolExecutionResultMessageFunction implements Function<ToolExecutionRequest, ToolExecutionResultMessage> {
+    /**
+     * 幻觉工具名兜底：先尝试执行，失败再引导 add_tools。
+     */
+    public class ToolExecutionResultMessageFunction implements Function<ToolExecutionRequest, ToolExecutionResultMessage> {
 
-        private final ToolInvocationInterceptor toolInvocationInterceptor;
+        private final String agentCode;
+        private final String userCode;
+        private final String conversationCode;
+        private final List<String> mcpCodes;
 
-        public ToolExecutionResultMessageFunction(ToolInvocationInterceptor toolInvocationInterceptor) {
-            this.toolInvocationInterceptor = toolInvocationInterceptor;
+        public ToolExecutionResultMessageFunction(String agentCode, String userCode,
+                                                  String conversationCode, List<String> mcpCodes) {
+            this.agentCode = agentCode;
+            this.userCode = userCode;
+            this.conversationCode = conversationCode;
+            this.mcpCodes = mcpCodes;
         }
-
 
         @Override
         public ToolExecutionResultMessage apply(ToolExecutionRequest toolExecutionRequest) {
-//            ToolCall toolCall = ToolUtils.toToolCall(toolExecutionRequest);
-//            try {
-//                ToolExecutionResult result = toolInvocationInterceptor.execute(toolCall, ToolContext.builder().build());
-//                if (Objects.nonNull(result) && ToolExecutionResult.STATUS_SUCCESS.equals(result.getStatus())) {
-//                    if (StringUtils.isBlank(result.getErrorMessage())) {
-//                        return ToolExecutionResultMessage.toolExecutionResultMessage(toolExecutionRequest, String.valueOf(result));
-//                    }
-//                }
-//            } catch (Exception e) {
-//                log.error("工具执行出错! toolExecutionRequest: {}", toolExecutionRequest, e);
-//            }
-//            return ToolExecutionResultMessage.toolExecutionResultMessage(toolExecutionRequest, String.valueOf(result));
-            return ToolExecutionResultMessage.toolExecutionResultMessage(toolExecutionRequest, "执行错误，tool没有加载，请先用调用 [%s] 添加 [%s] 后再使用.".formatted(LangChain4JToolBridge.ADD_TOOLS_TOOL_NAME, toolExecutionRequest.name()));
+            String toolName = toolExecutionRequest.name();
+            ToolExecutionResult result;
+            try {
+                // 复用桥接器的结构化执行逻辑，带上完整的上下文与 MCP 范围，
+                // 这样 ask_user 等依赖上下文参数的工具也能正常执行
+                LangChain4JToolBridge bridge = LangChain4JToolBridge.forAgent(
+                        toolRegistry, toolInvocationInterceptor, applicationContext,
+                        agentCode, userCode, conversationCode, mcpCodes);
+                ToolCall toolCall = ToolUtils.toToolCall(toolExecutionRequest);
+                result = toolInvocationInterceptor.execute(toolCall, ToolContext.builder()
+                        .agentCode(agentCode)
+                        .userCode(userCode)
+                        .conversationCode(conversationCode)
+                        .build());
+            } catch (Exception e) {
+                log.error("幻觉工具执行出错! toolExecutionRequest: {}", toolExecutionRequest, e);
+                result = ToolExecutionResult.fail(ToolExecutionResult.ERROR_EXECUTION_ERROR,
+                        "工具执行异常: " + e.getMessage());
+            }
+
+            // 先尝试执行成功 —— 直接用真实结果，模型无需感知这是一次"幻觉调用"
+            if (result != null && result.isSuccess()) {
+                log.info("幻觉工具 '{}' 已成功执行，直接返回真实结果", toolName);
+                return ToolExecutionResultMessage.toolExecutionResultMessage(toolExecutionRequest, result.toLlmText());
+            }
+
+            if (result != null && result.isToolMissing()) {
+                // 工具确实不存在 / 不可用：引导先 add_tools
+                log.warn("幻觉工具 '{}' 不存在或不可用，引导模型先调用 {}", toolName, LangChain4JToolBridge.ADD_TOOLS_TOOL_NAME);
+                return ToolExecutionResultMessage.toolExecutionResultMessage(toolExecutionRequest,
+                        "执行错误，工具不存在或未加载，请先调用 [%s] 添加 [%s] 后再使用。".formatted(
+                                LangChain4JToolBridge.ADD_TOOLS_TOOL_NAME, toolName));
+            }
+
+            // 其它失败（参数错误 / 执行报错）：回传错误信息让模型自行修正
+            String message = result == null ? "工具执行未返回结果" : result.toLlmText();
+            return ToolExecutionResultMessage.toolExecutionResultMessage(toolExecutionRequest, message);
         }
     }
 

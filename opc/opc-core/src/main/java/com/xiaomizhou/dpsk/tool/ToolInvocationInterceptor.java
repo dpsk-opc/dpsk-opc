@@ -4,17 +4,25 @@ import com.xiaomizhou.dpsk.tool.model.ToolCall;
 import com.xiaomizhou.dpsk.tool.model.ToolContext;
 import com.xiaomizhou.dpsk.tool.model.ToolExecutionResult;
 import com.xiaomizhou.dpsk.tool.model.ToolMetadata;
+import com.xiaomizhou.dpsk.tool.model.ToolResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
+
+import java.util.Optional;
 
 /**
  * 工具调用拦截器。
  * <p>
  * 在 LangChain4j 的 ToolProvider 基础上封装一层，拦截所有工具调用：
- * 1. 检查权限，若需确认则挂起（当前版本仅打 warn 日志）
- * 2. 动态补全参数
- * 3. 路由并执行
- * 4. 审计日志
+ * 1. 检查工具是否存在、是否启用、是否属于当前 Agent 可用范围
+ * 2. 检查权限，若需确认则挂起（当前版本仅打 warn 日志）
+ * 3. 动态补全参数、替换敏感参数
+ * 4. 路由并执行（结果保持结构化）
+ * 5. 审计日志
+ * <p>
+ * 所有失败都带 <b>错误码</b>，方便上层区分「工具不存在（引导 add_tools）」
+ * 与「参数/执行错误（引导模型修正）」，不再用异常字符串兜底。
  *
  * @author eason - vipzhsh@163.com
  * @date 2026/5/30
@@ -30,63 +38,112 @@ public class ToolInvocationInterceptor {
     private final ToolConfirmationManager confirmationManager;
 
     private final PrivateParameterReplacer privateParameterReplacer;
+
     /**
      * 拦截并执行工具调用。
      *
      * @param call    工具调用请求
      * @param context 执行上下文
-     * @return 执行结果
+     * @return 执行结果（结构化，带 errorCode）
      */
     public ToolExecutionResult execute(ToolCall call, ToolContext context) {
         long startTime = System.currentTimeMillis();
-
         String toolName = call.getName();
-        if (LangChain4JToolBridge.ADD_TOOLS_TOOL_NAME.equalsIgnoreCase(toolName)) {
-            return ToolExecutionResult.success("工具已添加到列表", System.currentTimeMillis() - startTime);
-        }
 
-        // 1. 查找工具元数据
-        ToolMetadata metadata = registry.getMetadata(call.getName());
+        // 1. 查找工具元数据（不存在则带 TOOL_NOT_FOUND，供上层引导 add_tools）
+        ToolMetadata metadata = registry.getMetadata(toolName);
         if (metadata == null) {
-            log.warn("Tool not found: {}", call.getName());
-            return ToolExecutionResult.fail("Tool not found: " + call.getName());
+            log.warn("Tool not found in registry: {}", toolName);
+            return ToolExecutionResult.fail(ToolExecutionResult.ERROR_TOOL_NOT_FOUND,
+                    "工具不存在: " + toolName);
         }
 
+        // 2. 启用状态校验
         if (!metadata.isEnabled()) {
-            log.warn("Tool is disabled: {}", call.getName());
-            return ToolExecutionResult.fail("Tool is disabled: " + call.getName());
+            log.warn("Tool is disabled: {}", toolName);
+            return ToolExecutionResult.fail(ToolExecutionResult.ERROR_TOOL_DISABLED,
+                    "工具已被禁用: " + toolName);
         }
+
+        // 2.1 Agent 作用域校验：防止 LLM 直接调用不属于当前 Agent 的工具
+        if (StringUtils.isNotBlank(context.getAgentCode())
+                && !isInAgentScope(metadata, context.getAgentCode())) {
+            log.warn("Tool '{}' is not in agent '{}' scope", toolName, context.getAgentCode());
+            return ToolExecutionResult.fail(ToolExecutionResult.ERROR_TOOL_NOT_IN_AGENT_SCOPE,
+                    "工具 " + toolName + " 不属于当前 Agent 的可用范围");
+        }
+
         // 3. 动态补全参数
         enrichParameters(call, context, metadata);
 
         // 4. 替换敏感参数
         ToolCall newCall = privateParameterReplacer.replace(call);
 
-        // 5. 路由并执行
-        String result;
-        String status;
-        String errorMessage = null;
+        // 5. 路由并执行（结果结构化）
+        ToolResult toolResult;
         try {
-            result = registry.getExecutorRouter().execute(metadata, newCall, context);
-            status = ToolExecutionResult.STATUS_SUCCESS;
-            log.debug("Tool '{}' executed successfully in {}ms", 
-                    call.getName(), System.currentTimeMillis() - startTime);
+            toolResult = registry.getExecutorRouter().execute(metadata, newCall, context);
+            if (toolResult == null) {
+                toolResult = ToolResult.fail(ToolExecutionResult.ERROR_EXECUTION_ERROR, "工具执行器未返回结果");
+            }
         } catch (Exception e) {
-            log.error("Tool '{}' execution failed", call.getName(), e);
-            result = null;
-            status = ToolExecutionResult.STATUS_FAIL;
-            errorMessage = e.getMessage();
+            log.error("Tool '{}' execution failed", toolName, e);
+            toolResult = ToolResult.fail(ToolExecutionResult.ERROR_EXECUTION_ERROR,
+                    "工具执行异常: " + e.getMessage(), e);
         }
 
         long executionTimeMs = System.currentTimeMillis() - startTime;
+        toolResult.withExecutionTime(executionTimeMs);
 
-        // 5. 审计日志（异步写入，不阻塞）
-        auditLogger.log(newCall, metadata, context, result, status, executionTimeMs, errorMessage);
+        // 6. 审计日志（内部自动兜底，不阻塞）
+        auditLogger.log(newCall, metadata, context, toolResult);
 
-        if (ToolExecutionResult.STATUS_SUCCESS.equals(status)) {
-            return ToolExecutionResult.success(result, executionTimeMs);
-        } else {
-            return ToolExecutionResult.fail(errorMessage);
+        return toExecutionResult(toolResult, executionTimeMs);
+    }
+
+    /**
+     * 结构化执行结果 → 上层结果对象。
+     */
+    private ToolExecutionResult toExecutionResult(ToolResult toolResult, long executionTimeMs) {
+        if (toolResult.isSuccess()) {
+            return ToolExecutionResult.builder()
+                    .status(ToolExecutionResult.STATUS_SUCCESS)
+                    .payload(toolResult.getData())
+                    .result(resolveText(toolResult))
+                    .executionTimeMs(executionTimeMs)
+                    .build();
+        }
+        return ToolExecutionResult.builder()
+                .status(ToolExecutionResult.STATUS_FAIL)
+                .errorCode(Optional.ofNullable(toolResult.getErrorCode())
+                        .orElse(ToolExecutionResult.ERROR_UNKNOWN))
+                .errorMessage(StringUtils.defaultIfBlank(toolResult.getErrorMessage(), "工具执行失败"))
+                .executionTimeMs(executionTimeMs)
+                .build();
+    }
+
+    private String resolveText(ToolResult toolResult) {
+        if (StringUtils.isNotBlank(toolResult.getText())) {
+            return toolResult.getText();
+        }
+        Object data = toolResult.getData();
+        if (data == null || data instanceof String) {
+            return (String) data;
+        }
+        return null;
+    }
+
+    /**
+     * 判断工具是否属于该 Agent 的可用范围（Agent 绑定工具 + 内置工具）。
+     */
+    private boolean isInAgentScope(ToolMetadata metadata, String agentCode) {
+        try {
+            return registry.getToolsForAgent(agentCode).stream()
+                    .anyMatch(t -> t.getCode() != null && t.getCode().equals(metadata.getCode()));
+        } catch (Exception e) {
+            log.warn("Check agent scope failed for tool '{}', agent '{}', fallback to allow",
+                    metadata.getName(), agentCode, e);
+            return true;
         }
     }
 
@@ -115,7 +172,5 @@ public class ToolInvocationInterceptor {
         if (context.getTraceId() != null && !call.getParameters().containsKey("traceId")) {
             call.getParameters().put("traceId", context.getTraceId());
         }
-
-
     }
 }

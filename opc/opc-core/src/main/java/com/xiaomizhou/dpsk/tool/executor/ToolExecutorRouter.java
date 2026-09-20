@@ -5,6 +5,7 @@ import com.xiaomizhou.dpsk.tool.ToolExecutor;
 import com.xiaomizhou.dpsk.tool.model.ToolCall;
 import com.xiaomizhou.dpsk.tool.model.ToolContext;
 import com.xiaomizhou.dpsk.tool.model.ToolMetadata;
+import com.xiaomizhou.dpsk.tool.model.ToolResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationContext;
@@ -52,9 +53,9 @@ public class ToolExecutorRouter {
      * @param metadata 工具元数据
      * @param call     调用请求
      * @param context  执行上下文
-     * @return 执行结果字符串
+     * @return 结构化执行结果
      */
-    public String execute(ToolMetadata metadata, ToolCall call, ToolContext context) throws Exception {
+    public ToolResult execute(ToolMetadata metadata, ToolCall call, ToolContext context) throws Exception {
         // 将 sourceRef 注入到参数中供 LocalToolExecutor 使用
         if (metadata.getSourceRef() != null) {
             call.getParameters().put("__sourceRef__", metadata.getSourceRef());

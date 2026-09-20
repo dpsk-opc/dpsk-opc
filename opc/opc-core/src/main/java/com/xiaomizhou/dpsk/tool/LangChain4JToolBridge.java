@@ -14,7 +14,9 @@ import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.model.chat.request.json.JsonArraySchema;
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
+import dev.langchain4j.model.chat.request.json.JsonStringSchema;
 import dev.langchain4j.service.tool.AiServiceTool;
 import dev.langchain4j.service.tool.ToolProvider;
 import dev.langchain4j.service.tool.ToolProviderRequest;
@@ -110,16 +112,6 @@ public class LangChain4JToolBridge implements ToolProvider {
 
     public static final String TOOL_ARGUMENT = "toolNames";
 
-
-    public static class AddTools {
-
-        @Tool(name = ADD_TOOLS_TOOL_NAME, value = "添加工具到工具列表", returnBehavior = ReturnBehavior.IMMEDIATE)
-        public String addTools(@P(name = TOOL_ARGUMENT, required = true) List<String> toolNames) {
-            return "成功添加工具到工具列表";
-        }
-
-    }
-
     // ==================== ToolProvider 接口实现 ====================
 
     /**
@@ -136,75 +128,66 @@ public class LangChain4JToolBridge implements ToolProvider {
 
         List<ChatMessage> messages = request.messages();
         if (CollectionUtils.isEmpty(messages) || messages.get(messages.size() - 1) instanceof UserMessage) {
-            return ToolProviderResult.builder()
-                    .addAll(ToolSpecifications.toolSpecificationsFrom(AddTools.class).stream().map(spec -> {
-                        return AiServiceTool.builder()
-                                .toolSpecification(spec)
-                                .toolExecutor(this::execute)
-                                .build();
-
-                    }).toList())
-                    .build();
+            return addToolsOnly();
         }
 
         toolRegistry.ensureInitialized();
 
         // only meta tools send to llm to reduce context.
-        List<ToolMetadata> tools = toolRegistry.getToolsForAgent(agentCode);
+        List<ToolMetadata> tools = availableTools();
 
-
-        // mcp工具
-
-        // mcp改由前端传入 (全部传给大模型耗费token）
-        tools = tools.stream().filter(tool -> {
-
-            // 过滤掉MCP工具
-            if (CollectionUtils.isEmpty(mcpCodes)) {
-                return !Objects.equals(tool.getSourceType(), SourceType.MCP);
-            }
-
-            // sourceType为MCP，且sourceRef的第一个字符串为mcp_code
-            return mcpCodes.contains(tool.getSourceRef().split(":")[0]) && Objects.equals(tool.getStatus(), "ENABLED") || Strings.CS.equals(tool.getSourceType(), SourceType.LOCAL);
-        }).collect(Collectors.toList());
-
+        // 本轮需要下发的工具名（add_tools 显式声明 / 上一轮调用的工具）
+        List<String> requiredNames = Lists.newArrayList();
         ChatMessage message = messages.get(messages.size() - 1);
 
-        if(!(message instanceof ToolExecutionResultMessage)){
-            return ToolProviderResult.builder().build();
+        if (!(message instanceof ToolExecutionResultMessage)) {
+            // 非工具结果消息（如普通助手回复），无需继续下发工具
+            return addToolsOnly();
         }
 
-
-        // add
         String toolName = ((ToolExecutionResultMessage) message).toolName();
 
-        // get tool param.
         if (ADD_TOOLS_TOOL_NAME.equalsIgnoreCase(toolName)) {
+            // 从上一轮的 add_tools 调用参数中取出需要添加的工具名
             ChatMessage preMessage = messages.get(messages.size() - 2);
             if (preMessage instanceof AiMessage) {
-                List<ToolExecutionRequest> requests = ((AiMessage) preMessage).toolExecutionRequests();
-                for (ToolExecutionRequest req : requests) {
-                    HashMap map = JsonUtils.toObj(req.arguments(), HashMap.class);
-                    if (MapUtils.isNotEmpty(map) && map.containsKey(TOOL_ARGUMENT)) {
-                        Object obj = map.get(TOOL_ARGUMENT);
-                        if (obj instanceof List) {
-                            List<String> toolNames = (List<String>) obj;
-                            tools = tools.stream().filter(tool -> toolNames.contains(tool.getName())).collect(Collectors.toList());
-                        }
+                for (ToolExecutionRequest req : ((AiMessage) preMessage).toolExecutionRequests()) {
+                    if (!ADD_TOOLS_TOOL_NAME.equalsIgnoreCase(req.name())) {
+                        continue;
                     }
-
+                    requiredNames.addAll(parseToolNames(req.arguments()));
                 }
             }
         } else {
-            tools = tools.stream().filter(tool -> tool.getName().equalsIgnoreCase(toolName)).toList();
+            // 上一轮直接调用了某工具（可能未先 add_tools），把该工具续发下去，
+            // 保证模型后续仍可正常调用，避免"只有一轮能用"。
+            requiredNames.add(toolName);
         }
+
+        if (CollectionUtils.isEmpty(requiredNames)) {
+            // add_tools 未解析到任何工具名，只兜底下发 add_tools，避免模型彻底失去工具
+            log.warn("provideTools: no tool name resolved from message, fallback to add_tools only, agent='{}'", agentCode);
+            return addToolsOnly();
+        }
+
+        tools = tools.stream()
+                .filter(tool -> requiredNames.stream()
+                        .anyMatch(name -> StringUtils.equalsIgnoreCase(name, tool.getName())))
+                .collect(Collectors.toList());
+
         if (CollectionUtils.isEmpty(tools)) {
-            log.debug("No tools available for agent '{}'", agentCode);
-            return ToolProviderResult.builder().build();
+            // 请求的工具不存在 / 不可用：兜底下发 add_tools，让模型能自我纠正而不是卡死
+            log.warn("provideTools: requested tools {} not available for agent '{}', fallback to add_tools only",
+                    requiredNames, agentCode);
+            return addToolsOnly();
         }
 
         Map<String, List<ToolSpecification>> cache = Maps.newHashMap();
         Set<String> localCache = Sets.newHashSet();
+
         ToolProviderResult.Builder builder = ToolProviderResult.builder();
+        // 保持 add_tools 常驻，模型随时可以添加其它工具
+        buildAddToolsTool(builder);
 
         Set<String> mpcCache = Sets.newHashSet();
 
@@ -314,31 +297,169 @@ public class LangChain4JToolBridge implements ToolProvider {
      * @return 工具执行结果字符串
      */
     public String execute(ToolExecutionRequest request, Object memoryId) {
-        ToolCall toolCall = ToolUtils.toToolCall(request);
-        ToolContext context = buildContext(request, memoryId);
+        ToolExecutionResult result = executeStructured(request, memoryId);
 
-        log.info("LC4j tool bridge: executing tool='{}', agent='{}'",
-                request.name(), agentCode/*, memoryId*/);
-
-        ToolExecutionResult result = interceptor.execute(toolCall, context);
-
-        if (ToolExecutionResult.STATUS_PENDING.equals(result.getStatus())) {
+        if (result.isPending()) {
             log.warn("Tool '{}' returned PENDING status (requestId={}). " +
                             "Current implementation does not support blocking for confirmation; " +
                             "returning empty result to allow LLM to proceed.",
                     request.name(), result.getPendingRequestId());
-            return "[Tool requires confirmation, requestId=" + result.getPendingRequestId() + "]";
+        } else if (result.isFail()) {
+            log.error("Tool '{}' execution failed: code={}, message={}",
+                    request.name(), result.getErrorCode(), result.getErrorMessage());
         }
 
-        if (ToolExecutionResult.STATUS_FAIL.equals(result.getStatus())) {
-            log.error("Tool '{}' execution failed: {}", request.name(), result.getErrorMessage());
-            return "Tool execution failed: " + result.getErrorMessage();
-        }
+        // 内部全程结构化流转，这里是唯一转换为 String 交给框架的出口
+        return result.toLlmText();
+    }
 
-        return result.toString();
+    /**
+     * 结构化执行工具调用（供桥接器与幻觉兜底复用，避免重复逻辑）。
+     * <p>
+     * 与 {@link #execute(ToolExecutionRequest, Object)} 的区别：本方法不转 String，
+     * 返回结构化结果供上层按 errorCode 决定后续动作（引导 add_tools / 让模型修正参数）。
+     *
+     * @param request  工具执行请求
+     * @param memoryId 记忆ID
+     * @return 结构化执行结果
+     */
+    public ToolExecutionResult executeStructured(ToolExecutionRequest request, Object memoryId) {
+        ToolCall toolCall = ToolUtils.toToolCall(request);
+        ToolContext context = buildContext(request, memoryId);
+
+        log.info("LC4j tool bridge: executing tool='{}', agent='{}'", request.name(), agentCode);
+
+        ToolExecutionResult result;
+        try {
+            result = interceptor.execute(toolCall, context);
+        } catch (Exception e) {
+            log.error("Tool '{}' execution threw exception", request.name(), e);
+            result = ToolExecutionResult.fail(ToolExecutionResult.ERROR_EXECUTION_ERROR,
+                    "工具执行异常: " + e.getMessage());
+        }
+        if (result == null) {
+            result = ToolExecutionResult.fail(ToolExecutionResult.ERROR_UNKNOWN, "工具执行未返回结果");
+        }
+        return result;
     }
 
 
+
+    /**
+     * 仅下发 add_tools 元工具（兜底场景），保证模型始终有自我纠正的入口。
+     */
+    private ToolProviderResult addToolsOnly() {
+        ToolProviderResult.Builder builder = ToolProviderResult.builder();
+        buildAddToolsTool(builder);
+        return builder.build();
+    }
+
+    /**
+     * 构建 add_tools 元工具：描述中带上当前真实可用的工具名称，
+     * 从源头降低模型编造工具名的概率。
+     */
+    private void buildAddToolsTool(ToolProviderResult.Builder builder) {
+        List<String> availableNames = availableToolNames();
+        String description = CollectionUtils.isEmpty(availableNames)
+                ? "添加工具到工具列表。当前没有可用工具，禁止编造工具名称。"
+                : "添加工具到工具列表。只能添加下列已存在的工具（禁止编造工具名称）：\n"
+                + String.join(", ", availableNames);
+
+        ToolSpecification spec = ToolSpecification.builder()
+                .name(ADD_TOOLS_TOOL_NAME)
+                .description(description)
+                .parameters(JsonObjectSchema.builder()
+                        .addProperty(TOOL_ARGUMENT, JsonArraySchema.builder()
+                                .items(new JsonStringSchema())
+                                .description("需要添加的工具名称，必须是已存在的工具")
+                                .build())
+                        .required(TOOL_ARGUMENT)
+                        .build())
+                .build();
+
+        builder.add(AiServiceTool.builder()
+                .toolSpecification(spec)
+                .toolExecutor(this::execute)
+                .build());
+    }
+
+    /**
+     * 解析 add_tools 参数中的工具名称列表。
+     */
+    private List<String> parseToolNames(String arguments) {
+        if (StringUtils.isBlank(arguments)) {
+            return Lists.newArrayList();
+        }
+        try {
+            HashMap map = JsonUtils.toObj(arguments, HashMap.class);
+            if (MapUtils.isEmpty(map) || !map.containsKey(TOOL_ARGUMENT)) {
+                return Lists.newArrayList();
+            }
+            Object obj = map.get(TOOL_ARGUMENT);
+            if (obj instanceof Collection<?> collection) {
+                List<String> names = Lists.newArrayList();
+                for (Object item : collection) {
+                    if (item != null && StringUtils.isNotBlank(item.toString())) {
+                        names.add(item.toString().trim());
+                    }
+                }
+                return names;
+            }
+            if (obj != null && StringUtils.isNotBlank(obj.toString())) {
+                // 兼容模型传入逗号/空白分隔的字符串
+                return Arrays.stream(obj.toString().split("[,，\\s]+"))
+                        .filter(StringUtils::isNotBlank)
+                        .collect(Collectors.toList());
+            }
+        } catch (Exception e) {
+            log.warn("Failed to parse tool names from arguments: {}", arguments, e);
+        }
+        return Lists.newArrayList();
+    }
+
+    /**
+     * 当前 Agent 可用的工具（已按 MCP 范围 / 启用状态过滤）。
+     */
+    private List<ToolMetadata> availableTools() {
+        toolRegistry.ensureInitialized();
+        List<ToolMetadata> tools = toolRegistry.getToolsForAgent(agentCode);
+        if (CollectionUtils.isEmpty(tools)) {
+            return Lists.newArrayList();
+        }
+        // mcp改由前端传入 (全部传给大模型耗费token）
+        return tools.stream().filter(this::isToolAvailable).collect(Collectors.toList());
+    }
+
+    /**
+     * 当前 Agent 可用工具的名称列表。
+     */
+    private List<String> availableToolNames() {
+        return availableTools().stream()
+                .map(ToolMetadata::getName)
+                .filter(StringUtils::isNotBlank)
+                .distinct()
+                .sorted()
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * 工具是否对当前 Agent 可见：LOCAL 工具始终可见，MCP 工具需命中传入的 mcp_code 且启用。
+     */
+    private boolean isToolAvailable(ToolMetadata tool) {
+        String sourceType = tool.getSourceType();
+
+        // 未指定 mcpCodes 时过滤掉所有 MCP 工具
+        if (CollectionUtils.isEmpty(mcpCodes)) {
+            return !Objects.equals(sourceType, SourceType.MCP);
+        }
+
+        // sourceType为MCP，且sourceRef的第一个字符串为mcp_code
+        boolean mcpMatched = Strings.CS.equals(sourceType, SourceType.MCP)
+                && StringUtils.isNotBlank(tool.getSourceRef())
+                && mcpCodes.contains(tool.getSourceRef().split(":")[0])
+                && Objects.equals(tool.getStatus(), "ENABLED");
+        return mcpMatched || Strings.CS.equals(sourceType, SourceType.LOCAL);
+    }
 
     /**
      * 构建工具执行上下文。
