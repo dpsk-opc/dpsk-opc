@@ -146,24 +146,81 @@ public class FileTools {
         }
     }
 
-    @Tool(name = "append_to_file", description = "向文件末尾追加内容。若文件不存在则自动创建。")
-    @dev.langchain4j.agent.tool.Tool(name = "append_to_file", value = "向文件末尾追加内容。若文件不存在则自动创建。")
-    public String appendToFile(
-            @ToolParam(description = "文件路径") String path,
-            @ToolParam(description = "要追加的内容") String content) {
+    @Tool(name = "write_file", description = "将内容写入文件（覆盖写入）。若文件不存在则自动创建文件，父目录不存在时自动创建父目录。")
+    @dev.langchain4j.agent.tool.Tool(name = "write_file", value = "将内容写入文件（覆盖写入）。若文件不存在则自动创建文件，父目录不存在时自动创建父目录。")
+    public String writeFile(
+            @ToolParam(description = "文件路径，支持相对或绝对路径")
+            @P(description = "文件路径，支持相对或绝对路径")
+            String path,
+            @ToolParam(description = "要写入的完整文件内容（会覆盖原有内容）")
+            @P(description = "要写入的完整文件内容（会覆盖原有内容）")
+            String content) {
 
         try {
             Path file = resolvePath(path);
-            // 确保父目录存在
-            if (file.getParent() != null) {
-                Files.createDirectories(file.getParent());
+            ensureParentDir(file);
+
+            boolean existed = Files.exists(file);
+            if (Files.isDirectory(file)) {
+                return "错误：路径是目录，不能写入: " + file.toAbsolutePath();
             }
-            Files.writeString(file, content,
-                    StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-            return "成功追加内容到文件: " + file.toAbsolutePath();
+
+            Files.writeString(file, content == null ? "" : content, StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE,
+                    StandardOpenOption.WRITE,
+                    StandardOpenOption.TRUNCATE_EXISTING);
+
+            return (existed ? "成功写入文件: " : "成功创建并写入文件: ") + file.toAbsolutePath()
+                    + "（写入 " + (content == null ? 0 : content.length()) + " 个字符）";
+        } catch (IOException e) {
+            log.error("writeFile error", e);
+            return "写入文件失败: " + e.getMessage();
+        }
+    }
+
+    @Tool(name = "append_to_file", description = "向文件末尾追加内容。若文件不存在则自动创建文件，父目录不存在时自动创建父目录。")
+    @dev.langchain4j.agent.tool.Tool(name = "append_to_file", value = "向文件末尾追加内容。若文件不存在则自动创建文件，父目录不存在时自动创建父目录。")
+    public String appendToFile(
+            @ToolParam(description = "文件路径，支持相对或绝对路径")
+            @P(description = "文件路径，支持相对或绝对路径")
+            String path,
+            @ToolParam(description = "要追加的内容")
+            @P(description = "要追加的内容")
+            String content) {
+
+        try {
+            Path file = resolvePath(path);
+            ensureParentDir(file);
+
+            if (Files.isDirectory(file)) {
+                return "错误：路径是目录，不能追加内容: " + file.toAbsolutePath();
+            }
+
+            // 文件不存在时先创建空文件，再追加，保证不存在也能直接创建
+            boolean created = false;
+            if (!Files.exists(file)) {
+                Files.createFile(file);
+                created = true;
+            }
+
+            Files.writeString(file, content == null ? "" : content, StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE,
+                    StandardOpenOption.APPEND);
+
+            return (created ? "文件不存在，已创建并追加内容: " : "成功追加内容到文件: ") + file.toAbsolutePath();
         } catch (IOException e) {
             log.error("appendToFile error", e);
             return "追加文件失败: " + e.getMessage();
+        }
+    }
+
+    /**
+     * 确保文件的父目录存在（不存在则自动创建）。
+     */
+    private void ensureParentDir(Path file) throws IOException {
+        Path parent = file.getParent();
+        if (parent != null) {
+            Files.createDirectories(parent);
         }
     }
 
