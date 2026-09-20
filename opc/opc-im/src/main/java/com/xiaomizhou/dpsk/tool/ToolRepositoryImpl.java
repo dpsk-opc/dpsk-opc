@@ -1,6 +1,7 @@
 package com.xiaomizhou.dpsk.tool;
 
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.google.common.collect.Lists;
 import com.xiaomizhou.dpsk.db.AgentToolComponent;
 import com.xiaomizhou.dpsk.db.dao.AgentMcpBindingDao;
@@ -12,6 +13,9 @@ import com.xiaomizhou.dpsk.db.model.AgentToolRefDO;
 import com.xiaomizhou.dpsk.db.model.ToolDO;
 import com.xiaomizhou.dpsk.tool.model.ToolMetadata;
 import com.xiaomizhou.dpsk.tool.repository.ToolRepository;
+import com.xiaomizhou.dpsk.tool.workspace.FileSystemAccess;
+import com.xiaomizhou.dpsk.tool.workspace.ToolPathParam;
+import com.xiaomizhou.dpsk.utils.JsonUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections.CollectionUtils;
@@ -184,6 +188,9 @@ public class ToolRepositoryImpl implements ToolRepository {
                 .tags(entity.getTags())
                 .cacheable(entity.getCacheable() != null && entity.getCacheable() == 1)
                 .timeoutMs(entity.getTimeoutMs())
+                .ownerAgentCode(entity.getOwnerAgentCode())
+                .filesystemAccess(parseFilesystemAccess(entity.getFilesystemAccess()))
+                .pathParams(parsePathParams(entity.getPathParams()))
                 .build();
     }
 
@@ -202,9 +209,61 @@ public class ToolRepositoryImpl implements ToolRepository {
         entity.setTags(model.getTags());
         entity.setCacheable(model.getCacheable() != null && model.getCacheable() ? 1 : 0);
         entity.setTimeoutMs(model.getTimeoutMs());
+        entity.setOwnerAgentCode(model.getOwnerAgentCode());
+        entity.setFilesystemAccess(model.getFilesystemAccess() == null
+                ? FileSystemAccess.NONE.name() : model.getFilesystemAccess().name());
+        entity.setPathParams(serializePathParams(model.getPathParams()));
         entity.setCreateTime(new Date());
         entity.setUpdateTime(new Date());
         entity.setIsDeleted(0);
         return entity;
+    }
+
+    /**
+     * 解析能力位字符串，非法值降级为 NONE（保持存量行为）。
+     */
+    private FileSystemAccess parseFilesystemAccess(String value) {
+        if (value == null || value.isBlank()) {
+            return FileSystemAccess.NONE;
+        }
+        try {
+            return FileSystemAccess.valueOf(value.trim().toUpperCase());
+        } catch (Exception e) {
+            log.warn("Invalid filesystem_access value '{}', fallback to NONE", value);
+            return FileSystemAccess.NONE;
+        }
+    }
+
+    /**
+     * 解析路径参数声明 JSON。
+     */
+    private List<ToolPathParam> parsePathParams(String json) {
+        if (json == null || json.isBlank()) {
+            return Lists.newArrayList();
+        }
+        try {
+            List<ToolPathParam> params = JsonUtils.toObj(json,
+                    new TypeReference<List<ToolPathParam>>() {
+                    });
+            return params == null ? Lists.newArrayList() : params;
+        } catch (Exception e) {
+            log.warn("Failed to parse path_params: {}", json, e);
+            return Lists.newArrayList();
+        }
+    }
+
+    /**
+     * 序列化路径参数声明。
+     */
+    private String serializePathParams(List<ToolPathParam> params) {
+        if (CollectionUtils.isEmpty(params)) {
+            return "";
+        }
+        try {
+            return JsonUtils.toJson(params);
+        } catch (Exception e) {
+            log.warn("Failed to serialize path params", e);
+            return "";
+        }
     }
 }

@@ -26,4 +26,9 @@ public class GroupUpdateCmd {
      */
     private String avatar;
 
+    /**
+     * 群工作空间（公共产出目录），可选；传 null 表示不修改
+     */
+    private String workspace;
+
 }

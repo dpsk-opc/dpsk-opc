@@ -39,4 +39,10 @@ public class ChatGroup extends BaseModel {
     @TableField("ext_config")
     private String extConfig;       // JSON 字符串
 
+    /**
+     * 群工作空间（公共产出目录）：全员可见可写，不按成员划分子目录。
+     */
+    @TableField("workspace")
+    private String workspace;
+
 }

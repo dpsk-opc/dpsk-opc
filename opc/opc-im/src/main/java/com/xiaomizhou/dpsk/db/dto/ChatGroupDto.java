@@ -54,6 +54,11 @@ public class ChatGroupDto {
     private String extConfig;
 
     /**
+     * 群工作空间（公共产出目录），为空则使用系统默认值
+     */
+    private String workspace;
+
+    /**
      * 创建时间
      */
     private Date createTime;

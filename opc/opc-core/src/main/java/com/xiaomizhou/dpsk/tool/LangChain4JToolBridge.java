@@ -108,6 +108,16 @@ public class LangChain4JToolBridge implements ToolProvider {
     @Builder.Default
     private final List<String> mcpCodes = Lists.newArrayList();
 
+    /**
+     * 工作空间边界集合，透传到 {@link ToolContext} 供路径校验使用。
+     */
+    private final com.xiaomizhou.dpsk.tool.workspace.WorkspaceScope workspaceScope;
+
+    /**
+     * 本轮用户消息文本，用于"用户明确给出路径即授权"的判定（D9）。
+     */
+    private final String userContent;
+
     public static final String ADD_TOOLS_TOOL_NAME = "add_tools";
 
     public static final String TOOL_ARGUMENT = "toolNames";
@@ -469,6 +479,8 @@ public class LangChain4JToolBridge implements ToolProvider {
                 .agentCode(agentCode)
                 .userCode(userCode)
                 .conversationCode(conversationCode)
+                .workspaceScope(workspaceScope)
+                .userContent(userContent)
                 .traceId(generateTraceId(request));
 
         // 如果 memoryId 可转为字符串，尝试解析会话编码
@@ -506,6 +518,39 @@ public class LangChain4JToolBridge implements ToolProvider {
                                                  String agentCode,
                                                  String userCode,
                                                  String conversationCode, List<String> mcpCodes) {
+        return forAgent(toolRegistry, interceptor, applicationContext, agentCode, userCode,
+                conversationCode, mcpCodes, null);
+    }
+
+    /**
+     * 为指定 Agent 创建桥接器（带工作空间边界）。
+     */
+    public static LangChain4JToolBridge forAgent(ToolRegistry toolRegistry,
+                                                 ToolInvocationInterceptor interceptor,
+                                                 ApplicationContext applicationContext,
+                                                 String agentCode,
+                                                 String userCode,
+                                                 String conversationCode,
+                                                 List<String> mcpCodes,
+                                                 com.xiaomizhou.dpsk.tool.workspace.WorkspaceScope workspaceScope) {
+        return forAgent(toolRegistry, interceptor, applicationContext, agentCode, userCode,
+                conversationCode, mcpCodes, workspaceScope, null);
+    }
+
+    /**
+     * 为指定 Agent 创建桥接器（带工作空间边界与用户消息）。
+     *
+     * @param userContent 本轮用户消息文本，用于"用户明确给出路径即授权"的判定（D9）
+     */
+    public static LangChain4JToolBridge forAgent(ToolRegistry toolRegistry,
+                                                 ToolInvocationInterceptor interceptor,
+                                                 ApplicationContext applicationContext,
+                                                 String agentCode,
+                                                 String userCode,
+                                                 String conversationCode,
+                                                 List<String> mcpCodes,
+                                                 com.xiaomizhou.dpsk.tool.workspace.WorkspaceScope workspaceScope,
+                                                 String userContent) {
         return LangChain4JToolBridge.builder()
                 .toolRegistry(toolRegistry)
                 .interceptor(interceptor)
@@ -514,6 +559,8 @@ public class LangChain4JToolBridge implements ToolProvider {
                 .userCode(userCode)
                 .conversationCode(conversationCode)
                 .mcpCodes(mcpCodes)
+                .workspaceScope(workspaceScope)
+                .userContent(userContent)
                 .build();
     }
 

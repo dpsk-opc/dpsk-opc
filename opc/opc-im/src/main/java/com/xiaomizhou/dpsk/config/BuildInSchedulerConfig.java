@@ -9,9 +9,11 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections.MapUtils;
 import org.apache.commons.lang3.Strings;
-import org.springframework.beans.factory.InitializingBean;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.event.EventListener;
+import org.springframework.core.annotation.Order;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -20,7 +22,7 @@ import java.util.Objects;
 @Configuration
 @Slf4j
 @RequiredArgsConstructor
-public class BuildInSchedulerConfig implements InitializingBean {
+public class BuildInSchedulerConfig {
 
     private final TaskManager taskManager;
 
@@ -125,9 +127,19 @@ public class BuildInSchedulerConfig implements InitializingBean {
         log.info("更新消息过期清理任务成功, code={},cron:{}", tk.getCode(), msgExpiryCron);
     }
 
-    @Override
-    public void afterPropertiesSet() throws Exception {
-
+    /**
+     * 应用就绪后初始化内置定时任务。
+     * <p>
+     * <b>不能</b>放在 Bean 初始化回调（如 afterPropertiesSet）中：那会在容器刷新早期执行，
+     * 早于 Flyway 数据库迁移，会因 t_task 表不存在而失败；
+     * 且此时 TaskManager 调度器尚未启动（它同样推迟到 ApplicationReadyEvent）。
+     * <p>
+     * order 设为 20，保证在 {@code TaskManagerStartupInitializer}（order=0）
+     * 启动调度器之后执行，避免 updateTask 时调度器为空。
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    @Order(20)
+    public void initBuiltInTasks() {
         try {
             initKnowledgeBuildTask();
             initAiMessageExpiryTask();

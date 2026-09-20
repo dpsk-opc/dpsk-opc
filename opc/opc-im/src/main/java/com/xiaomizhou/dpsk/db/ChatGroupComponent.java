@@ -12,6 +12,9 @@ import com.xiaomizhou.dpsk.db.model.Agent;
 import com.xiaomizhou.dpsk.db.model.ChatGroup;
 import com.xiaomizhou.dpsk.db.model.ChatGroupMember;
 import com.xiaomizhou.dpsk.db.model.Conversation;
+import com.xiaomizhou.dpsk.tool.workspace.WorkspaceInitializer;
+import com.xiaomizhou.dpsk.tool.workspace.WorkspaceProperties;
+import com.xiaomizhou.dpsk.tool.workspace.WorkspaceScope;
 import com.xiaomizhou.dpsk.utils.SequenceUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -19,6 +22,7 @@ import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Strings;
 import org.apache.commons.lang3.tuple.ImmutablePair;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -48,6 +52,16 @@ public class ChatGroupComponent {
     private final ChatGroupMemberDao chatGroupMemberDao;
 
     private final ConversationDao conversationDao;
+
+    /**
+     * 工作空间配置。使用 ObjectProvider 懒加载，避免构造期循环依赖。
+     */
+    private final ObjectProvider<WorkspaceProperties> workspacePropertiesProvider;
+
+    /**
+     * 工作空间初始化器。使用 ObjectProvider 懒加载，避免构造期循环依赖。
+     */
+    private final ObjectProvider<WorkspaceInitializer> workspaceInitializerProvider;
 
     private final AgentDao agentDao;
 
@@ -106,6 +120,7 @@ public class ChatGroupComponent {
         dto.setStatus(group.getStatus());
         dto.setLastMessageCode(group.getLastMessageCode());
         dto.setExtConfig(group.getExtConfig());
+        dto.setWorkspace(group.getWorkspace());
         dto.setCreateTime(group.getCreateTime());
         dto.setUpdateTime(group.getUpdateTime());
         dto.setMemberCount(memberCount);
@@ -122,6 +137,15 @@ public class ChatGroupComponent {
      * @return
      */
     public boolean updateGroup(String groupCode, String name, String avatar) {
+        return updateGroup(groupCode, name, avatar, null);
+    }
+
+    /**
+     * 更新群组信息（含工作空间）。
+     *
+     * @param workspace 群工作空间（公共产出目录）；传 null 表示不修改
+     */
+    public boolean updateGroup(String groupCode, String name, String avatar, String workspace) {
         ChatGroup group = chatGroupDao.getByCode(groupCode);
         if (Objects.isNull(group)) {
             return false;
@@ -131,9 +155,66 @@ public class ChatGroupComponent {
         model.setId(group.getId());
         model.setName(name);
         model.setAvatar(avatar);
+        if (workspace != null) {
+            // 修改时同样回填默认值并确保目录存在（清空 workspace 视为恢复默认）
+            model.setWorkspace(resolveAndInitWorkspace(workspace, group.getCode()));
+        }
         model.setUpdateTime(new Date());
 
         return chatGroupDao.updateById(model);
+    }
+
+    /**
+     * 解析最终工作空间并确保目录存在。
+     * <p>
+     * 用户未配置时实时推导默认值 {@code <root>/<groupCode>}，
+     * 避免"新建群后未重启"期间 workspace 为空。
+     *
+     * @param configured 用户配置的 workspace（可为空）
+     * @param groupCode  群编码
+     * @return 最终生效的工作空间路径
+     */
+    private String resolveAndInitWorkspace(String configured, String groupCode) {
+        WorkspaceProperties properties = workspacePropertiesProvider.getIfAvailable();
+        if (properties == null || !properties.isEnabled() || StringUtils.isBlank(groupCode)) {
+            return configured;
+        }
+        String workspace = properties.resolve(configured, groupCode);
+        if (StringUtils.isBlank(workspace)) {
+            return configured;
+        }
+        WorkspaceInitializer initializer = workspaceInitializerProvider.getIfAvailable();
+        if (initializer != null) {
+            try {
+                initializer.initialize(WorkspaceScope.builder().primaryWorkspace(workspace).build());
+            } catch (Exception e) {
+                log.warn("Failed to init workspace dir for group '{}': {}", groupCode, workspace, e);
+            }
+        }
+        return workspace;
+    }
+
+    /**
+     * 查询全部群组（供启动期工作空间初始化使用）。
+     */
+    public List<ChatGroup> listAll() {
+        return chatGroupDao.list();
+    }
+
+    /**
+     * 获取群的工作空间（公共产出目录）。未配置返回 null。
+     *
+     * @param groupCode 群编码
+     */
+    public String getWorkspace(String groupCode) {
+        if (StringUtils.isBlank(groupCode)) {
+            return null;
+        }
+        ChatGroup group = chatGroupDao.getByCode(groupCode);
+        if (group == null || StringUtils.isBlank(group.getWorkspace())) {
+            return null;
+        }
+        return group.getWorkspace();
     }
 
     /**
@@ -264,6 +345,9 @@ public class ChatGroupComponent {
         group.setCreateTime(new Date());
         group.setUpdateTime(new Date());
         group.setExtConfig("{}");
+        // 立即回填默认工作空间（公共产出目录）并创建目录，
+        // 避免"新建群后未重启"期间 workspace 为空
+        group.setWorkspace(resolveAndInitWorkspace(null, groupCode));
 
         chatGroupDao.save(group);
 

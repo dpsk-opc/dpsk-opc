@@ -3,6 +3,7 @@ package com.xiaomizhou.dpsk.tool.buildin;
 import com.xiaomizhou.dpsk.tool.CommandSafetyChecker;
 import com.xiaomizhou.dpsk.tool.ToolCategory;
 import com.xiaomizhou.dpsk.tool.ToolMeta;
+import com.xiaomizhou.dpsk.tool.workspace.FileSystemAccess;
 import dev.langchain4j.agent.tool.P;
 
 import java.io.BufferedReader;
@@ -24,7 +25,11 @@ import static com.xiaomizhou.dpsk.utils.JsonUtils.toJson;
  * @author eason - vipzhsh@163.com
  * @date 2026/6/19
  */
-@ToolMeta(value = "执行系统命令", level = RISK_DANGEROUS, category = ToolCategory.BUILD_IN, tags = {"命令执行", "系统操作"})
+@ToolMeta(value = "执行系统命令", level = RISK_DANGEROUS, category = ToolCategory.BUILD_IN,
+        tags = {"命令执行", "系统操作"},
+        // 命令类工具无法逐参数声明路径，声明为 WRITE 能力位以便进入边界校验流程：
+        // 由 PathExtractor 从命令行中抽取路径，抽取不确定时降级为需要用户确认（不静默放行）。
+        filesystemAccess = FileSystemAccess.WRITE)
 public class CommandTools {
 
     /**

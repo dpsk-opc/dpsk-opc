@@ -14,6 +14,7 @@ import com.xiaomizhou.dpsk.db.model.AgentMcpBindingDO;
 import com.xiaomizhou.dpsk.db.model.McpTemplateDO;
 import com.xiaomizhou.dpsk.db.model.ToolDO;
 import com.xiaomizhou.dpsk.tool.SourceType;
+import com.xiaomizhou.dpsk.tool.workspace.FileSystemAccess;
 import com.xiaomizhou.dpsk.tool.executor.McpElectronBridge;
 import com.xiaomizhou.dpsk.tool.model.McpElectronRequest;
 import com.xiaomizhou.dpsk.tool.model.McpElectronResult;
@@ -629,6 +630,10 @@ public class McpComponent {
             toolDO.setStatus(binding.getEnabled() == 1 ? "ENABLED" : "DISABLED");
             toolDO.setRiskLevel("NORMAL");
             toolDO.setTimeoutMs(30000);
+            // MCP 协议无法声明"哪个参数是路径"，保持 NONE 表示"未声明"：
+            // 运行期由 PathExtractor 从参数中抽取路径，抽取不到则降级为需要用户确认（D13），
+            // 绝不静默放行。
+            toolDO.setFilesystemAccess(FileSystemAccess.NONE.name());
             toolDO.setCreateTime(now);
             toolDO.setUpdateTime(now);
             toolDO.setIsDeleted(0);

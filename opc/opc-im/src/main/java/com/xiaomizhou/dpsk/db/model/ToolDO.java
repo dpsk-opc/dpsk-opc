@@ -55,4 +55,16 @@ public class ToolDO extends BaseModel {
 
     @TableField("owner_agent_code")
     private String ownerAgentCode;
+
+    /**
+     * 文件系统访问能力位：NONE / READ / WRITE
+     */
+    @TableField("filesystem_access")
+    private String filesystemAccess;
+
+    /**
+     * 路径参数声明（JSON 数组）
+     */
+    @TableField("path_params")
+    private String pathParams;
 }

@@ -80,6 +80,12 @@ public class ToolExecutionResult {
     /** 需要用户确认后执行 */
     public static final String ERROR_PENDING_CONFIRM = "PENDING_CONFIRM";
 
+    /** 路径在工作空间之外且未获授权 */
+    public static final String ERROR_PATH_OUT_OF_WORKSPACE = "PATH_OUT_OF_WORKSPACE";
+
+    /** 路径命中系统受保护区域 */
+    public static final String ERROR_PATH_PROTECTED = "PATH_PROTECTED";
+
     /** 未知错误 */
     public static final String ERROR_UNKNOWN = "UNKNOWN";
 

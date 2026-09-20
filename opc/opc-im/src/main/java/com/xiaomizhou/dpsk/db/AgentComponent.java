@@ -14,6 +14,9 @@ import com.xiaomizhou.dpsk.db.model.AgentAuthToken;
 import com.xiaomizhou.dpsk.core.exceptions.BusinessException;
 import com.xiaomizhou.dpsk.db.model.KnowledgeLib;
 import com.xiaomizhou.dpsk.planning.CapabilityExtractor;
+import com.xiaomizhou.dpsk.tool.workspace.WorkspaceInitializer;
+import com.xiaomizhou.dpsk.tool.workspace.WorkspaceProperties;
+import com.xiaomizhou.dpsk.tool.workspace.WorkspaceScope;
 import com.xiaomizhou.dpsk.utils.JsonUtils;
 import com.xiaomizhou.dpsk.utils.PasswordEncoder;
 import com.xiaomizhou.dpsk.utils.SequenceUtils;
@@ -59,6 +62,47 @@ public class AgentComponent {
      * AgentComponent → CapabilityExtractor → … → ImAgentDefProvider → AgentComponent 的构造期循环依赖。
      */
     private final ObjectProvider<CapabilityExtractor> capabilityExtractorProvider;
+
+    /**
+     * 工作空间配置。使用 ObjectProvider 懒加载，避免构造期循环依赖。
+     */
+    private final ObjectProvider<WorkspaceProperties> workspacePropertiesProvider;
+
+    /**
+     * 工作空间初始化器（创建目录）。使用 ObjectProvider 懒加载，避免构造期循环依赖。
+     */
+    private final ObjectProvider<WorkspaceInitializer> workspaceInitializerProvider;
+
+    /**
+     * 解析最终工作空间并确保目录（含标准子目录）存在。
+     * <p>
+     * 用户未配置时实时推导默认值 {@code <root>/<agentCode>}，并<b>立即回填数据库</b>，
+     * 避免"新建 Agent 后未重启"期间 workspace 为空、导致 system prompt 的工作空间规则失效。
+     *
+     * @param configured 用户配置的 workspace（可为空）
+     * @param agentCode  Agent 编码
+     * @return 最终生效的工作空间路径
+     */
+    private String resolveAndInitWorkspace(String configured, String agentCode) {
+        WorkspaceProperties properties = workspacePropertiesProvider.getIfAvailable();
+        if (properties == null || !properties.isEnabled() || StringUtils.isBlank(agentCode)) {
+            return configured;
+        }
+        String workspace = properties.resolve(configured, agentCode);
+        if (StringUtils.isBlank(workspace)) {
+            return configured;
+        }
+        WorkspaceInitializer initializer = workspaceInitializerProvider.getIfAvailable();
+        if (initializer != null) {
+            try {
+                initializer.initialize(WorkspaceScope.builder().primaryWorkspace(workspace).build());
+            } catch (Exception e) {
+                // 目录创建失败不阻塞业务，运行期会再次尝试
+                log.warn("Failed to init workspace dir for agent '{}': {}", agentCode, workspace, e);
+            }
+        }
+        return workspace;
+    }
 
     /**
      * 是否是真实用户
@@ -225,7 +269,9 @@ public class AgentComponent {
         agent.setSex(cmd.getSex());
         agent.setMbti(cmd.getMbti());
         agent.setPrompt(cmd.getPrompt());
-        agent.setWorkspace(cmd.getWorkspace());
+        // 用户未指定时立即回填默认工作空间并创建目录，
+        // 避免"新建后未重启"期间 workspace 为空导致文件访问边界失效
+        agent.setWorkspace(resolveAndInitWorkspace(cmd.getWorkspace(), agent.getCode()));
         agent.setRole(cmd.getRole());
         agent.setDescription(cmd.getDescription());
         agent.setType(cmd.getType());
@@ -299,7 +345,8 @@ public class AgentComponent {
             agent.setPrompt(cmd.getPrompt());
         }
         if (cmd.getWorkspace() != null) {
-            agent.setWorkspace(cmd.getWorkspace());
+            // 修改时同样回填默认值并确保目录存在（清空 workspace 视为恢复默认）
+            agent.setWorkspace(resolveAndInitWorkspace(cmd.getWorkspace(), agent.getCode()));
         }
         if (cmd.getRole() != null) {
             agent.setRole(cmd.getRole());

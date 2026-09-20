@@ -135,6 +135,9 @@ public class ContextAssembler {
         }
 
 
+        // 工作空间边界规则（文件读写约束）
+        appendWorkspaceRule(sb, spec);
+
         String userContent = spec.getUserContent();
         String userCode = spec.getUserCode();
         String conversationCode = spec.getConversationCode();
@@ -268,6 +271,9 @@ public class ContextAssembler {
         }
 
 
+        // 工作空间边界规则（文件读写约束）
+        appendWorkspaceRule(sb, spec);
+
         String userContent = spec.getUserContent();
         String userCode = spec.getUserCode();
         String conversationCode = spec.getConversationCode();
@@ -342,27 +348,78 @@ public class ContextAssembler {
      * @return 增强后的 system prompt
      */
     public String enrichSystemPrompt(String systemPrompt, String ownerCode, String targetCode) {
+        return enrichSystemPrompt(systemPrompt, ownerCode, targetCode, null);
+    }
+
+    /**
+     * 仅注入 L2 语义检索结果 + 工作空间规则到 system prompt。
+     *
+     * @param spec 构建规范（用于注入工作空间边界规则），可为 null
+     */
+    public String enrichSystemPrompt(String systemPrompt, String ownerCode, String targetCode,
+                                     AgentBuildSpec spec) {
         if (systemPrompt == null) {
             systemPrompt = "";
         }
+
+        // 工作空间规则必须先注入：模型需要知道自己的目录约定与越界处理方式
+        StringBuffer sb = new StringBuffer(systemPrompt);
+        if (spec != null) {
+            appendWorkspaceRule(sb, spec);
+        }
+        String basePrompt = sb.toString();
+
         if (factManager == null) {
-            return systemPrompt;
+            return basePrompt;
         }
 
         // 群聊场景：根据 targetCode 做一次 L2 语义检索
-        StringBuilder sb = new StringBuilder(systemPrompt);
+        StringBuilder result = new StringBuilder(basePrompt);
         List<MemoryFragment> retrieved = factManager.retrieveMemories(
                 targetCode, ownerCode, targetCode, MemoryConfig.L2_RETRIEVAL_TOPK);
         if (!retrieved.isEmpty()) {
-            if (sb.length() > 0) {
-                sb.append("\n");
+            if (result.length() > 0) {
+                result.append("\n");
             }
-            sb.append("[相关历史消息]\n");
+            result.append("[相关历史消息]\n");
             for (MemoryFragment f : retrieved) {
-                sb.append("- ").append(f.getText()).append("\n");
+                result.append("- ").append(f.getText()).append("\n");
             }
         }
-        return sb.toString();
+        return result.toString();
+    }
+
+    /**
+     * 注入工作空间与文件访问边界规则。
+     * <p>
+     * 必须写清"规则"而不只是"路径"：确认交互会打断流程，若模型不知道"可以问用户"，
+     * 它会倾向于硬试或绕路。提示词需要给它一个合规出口。
+     */
+    private void appendWorkspaceRule(StringBuffer sb, AgentBuildSpec spec) {
+        String workspace = spec.getPrimaryWorkspace();
+        if (StringUtils.isBlank(workspace)) {
+            return;
+        }
+        sb.append("""
+                
+                [工作空间]
+                你的工作空间是：%s
+                目录约定：
+                - output/  产出目录，交付给用户的成果（报告、文档、代码、图表）必须放在这里
+                - tmp/     临时目录，中间文件、下载缓存
+                - scripts/ 脚本目录，你生成的脚本
+                
+                [文件访问规则]
+                1. 默认只允许读写自己工作空间内的文件；
+                2. 使用相对路径时，一律相对于工作空间解析，不要使用进程当前目录的直觉；
+                3. 如果用户明确要求访问工作空间之外的路径，可以尝试；
+                4. 如果需要访问工作空间之外的路径而用户没有提过，必须先向用户说明并请求确认，不要直接尝试；
+                5. 禁止访问系统目录（如 Windows、Program Files、/etc、~/.ssh 等）；
+                6. 意图含糊时（例如"上次那个目录"），不要自行猜测路径，把候选路径告知用户并请求确认。
+                """.formatted(workspace));
+        if (StringUtils.isNotBlank(spec.getSharedWorkspace())) {
+            sb.append("- 公共产出目录（群/团队共享，可直接读写）：%s\n".formatted(spec.getSharedWorkspace()));
+        }
     }
 
     private String formatChatMessage(ChatMessage message) {

@@ -60,4 +60,10 @@ public interface WsMsgType {
 
     // 提问超时/取消（后端 -> 前端）
     String TOOL_ASK_TIMEOUT = "tool_ask_timeout";
+
+    // 工作空间外路径访问确认（后端 -> 前端）
+    String PATH_ACCESS_CONFIRM = "path_access_confirm";
+
+    // 路径访问确认超时/取消（后端 -> 前端）
+    String PATH_ACCESS_CONFIRM_TIMEOUT = "path_access_confirm_timeout";
 }

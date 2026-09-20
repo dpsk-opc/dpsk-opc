@@ -56,6 +56,11 @@ public class AgentComponentFactory {
     private final String modelName;
 
     /**
+     * 工作空间边界解析器（可为 null，表示未启用工作空间能力）。
+     */
+    private final com.xiaomizhou.dpsk.tool.workspace.WorkspaceResolver workspaceResolver;
+
+    /**
      * 构造工厂。
      *
      * @param memorySystem              记忆系统
@@ -73,6 +78,18 @@ public class AgentComponentFactory {
                                  String apiKey,
                                  String baseUrl,
                                  String modelName) {
+        this(memorySystem, toolRegistry, toolInvocationInterceptor, applicationContext,
+                apiKey, baseUrl, modelName, null);
+    }
+
+    public AgentComponentFactory(MemorySystem memorySystem,
+                                 ToolRegistry toolRegistry,
+                                 ToolInvocationInterceptor toolInvocationInterceptor,
+                                 ApplicationContext applicationContext,
+                                 String apiKey,
+                                 String baseUrl,
+                                 String modelName,
+                                 com.xiaomizhou.dpsk.tool.workspace.WorkspaceResolver workspaceResolver) {
         this.memorySystem = memorySystem;
         this.toolRegistry = toolRegistry;
         this.toolInvocationInterceptor = toolInvocationInterceptor;
@@ -80,6 +97,23 @@ public class AgentComponentFactory {
         this.apiKey = apiKey;
         this.baseUrl = baseUrl;
         this.modelName = modelName;
+        this.workspaceResolver = workspaceResolver;
+    }
+
+    /**
+     * 解析执行期工作空间边界。
+     *
+     * @param agentWorkspace Agent 配置的 workspace
+     * @param agentCode      Agent 编码（用于默认值推导）
+     * @param sharedWorkspace 群 / 专家团公共产出目录（可为空）
+     * @return 边界集合；未启用时返回空 scope
+     */
+    public com.xiaomizhou.dpsk.tool.workspace.WorkspaceScope resolveWorkspace(
+            String agentWorkspace, String agentCode, String sharedWorkspace) {
+        if (workspaceResolver == null) {
+            return com.xiaomizhou.dpsk.tool.workspace.WorkspaceScope.builder().build();
+        }
+        return workspaceResolver.resolve(agentWorkspace, agentCode, sharedWorkspace);
     }
 
     /**
@@ -291,8 +325,32 @@ public class AgentComponentFactory {
      * 获取 Agent 绑定的工具列表
      */
     public List<ToolProvider> getToolProviders(String agentCode, String userCode, String conversationCode, List<String> mcpCodes) {
+        return getToolProviders(agentCode, userCode, conversationCode, mcpCodes, null);
+    }
+
+    /**
+     * 获取 Agent 绑定的工具列表（带工作空间边界）。
+     *
+     * @param workspaceScope 工作空间边界集合，用于文件访问管控
+     */
+    public List<ToolProvider> getToolProviders(String agentCode, String userCode, String conversationCode,
+                                               List<String> mcpCodes,
+                                               com.xiaomizhou.dpsk.tool.workspace.WorkspaceScope workspaceScope) {
+        return getToolProviders(agentCode, userCode, conversationCode, mcpCodes, workspaceScope, null);
+    }
+
+    /**
+     * 获取 Agent 绑定的工具列表（带工作空间边界与用户消息）。
+     *
+     * @param userContent 本轮用户消息文本，用于"用户明确给出路径即授权"的判定（D9）
+     */
+    public List<ToolProvider> getToolProviders(String agentCode, String userCode, String conversationCode,
+                                               List<String> mcpCodes,
+                                               com.xiaomizhou.dpsk.tool.workspace.WorkspaceScope workspaceScope,
+                                               String userContent) {
         LangChain4JToolBridge bridge = LangChain4JToolBridge.forAgent(
-                toolRegistry, toolInvocationInterceptor, applicationContext, agentCode, userCode, conversationCode, mcpCodes);
+                toolRegistry, toolInvocationInterceptor, applicationContext, agentCode, userCode,
+                conversationCode, mcpCodes, workspaceScope, userContent);
         return Collections.singletonList(bridge);
     }
 
@@ -311,7 +369,31 @@ public class AgentComponentFactory {
      */
     public Function<ToolExecutionRequest, ToolExecutionResultMessage> getToolExecutionResultMessageFunction(
             String agentCode, String userCode, String conversationCode, List<String> mcpCodes) {
-        return new ToolExecutionResultMessageFunction(agentCode, userCode, conversationCode, mcpCodes);
+        return getToolExecutionResultMessageFunction(agentCode, userCode, conversationCode, mcpCodes, null);
+    }
+
+    /**
+     * 幻觉兜底策略工厂方法（带工作空间边界）。
+     *
+     * @param workspaceScope 工作空间边界集合，用于文件访问管控
+     */
+    public Function<ToolExecutionRequest, ToolExecutionResultMessage> getToolExecutionResultMessageFunction(
+            String agentCode, String userCode, String conversationCode, List<String> mcpCodes,
+            com.xiaomizhou.dpsk.tool.workspace.WorkspaceScope workspaceScope) {
+        return getToolExecutionResultMessageFunction(agentCode, userCode, conversationCode,
+                mcpCodes, workspaceScope, null);
+    }
+
+    /**
+     * 幻觉兜底策略工厂方法（带工作空间边界与用户消息）。
+     *
+     * @param userContent 本轮用户消息文本，用于"用户明确给出路径即授权"的判定（D9）
+     */
+    public Function<ToolExecutionRequest, ToolExecutionResultMessage> getToolExecutionResultMessageFunction(
+            String agentCode, String userCode, String conversationCode, List<String> mcpCodes,
+            com.xiaomizhou.dpsk.tool.workspace.WorkspaceScope workspaceScope, String userContent) {
+        return new ToolExecutionResultMessageFunction(agentCode, userCode, conversationCode,
+                mcpCodes, workspaceScope, userContent);
     }
 
     /**
@@ -323,30 +405,53 @@ public class AgentComponentFactory {
         private final String userCode;
         private final String conversationCode;
         private final List<String> mcpCodes;
+        private final com.xiaomizhou.dpsk.tool.workspace.WorkspaceScope workspaceScope;
+        private final String userContent;
 
         public ToolExecutionResultMessageFunction(String agentCode, String userCode,
                                                   String conversationCode, List<String> mcpCodes) {
+            this(agentCode, userCode, conversationCode, mcpCodes, null, null);
+        }
+
+        public ToolExecutionResultMessageFunction(String agentCode, String userCode,
+                                                  String conversationCode, List<String> mcpCodes,
+                                                  com.xiaomizhou.dpsk.tool.workspace.WorkspaceScope workspaceScope) {
+            this(agentCode, userCode, conversationCode, mcpCodes, workspaceScope, null);
+        }
+
+        public ToolExecutionResultMessageFunction(String agentCode, String userCode,
+                                                  String conversationCode, List<String> mcpCodes,
+                                                  com.xiaomizhou.dpsk.tool.workspace.WorkspaceScope workspaceScope,
+                                                  String userContent) {
             this.agentCode = agentCode;
             this.userCode = userCode;
             this.conversationCode = conversationCode;
             this.mcpCodes = mcpCodes;
+            this.workspaceScope = workspaceScope;
+            this.userContent = userContent;
         }
 
         @Override
         public ToolExecutionResultMessage apply(ToolExecutionRequest toolExecutionRequest) {
             String toolName = toolExecutionRequest.name();
+
+            // add_tools 是元工具：它不在工具注册表中（由桥接器内联处理），也不参与工作空间校验。
+            // 若走下面的拦截器路径会得到"工具不存在: add_tools"，因此这里直接交给桥接器执行。
+            if (LangChain4JToolBridge.ADD_TOOLS_TOOL_NAME.equalsIgnoreCase(toolName)) {
+                return ToolExecutionResultMessage.toolExecutionResultMessage(toolExecutionRequest,
+                        executeMetaTool(toolExecutionRequest));
+            }
+
             ToolExecutionResult result;
             try {
-                // 复用桥接器的结构化执行逻辑，带上完整的上下文与 MCP 范围，
-                // 这样 ask_user 等依赖上下文参数的工具也能正常执行
-                LangChain4JToolBridge bridge = LangChain4JToolBridge.forAgent(
-                        toolRegistry, toolInvocationInterceptor, applicationContext,
-                        agentCode, userCode, conversationCode, mcpCodes);
+                // 带上完整的上下文与 MCP 范围，这样 ask_user 等依赖上下文参数的工具也能正常执行
                 ToolCall toolCall = ToolUtils.toToolCall(toolExecutionRequest);
                 result = toolInvocationInterceptor.execute(toolCall, ToolContext.builder()
                         .agentCode(agentCode)
                         .userCode(userCode)
                         .conversationCode(conversationCode)
+                        .workspaceScope(workspaceScope)
+                        .userContent(userContent)
                         .build());
             } catch (Exception e) {
                 log.error("幻觉工具执行出错! toolExecutionRequest: {}", toolExecutionRequest, e);
@@ -368,9 +473,47 @@ public class AgentComponentFactory {
                                 LangChain4JToolBridge.ADD_TOOLS_TOOL_NAME, toolName));
             }
 
-            // 其它失败（参数错误 / 执行报错）：回传错误信息让模型自行修正
+            // 参数类错误：本次是"幻觉调用"（模型没先 add_tools 就直接调用，未拿到参数 schema），
+            // 因此除了回传具体错误，还要引导模型先 add_tools 获取正确的参数定义。
+            // 注意：仅对参数类错误这样引导；执行类错误（如文件不存在）提示 add_tools 会误导模型绕圈。
+            if (result != null && isParameterError(result)) {
+                log.warn("幻觉工具 '{}' 参数不合法，引导模型先调用 {} 获取参数定义",
+                        toolName, LangChain4JToolBridge.ADD_TOOLS_TOOL_NAME);
+                return ToolExecutionResultMessage.toolExecutionResultMessage(toolExecutionRequest,
+                        "%s\n提示：你尚未通过 [%s] 添加该工具，可能没有拿到正确的参数定义。"
+                                .formatted(result.toLlmText(), LangChain4JToolBridge.ADD_TOOLS_TOOL_NAME)
+                                + "请先调用 [%s] 添加 [%s]，再按其参数定义重新调用。".formatted(
+                                LangChain4JToolBridge.ADD_TOOLS_TOOL_NAME, toolName));
+            }
+
+            // 其它失败（执行报错）：回传错误信息让模型自行修正
             String message = result == null ? "工具执行未返回结果" : result.toLlmText();
             return ToolExecutionResultMessage.toolExecutionResultMessage(toolExecutionRequest, message);
+        }
+
+        /**
+         * 判断是否为参数类错误（需要引导模型先 add_tools 拿参数定义）。
+         */
+        private boolean isParameterError(ToolExecutionResult result) {
+            return ToolExecutionResult.ERROR_PARAM_INVALID.equals(result.getErrorCode());
+        }
+
+        /**
+         * 执行元工具（当前仅 add_tools）。
+         * <p>
+         * 元工具由 {@link LangChain4JToolBridge} 内联处理，不在工具注册表中，
+         * 因此必须走桥接器而非拦截器。
+         */
+        private String executeMetaTool(ToolExecutionRequest toolExecutionRequest) {
+            try {
+                LangChain4JToolBridge bridge = LangChain4JToolBridge.forAgent(
+                        toolRegistry, toolInvocationInterceptor, applicationContext,
+                        agentCode, userCode, conversationCode, mcpCodes, workspaceScope);
+                return bridge.execute(toolExecutionRequest, null);
+            } catch (Exception e) {
+                log.error("元工具执行出错! toolExecutionRequest: {}", toolExecutionRequest, e);
+                return "工具执行失败: " + e.getMessage();
+            }
         }
     }
 
@@ -396,8 +539,48 @@ public class AgentComponentFactory {
      * 注入 L2 长期事实到 System Prompt（群聊使用）
      */
     public String enrichSystemPrompt(AgentDef def, String targetCode) {
+        return enrichSystemPrompt(def, targetCode, null);
+    }
+
+    /**
+     * 注入 L2 长期事实 + 工作空间规则到 System Prompt（群聊使用）。
+     * <p>
+     * 工作空间规则依赖 {@code spec.primaryWorkspace} / {@code spec.sharedWorkspace}，
+     * 调用前请确保已通过 {@link #applyWorkspace(AgentBuildSpec, String, String, String)} 回填。
+     *
+     * @param def   Agent 定义
+     * @param targetCode 目标编码（群聊为群组编码）
+     * @param spec  构建规范（用于注入工作空间边界规则）
+     */
+    public String enrichSystemPrompt(AgentDef def, String targetCode, AgentBuildSpec spec) {
         ContextAssembler assembler = memorySystem.getContextAssembler();
-        return assembler.enrichSystemPrompt(def.toPersonaText(), def.getCode(), targetCode);
+        return assembler.enrichSystemPrompt(def.toPersonaText(), def.getCode(), targetCode, spec);
+    }
+
+    /**
+     * 解析工作空间边界并回填到 spec。
+     * <p>
+     * 必须回填，因为 system prompt 的工作空间规则依赖 {@code spec.primaryWorkspace}
+     * 与 {@code spec.sharedWorkspace}；工具侧的边界校验也复用同一份解析结果，
+     * 保证"提示词里告诉模型的路径"与"实际允许读写的路径"完全一致。
+     *
+     * @param spec           构建规范（原地修改）
+     * @param agentWorkspace Agent 配置的 workspace（可为空）
+     * @param agentCode      Agent 编码（用于默认值推导）
+     * @param sharedWorkspace 群 / 专家团公共产出目录（可为空）
+     * @return 解析后的边界集合
+     */
+    public com.xiaomizhou.dpsk.tool.workspace.WorkspaceScope applyWorkspace(AgentBuildSpec spec,
+                                                                            String agentWorkspace,
+                                                                            String agentCode,
+                                                                            String sharedWorkspace) {
+        com.xiaomizhou.dpsk.tool.workspace.WorkspaceScope scope =
+                resolveWorkspace(agentWorkspace, agentCode, sharedWorkspace);
+        if (spec != null) {
+            spec.setPrimaryWorkspace(scope.getPrimaryWorkspace());
+            spec.setSharedWorkspace(sharedWorkspace);
+        }
+        return scope;
     }
 
     /**

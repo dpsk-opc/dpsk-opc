@@ -1,9 +1,14 @@
 package com.xiaomizhou.dpsk.tool.model;
 
+import com.xiaomizhou.dpsk.tool.workspace.FileSystemAccess;
+import com.xiaomizhou.dpsk.tool.workspace.ToolPathParam;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * 工具元数据，对应 t_tool 表。
@@ -63,6 +68,23 @@ public class ToolMetadata {
 
     /** 所属 Agent（空为公共） */
     private String ownerAgentCode;
+
+    /**
+     * 文件系统访问能力位。
+     * <p>
+     * {@code NONE}（默认）表示不碰文件系统，完全跳过路径校验；
+     * {@code READ/WRITE} 表示会读取/写入文件系统，进入工作空间边界校验。
+     */
+    @Builder.Default
+    private FileSystemAccess filesystemAccess = FileSystemAccess.NONE;
+
+    /**
+     * 路径参数声明（哪些参数是文件系统路径、方向、类型）。
+     * <p>
+     * 仅对本地自建工具有效；MCP / 脚本 / 命令类工具为空，走模型抽取兜底。
+     */
+    @Builder.Default
+    private List<ToolPathParam> pathParams = new ArrayList<>();
 
 
     public static final String RISK_NORMAL = "NORMAL";

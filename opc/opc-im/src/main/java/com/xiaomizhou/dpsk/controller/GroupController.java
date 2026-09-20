@@ -82,6 +82,11 @@ public class GroupController {
             return Results.fail("创建群组失败");
         }
 
+        // 群工作空间（公共产出目录）：仅在用户显式指定时落库，未指定则运行时按默认值推导
+        if (StringUtils.isNotBlank(cmd.getWorkspace())) {
+            chatGroupComponent.updateGroup(groupCode, null, null, cmd.getWorkspace());
+        }
+
         return Results.ok(groupCode);
     }
 
@@ -101,7 +106,8 @@ public class GroupController {
         boolean result = chatGroupComponent.updateGroup(
                 cmd.getGroupCode(),
                 cmd.getName(),
-                cmd.getAvatar());
+                cmd.getAvatar(),
+                cmd.getWorkspace());
 
         return result ? Results.ok(true) : Results.fail("更新群组失败，群组不存在");
     }

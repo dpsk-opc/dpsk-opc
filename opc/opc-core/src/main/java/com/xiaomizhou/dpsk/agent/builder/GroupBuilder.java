@@ -4,6 +4,7 @@ import com.xiaomizhou.dpsk.agent.*;
 import com.xiaomizhou.dpsk.agent.data.AgentDef;
 import com.xiaomizhou.dpsk.agent.data.AgentDefProvider;
 import com.xiaomizhou.dpsk.agent.factory.AgentComponentFactory;
+import com.xiaomizhou.dpsk.tool.model.ToolResult;
 import dev.langchain4j.agentic.AgenticServices;
 import dev.langchain4j.agentic.UntypedAgent;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
@@ -86,33 +87,41 @@ public class GroupBuilder implements AgentBuilder {
         // 流式模型（优先使用 Agent 自定义 LLM 配置）
         OpenAiStreamingChatModel model = factory.createStreamingModel(agentDef.getLlmConfig());
 
-        // 注入 L2 长期事实
-        String enrichedPersona = factory.enrichSystemPrompt(agentDef, spec.getGroupCode());
+        // 解析工作空间边界并回填 spec（成员自身 workspace 为主边界 + 群 workspace 作为额外可写公共产出目录）
+        com.xiaomizhou.dpsk.tool.workspace.WorkspaceScope workspaceScope = factory.applyWorkspace(
+                spec, agentDef.getWorkspace(), agentDef.getCode(), spec.getSharedWorkspace());
+
+        // 注入 L2 长期事实 + 工作空间规则（须在 applyWorkspace 之后，规则依赖 spec 上的 workspace 字段）
+        String enrichedPersona = factory.enrichSystemPrompt(agentDef, spec.getGroupCode(), spec);
 
         return AgenticServices.agentBuilder()
                 .streamingChatModel(model)
                 .name(agentDef.getCode())
-                // 显式注入人设 + L2 长期事实，作为 system prompt
+                // 显式注入人设 + L2 长期事实 + 工作空间规则，作为 system prompt
                 .systemMessage(enrichedPersona)
-                .toolProviders(factory.getToolProviders(agentDef.getCode(), spec.getUserCode(), spec.getConversationCode(), spec.getMcpCodes()))
+                .toolProviders(factory.getToolProviders(agentDef.getCode(), spec.getUserCode(),
+                        spec.getConversationCode(), spec.getMcpCodes(), workspaceScope, spec.getUserContent()))
                 .userMessage(spec.getUserContent())
                 .toolExecutionErrorHandler(new ToolExecutionErrorHandler() {
                     @Override
                     public ToolErrorHandlerResult handle(Throwable error, ToolErrorContext context) {
                         log.error("tool execution error:", error);
-                        return ToolErrorHandlerResult.text("llm返回错误.error:" + error.getMessage());
+                        return ToolErrorHandlerResult.text(
+                                "工具执行失败: " + ToolResult.describeError(error) + "。请检查参数或换一种方式重试，不要重复相同调用。");
                     }
                 })
                 .toolArgumentsErrorHandler(new ToolArgumentsErrorHandler() {
                     @Override
                     public ToolErrorHandlerResult handle(Throwable error, ToolErrorContext context) {
                         log.error("tool arguments error:", error);
-                        return ToolErrorHandlerResult.text("工具参数错误. e:" + error.getMessage());
+                        return ToolErrorHandlerResult.text(
+                                "工具参数错误: " + ToolResult.describeError(error) + "。请修正参数格式后重试。");
                     }
                 })
                 // 幻觉情况 => 先尝试执行，失败再引导 add_tools
                 .hallucinatedToolNameStrategy(factory.getToolExecutionResultMessageFunction(
-                        agentDef.getCode(), spec.getUserCode(), spec.getConversationCode(), spec.getMcpCodes()))
+                        agentDef.getCode(), spec.getUserCode(), spec.getConversationCode(), spec.getMcpCodes(),
+                        workspaceScope, spec.getUserContent()))
                 .chatMemoryProvider(memoryId -> factory.createChatMemory(agentSpec))
                 .returnType(TokenStream.class)
                 .maxToolCallingRoundTrips(25)

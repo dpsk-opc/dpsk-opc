@@ -1,6 +1,12 @@
 package com.xiaomizhou.dpsk.tool.buildin;
 
 import com.xiaomizhou.dpsk.tool.ToolMeta;
+import com.xiaomizhou.dpsk.tool.model.ToolContext;
+import com.xiaomizhou.dpsk.tool.workspace.FileSystemAccess;
+import com.xiaomizhou.dpsk.tool.workspace.PathDirection;
+import com.xiaomizhou.dpsk.tool.workspace.PathKind;
+import com.xiaomizhou.dpsk.tool.workspace.PathParamDecl;
+import com.xiaomizhou.dpsk.tool.workspace.WorkspaceScope;
 import dev.langchain4j.agent.tool.P;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
@@ -17,17 +23,28 @@ import java.util.List;
 import java.util.stream.Stream;
 
 /**
+ * 文件工具。
+ * <p>
+ * 本类所有工具的路径参数均已声明（{@link PathParamDecl}），由
+ * {@code PathAccessValidator} 在统一拦截层做工作空间边界校验：
+ * <ul>
+ *   <li>相对路径以工作空间为基准解析（不再相对进程 CWD）；</li>
+ *   <li>越界访问会被拦截，需要用户确认；</li>
+ *   <li>高危路径（系统目录等）直接拒绝。</li>
+ * </ul>
+ *
  * @author eason - vipzhsh@163.com
  * @date 2026/6/1 13:56
- * @description
  */
 @Slf4j
 @ToolMeta(value = "文件工具", level = "normal")
 public class FileTools {
 
-    // 可根据需要设置基础工作目录，防止路径穿越，默认不做限制
+    // 路径边界校验统一由 PathAccessValidator 在拦截层完成，此处不再做限制
     private static final Path BASE_DIR = null; // null 表示不限制
 
+    @ToolMeta(value = "列出目录", filesystemAccess = FileSystemAccess.READ,
+            pathParams = {@PathParamDecl(name = "path", direction = PathDirection.LIST, kind = PathKind.DIR)})
     @dev.langchain4j.agent.tool.Tool(name = "list_files", value = "列出目录下的文件和子目录，支持按文件名关键字过滤和递归搜索")
     public String listFiles(
             @ToolParam(description = "目录路径，支持相对或绝对路径")
@@ -38,10 +55,11 @@ public class FileTools {
             String keyword,
             @ToolParam(description = "是否递归搜索子目录，默认 false")
             @P(description = "是否递归搜索子目录，默认 false")
-            boolean recursive) {
+            boolean recursive,
+            ToolContext context) {
 
         try {
-            Path dir = resolvePath(path);
+            Path dir = resolvePath(path, context);
             if (!Files.isDirectory(dir)) {
                 return "错误：路径不是目录或不存在: " + dir.toAbsolutePath();
             }
@@ -93,13 +111,16 @@ public class FileTools {
         }
     }
 
+    @ToolMeta(value = "读取整个文件", filesystemAccess = FileSystemAccess.READ,
+            pathParams = {@PathParamDecl(name = "path", direction = PathDirection.READ, kind = PathKind.FILE)})
     @dev.langchain4j.agent.tool.Tool(name = "read_whole_file", value = "读取整个文件内容（文本）")
     public String readWholeFile(
             @ToolParam(description = "文件路径")
-            @P(description = "文件路径") String path) {
+            @P(description = "文件路径") String path,
+            ToolContext context) {
 
         try {
-            Path file = resolvePath(path);
+            Path file = resolvePath(path, context);
             if (!Files.isRegularFile(file)) {
                 return "错误：路径不是文件或不存在: " + file.toAbsolutePath();
             }
@@ -110,15 +131,18 @@ public class FileTools {
         }
     }
 
+    @ToolMeta(value = "读取文件指定行", filesystemAccess = FileSystemAccess.READ,
+            pathParams = {@PathParamDecl(name = "path", direction = PathDirection.READ, kind = PathKind.FILE)})
     @Tool(name = "read_file_lines", description = "读取文件的指定行范围（从 startLine 到 endLine，包含两端）。行号从 1 开始。若只指定 startLine，则读取单行。")
     @dev.langchain4j.agent.tool.Tool(name = "read_file_lines", value = "读取文件的指定行范围（从 startLine 到 endLine，包含两端）。行号从 1 开始。若只指定 startLine，则读取单行。")
     public String readFileLines(
             @ToolParam(description = "文件路径") String path,
             @ToolParam(description = "起始行号（从1开始），必填") int startLine,
-            @ToolParam(description = "结束行号（可选，不填则只读起始行") Integer endLine) {
+            @ToolParam(description = "结束行号（可选，不填则只读起始行") Integer endLine,
+            ToolContext context) {
 
         try {
-            Path file = resolvePath(path);
+            Path file = resolvePath(path, context);
             if (!Files.isRegularFile(file)) {
                 return "错误：路径不是文件或不存在: " + file.toAbsolutePath();
             }
@@ -146,6 +170,8 @@ public class FileTools {
         }
     }
 
+    @ToolMeta(value = "写入文件", filesystemAccess = FileSystemAccess.WRITE,
+            pathParams = {@PathParamDecl(name = "path", direction = PathDirection.WRITE, kind = PathKind.FILE)})
     @Tool(name = "write_file", description = "将内容写入文件（覆盖写入）。若文件不存在则自动创建文件，父目录不存在时自动创建父目录。")
     @dev.langchain4j.agent.tool.Tool(name = "write_file", value = "将内容写入文件（覆盖写入）。若文件不存在则自动创建文件，父目录不存在时自动创建父目录。")
     public String writeFile(
@@ -154,10 +180,11 @@ public class FileTools {
             String path,
             @ToolParam(description = "要写入的完整文件内容（会覆盖原有内容）")
             @P(description = "要写入的完整文件内容（会覆盖原有内容）")
-            String content) {
+            String content,
+            ToolContext context) {
 
         try {
-            Path file = resolvePath(path);
+            Path file = resolvePath(path, context);
             ensureParentDir(file);
 
             boolean existed = Files.exists(file);
@@ -178,6 +205,8 @@ public class FileTools {
         }
     }
 
+    @ToolMeta(value = "追加文件内容", filesystemAccess = FileSystemAccess.WRITE,
+            pathParams = {@PathParamDecl(name = "path", direction = PathDirection.WRITE, kind = PathKind.FILE)})
     @Tool(name = "append_to_file", description = "向文件末尾追加内容。若文件不存在则自动创建文件，父目录不存在时自动创建父目录。")
     @dev.langchain4j.agent.tool.Tool(name = "append_to_file", value = "向文件末尾追加内容。若文件不存在则自动创建文件，父目录不存在时自动创建父目录。")
     public String appendToFile(
@@ -186,10 +215,11 @@ public class FileTools {
             String path,
             @ToolParam(description = "要追加的内容")
             @P(description = "要追加的内容")
-            String content) {
+            String content,
+            ToolContext context) {
 
         try {
-            Path file = resolvePath(path);
+            Path file = resolvePath(path, context);
             ensureParentDir(file);
 
             if (Files.isDirectory(file)) {
@@ -224,15 +254,18 @@ public class FileTools {
         }
     }
 
+    @ToolMeta(value = "文件插入内容", filesystemAccess = FileSystemAccess.WRITE,
+            pathParams = {@PathParamDecl(name = "path", direction = PathDirection.WRITE, kind = PathKind.FILE)})
     @Tool(name = "insert_into_file", description = "在文件的指定行号前插入内容（行号从1开始）。插入后原行及之后的内容后移。")
     @dev.langchain4j.agent.tool.Tool(name = "insert_into_file", value = "在文件的指定行号前插入内容（行号从1开始）。插入后原行及之后的内容后移。")
     public String insertIntoFile(
             @ToolParam(description = "文件路径") String path,
             @ToolParam(description = "要插入的内容（可包含换行）") String content,
-            @ToolParam(description = "插入行号（从1开始，在该行之前插入）") int lineNumber) {
+            @ToolParam(description = "插入行号（从1开始，在该行之前插入）") int lineNumber,
+            ToolContext context) {
 
         try {
-            Path file = resolvePath(path);
+            Path file = resolvePath(path, context);
             if (!Files.isRegularFile(file)) {
                 return "错误：文件不存在，无法执行插入: " + file.toAbsolutePath();
             }
@@ -262,14 +295,17 @@ public class FileTools {
         }
     }
 
+    @ToolMeta(value = "搜索文件内容", filesystemAccess = FileSystemAccess.READ,
+            pathParams = {@PathParamDecl(name = "path", direction = PathDirection.READ, kind = PathKind.FILE)})
     @Tool(name = "search_in_file", description = "在文件中搜索包含指定关键字的行，返回行号和内容")
     @dev.langchain4j.agent.tool.Tool(name = "search_in_file", value = "在文件中搜索包含指定关键字的行，返回行号和内容")
     public String searchInFile(
             @ToolParam(description = "文件路径") String path,
-            @ToolParam(description = "搜索关键字（区分大小写）") String keyword) {
+            @ToolParam(description = "搜索关键字（区分大小写）") String keyword,
+            ToolContext context) {
 
         try {
-            Path file = resolvePath(path);
+            Path file = resolvePath(path, context);
             if (!Files.isRegularFile(file)) {
                 return "错误：路径不是文件或不存在: " + file.toAbsolutePath();
             }
@@ -307,4 +343,30 @@ public class FileTools {
         }
     }
 
+    /**
+     * 路径解析（带工作空间基准）。
+     * <p>
+     * 相对路径一律以工作空间为基准解析（D18），不再依赖进程 CWD，
+     * 与 {@code PathGuard} 的规范化口径保持一致。
+     *
+     * @param userPath 用户/模型给出的路径
+     * @param context  工具上下文（可为 null）
+     */
+    private Path resolvePath(String userPath, ToolContext context) throws IOException {
+        if (StringUtils.isBlank(userPath)) {
+            throw new IOException("路径不能为空");
+        }
+        try {
+            Path path = Paths.get(userPath.trim());
+            if (!path.isAbsolute() && context != null) {
+                WorkspaceScope scope = context.getWorkspaceScope();
+                if (scope != null && !scope.isEmpty()) {
+                    path = scope.primaryPath().resolve(path);
+                }
+            }
+            return path.normalize();
+        } catch (Exception e) {
+            throw new IOException("路径不存在或者解析失败: " + e.getMessage());
+        }
+    }
 }

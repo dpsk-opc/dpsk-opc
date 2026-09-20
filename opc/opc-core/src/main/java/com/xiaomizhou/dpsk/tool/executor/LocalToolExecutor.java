@@ -71,7 +71,14 @@ public class LocalToolExecutor implements ToolExecutor {
 
         log.debug("Invoking local tool: {}.{} with params: {}", beanName, methodName, call.getParameters());
 
-        Object[] args = resolveArgs(method, call.getParameters(), context);
+        Object[] args;
+        try {
+            args = resolveArgs(method, call.getParameters(), context);
+        } catch (Exception e) {
+            log.error("Resolve args failed: {}.{}", beanName, methodName, e);
+            return ToolResult.fail(ToolExecutionResult.ERROR_PARAM_INVALID,
+                    "工具参数解析失败: " + describeSignature(method), e);
+        }
 
         Object result;
         try {
@@ -89,14 +96,34 @@ public class LocalToolExecutor implements ToolExecutor {
             log.error("Local tool timeout: {}.{} (>{}s)", beanName, methodName, DEFAULT_TIMEOUT_SECONDS);
             return ToolResult.fail(ToolExecutionResult.ERROR_TIMEOUT,
                     "工具执行超时（>" + DEFAULT_TIMEOUT_SECONDS + " 秒）: " + beanName + "." + methodName);
-        } catch (IllegalArgumentException e) {
-            log.error("Invoke local tool failed: {}.{}", beanName, methodName, e);
-            return ToolResult.fail(ToolExecutionResult.ERROR_PARAM_INVALID,
-                    "工具参数不合法: " + beanName + "." + methodName, e);
         } catch (Exception e) {
-            log.error("Invoke local tool failed: {}.{}", beanName, methodName, e);
+            // 统一解包：CompletableFuture.get() 抛 ExecutionException，
+            // 其中包着真正的业务异常（可能是 IllegalArgumentException / NullPointerException 等）
+            Throwable cause = unwrap(e);
+
+            if (cause instanceof IllegalArgumentException) {
+                // 参数不合法：补充实际收到的参数值，让模型知道该改哪个参数
+                log.error("Invoke local tool failed (param invalid): {}.{} args={}",
+                        beanName, methodName, call.getParameters(), e);
+                return ToolResult.fail(ToolExecutionResult.ERROR_PARAM_INVALID,
+                        "工具参数不合法: " + describeSignature(method)
+                                + "\n实际收到的参数: " + safeArgs(call.getParameters()),
+                        cause);
+            }
+            if (cause instanceof NullPointerException) {
+                // NPE 是参数缺失/为 null 的常见表现，给出可执行提示
+                log.error("Invoke local tool failed (null pointer): {}.{} args={}",
+                        beanName, methodName, call.getParameters(), e);
+                return ToolResult.fail(ToolExecutionResult.ERROR_PARAM_INVALID,
+                        "工具执行时遇到空值（NullPointerException）: " + describeSignature(method)
+                                + "\n实际收到的参数: " + safeArgs(call.getParameters())
+                                + "\n请检查是否有必填参数缺失或为 null。",
+                        cause);
+            }
+
+            log.error("Invoke local tool failed: {}.{} args={}", beanName, methodName, call.getParameters(), e);
             return ToolResult.fail(ToolExecutionResult.ERROR_EXECUTION_ERROR,
-                    "工具执行失败: " + beanName + "." + methodName, e);
+                    "工具执行失败: " + describeSignature(method), cause);
         }
 
         if (result == null) {
@@ -121,6 +148,68 @@ public class LocalToolExecutor implements ToolExecutor {
     private static class ToolInvocationException extends RuntimeException {
         ToolInvocationException(Throwable cause) {
             super(cause);
+        }
+    }
+
+    /**
+     * 解包异常，取最内层的业务异常（剥掉 ExecutionException / ToolInvocationException 等包装）。
+     */
+    private Throwable unwrap(Throwable e) {
+        Throwable current = e;
+        int guard = 0;
+        while (current.getCause() != null && current.getCause() != current && guard++ < 10) {
+            current = current.getCause();
+        }
+        // 若非业务异常（如超时相关），回到原始异常
+        return current instanceof ToolInvocationException ? e : current;
+    }
+
+    /**
+     * 描述方法签名（方法名 + 参数名与类型），用于错误信息中定位问题。
+     */
+    private String describeSignature(Method method) {
+        String params = Arrays.stream(method.getParameters())
+                .map(p -> p.getName() + ": " + p.getType().getSimpleName())
+                .collect(java.util.stream.Collectors.joining(", "));
+        return method.getName() + "(" + params + ")";
+    }
+
+    /**
+     * 安全地序列化参数值，用于错误信息回传。
+     */
+    private String safeArgs(Map<String, Object> params) {
+        if (params == null || params.isEmpty()) {
+            return "{}";
+        }
+        try {
+            StringBuilder sb = new StringBuilder("{");
+            boolean first = true;
+            for (Map.Entry<String, Object> entry : params.entrySet()) {
+                String key = entry.getKey();
+                // 内部字段不展示
+                if (key.startsWith("__")) {
+                    continue;
+                }
+                if (!first) {
+                    sb.append(", ");
+                }
+                first = false;
+                sb.append(key);
+                Object value = entry.getValue();
+                if (value == null) {
+                    sb.append("=null");
+                } else {
+                    String str = String.valueOf(value);
+                    if (str.length() > 200) {
+                        str = str.substring(0, 200) + "...(已截断)";
+                    }
+                    sb.append("=").append(str);
+                }
+            }
+            sb.append("}");
+            return sb.toString();
+        } catch (Exception e) {
+            return params.toString();
         }
     }
 

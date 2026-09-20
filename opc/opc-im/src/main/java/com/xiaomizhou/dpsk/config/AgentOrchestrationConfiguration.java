@@ -49,7 +49,8 @@ public class AgentOrchestrationConfiguration {
             MemorySystem memorySystem,
             ToolRegistry toolRegistry,
             ToolInvocationInterceptor toolInvocationInterceptor,
-            ApplicationContext applicationContext) {
+            ApplicationContext applicationContext,
+            com.xiaomizhou.dpsk.tool.workspace.WorkspaceResolver workspaceResolver) {
         log.info("Creating AgentComponentFactory with model={}, baseUrl={}", modelName, baseUrl);
         return new AgentComponentFactory(
                 memorySystem,
@@ -58,7 +59,8 @@ public class AgentOrchestrationConfiguration {
                 applicationContext,
                 apiKey,
                 baseUrl,
-                modelName);
+                modelName,
+                workspaceResolver);
     }
 
     @Bean

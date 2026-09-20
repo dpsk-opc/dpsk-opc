@@ -25,6 +25,8 @@ import com.xiaomizhou.dpsk.db.model.ChatMessage;
 import com.xiaomizhou.dpsk.db.model.Conversation;
 import com.xiaomizhou.dpsk.db.model.WorkflowNodeLogDO;
 import com.xiaomizhou.dpsk.planning.*;
+import com.xiaomizhou.dpsk.tool.ask.ToolAskManager;
+import com.xiaomizhou.dpsk.tool.workspace.PathAccessConfirmManager;
 import com.xiaomizhou.dpsk.utils.JsonUtils;
 import com.xiaomizhou.dpsk.utils.SequenceUtils;
 import com.xiaomizhou.dpsk.workflow.WorkflowConfirmManager;
@@ -166,6 +168,16 @@ public class AgentBridge {
                 WsUtils.send(new WsMessage(WsMsgType.CANCEL, Map.of("msgCode", msgCode)));
             } catch (Exception e) {
                 log.warn("Failed to send cancel WS notification for msgCode={}", msgCode, e);
+            }
+            // 唤醒阻塞中的 ask_user / 路径确认，避免一直等到超时
+            try {
+                ChatMessage msg = chatMessageComponent.getByCode(msgCode);
+                if (msg != null && StringUtils.isNotBlank(msg.getConversationCode())) {
+                    ToolAskManager.instance().cancelByConversation(msg.getConversationCode());
+                    PathAccessConfirmManager.instance().cancelByConversation(msg.getConversationCode());
+                }
+            } catch (Exception e) {
+                log.warn("Failed to cancel pending asks for msgCode={}", msgCode, e);
             }
         }
         return wasCancelled;
@@ -465,6 +477,7 @@ public class AgentBridge {
                     .conversationCode(conversationCode)
                     .mcpCodes(mcpCodes)
                     .skillPaths(skillPaths)
+                    .primaryWorkspace(agent.getWorkspace())
                     .build();
 
             // 生成流式编码
@@ -578,6 +591,8 @@ public class AgentBridge {
                     .mentionedAgentCodes(mentionedAgentCodes)
                     .recentGroupMessages(recentGroupMessages)
                     .responderAgentCodes(pick == null ? agentCodes : pick.getAgentCodes())
+                    // 群工作空间作为"额外可写公共产出目录"，不放宽成员各自边界
+                    .sharedWorkspace(chatGroupComponent.getWorkspace(targetId))
                     .build();
 
             String streamCode = SequenceUtils.generator().next("STM");

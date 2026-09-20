@@ -4,6 +4,10 @@ import com.google.common.base.Joiner;
 import com.xiaomizhou.dpsk.tool.buildin.LoadSkillTools;
 import com.xiaomizhou.dpsk.tool.model.ToolMetadata;
 import com.xiaomizhou.dpsk.tool.repository.ToolRepository;
+import com.xiaomizhou.dpsk.tool.workspace.FileSystemAccess;
+import com.xiaomizhou.dpsk.tool.workspace.PathParamDecl;
+import com.xiaomizhou.dpsk.tool.workspace.ToolPathParam;
+import com.xiaomizhou.dpsk.utils.JsonUtils;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import dev.langchain4j.community.tool.webscraper.WebScraperTool;
@@ -13,6 +17,7 @@ import org.springframework.aop.framework.AopProxyUtils;
 import org.springframework.context.ApplicationContext;
 
 import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -93,7 +98,10 @@ public class ToolAutoRegistrar {
         String sourceRef = beanName + "." + method.getName();
         String code = "local_" + sourceRef.replace('.', '_');
 
-        ToolMeta meta = clazz.getAnnotation(ToolMeta.class);
+        // 方法级 @ToolMeta 优先于类级：允许同一 Bean 内不同工具声明不同的路径参数与访问方向
+        ToolMeta classMeta = clazz.getAnnotation(ToolMeta.class);
+        ToolMeta methodMeta = method.getAnnotation(ToolMeta.class);
+        ToolMeta meta = methodMeta != null ? methodMeta : classMeta;
 
         if (toolName == null || toolName.isEmpty()) {
             toolName = method.getName();
@@ -101,6 +109,10 @@ public class ToolAutoRegistrar {
 
         // 生成简单的参数 JSON Schema
         String parametersSchema = generateParametersSchema(method);
+
+        // 解析文件系统访问能力位与路径参数声明（工作空间边界校验依赖）
+        FileSystemAccess filesystemAccess = resolveFileSystemAccess(meta);
+        List<ToolPathParam> pathParams = resolvePathParams(meta);
 
         // 检查 DB 中是否已存在
         ToolMetadata existing = toolRepository.findByCode(code);
@@ -110,7 +122,9 @@ public class ToolAutoRegistrar {
             existing.setDescription(description);
             existing.setParametersSchema(parametersSchema);
             existing.setSourceRef(sourceRef);
-            existing.setCategory(Objects.isNull(meta) ? "" : meta.category());
+            existing.setCategory(Objects.isNull(classMeta) ? "" : classMeta.category());
+            existing.setFilesystemAccess(filesystemAccess);
+            existing.setPathParams(pathParams);
             toolRepository.save(existing);
         } else {
             // 新增
@@ -123,14 +137,17 @@ public class ToolAutoRegistrar {
                     .sourceRef(sourceRef)
                     .riskLevel(ToolMetadata.RISK_NORMAL)
                     .status(ToolMetadata.STATUS_ENABLED)
-                    .category(Objects.isNull(meta) ? "" : meta.category())
-                    .tags(Objects.isNull(meta) || ArrayUtils.isEmpty(meta.tags()) ? "" : Joiner.on(",").join(meta.tags()))
+                    .category(Objects.isNull(classMeta) ? "" : classMeta.category())
+                    .tags(Objects.isNull(classMeta) || ArrayUtils.isEmpty(classMeta.tags()) ? "" : Joiner.on(",").join(classMeta.tags()))
                     .cacheable(Objects.nonNull(meta) && meta.cacheable())
                     .timeoutMs(Objects.isNull(meta) ? 0 : (int) meta.timeout())
                     .ownerAgentCode("")
+                    .filesystemAccess(filesystemAccess)
+                    .pathParams(pathParams)
                     .build();
             toolRepository.save(metadata);
-            log.info("Registered new tool: {} (code={})", toolName, code);
+            log.info("Registered new tool: {} (code={}, fsAccess={}, pathParams={})",
+                    toolName, code, filesystemAccess, pathParams.size());
         }
 
         // 同步到内存注册中心
@@ -138,6 +155,43 @@ public class ToolAutoRegistrar {
         if (memMeta != null) {
             toolRegistry.register(memMeta);
         }
+    }
+
+    /**
+     * 解析文件系统访问能力位。
+     * <p>
+     * 优先取 {@code @ToolMeta} 上的声明；未声明时按路径参数声明的方向推断
+     * （有写类路径参数 → WRITE，只有读类 → READ，都没有 → NONE）。
+     */
+    private FileSystemAccess resolveFileSystemAccess(ToolMeta meta) {
+        if (meta != null && meta.filesystemAccess() != FileSystemAccess.NONE) {
+            return meta.filesystemAccess();
+        }
+        // 未显式声明能力位时，按路径参数推断，避免"声明了路径但能力位为 NONE"导致校验被跳过
+        if (meta != null && !ArrayUtils.isEmpty(meta.pathParams())) {
+            boolean hasWrite = Arrays.stream(meta.pathParams())
+                    .anyMatch(p -> p.direction().isWriteLike());
+            return hasWrite ? FileSystemAccess.WRITE : FileSystemAccess.READ;
+        }
+        return FileSystemAccess.NONE;
+    }
+
+    /**
+     * 解析路径参数声明。
+     */
+    private List<ToolPathParam> resolvePathParams(ToolMeta meta) {
+        List<ToolPathParam> params = new ArrayList<>();
+        if (meta == null || ArrayUtils.isEmpty(meta.pathParams())) {
+            return params;
+        }
+        for (PathParamDecl decl : meta.pathParams()) {
+            params.add(ToolPathParam.builder()
+                    .name(decl.name())
+                    .direction(decl.direction())
+                    .kind(decl.kind())
+                    .build());
+        }
+        return params;
     }
 
     /**

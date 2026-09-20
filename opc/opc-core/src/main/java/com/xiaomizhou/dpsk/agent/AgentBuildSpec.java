@@ -89,6 +89,20 @@ public class AgentBuildSpec {
      */
     private List<String> skillPaths;
 
+    /**
+     * 主工作空间（当前 Agent 的工作空间）。
+     * <p>
+     * 作为文件读写的默认边界，也是相对路径的解析基准。
+     */
+    private String primaryWorkspace;
+
+    /**
+     * 共享工作空间（群 / 专家团的公共产出目录）。
+     * <p>
+     * 只作为<b>额外可写目录</b>追加，不放宽成员自身边界，避免"进群即提权"。
+     */
+    private String sharedWorkspace;
+
     /** 扩展参数（透传给 Builder） */
     private Map<String, Object> params;
 

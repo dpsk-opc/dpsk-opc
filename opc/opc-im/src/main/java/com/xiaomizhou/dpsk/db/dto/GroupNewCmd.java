@@ -33,4 +33,9 @@ public class GroupNewCmd {
      */
     private List<String> memberCodes;
 
+    /**
+     * 群工作空间（公共产出目录），可选；不传则使用系统默认值
+     */
+    private String workspace;
+
 }
