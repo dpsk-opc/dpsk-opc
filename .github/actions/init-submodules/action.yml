@@ -1,0 +1,30 @@
+name: Init submodules
+description: 用 PAT 拉取私有子模块（将 .gitmodules 中的 SSH 地址改写为 HTTPS+token）
+
+inputs:
+  token:
+    description: 对 opc / opc-cat 有 read 权限的 PAT
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Rewrite .gitmodules and update submodules
+      shell: bash
+      env:
+        SUBMODULE_TOKEN: ${{ inputs.token }}
+      run: |
+        set -e
+        if [ -z "$SUBMODULE_TOKEN" ]; then
+          echo "::error::未配置 secrets.SUBMODULE_TOKEN（需对 opc、opc-cat 有 read 权限的 PAT）"
+          exit 1
+        fi
+        # 把 .gitmodules 中的 SSH 地址改写为 HTTPS + token
+        # （不回显 .gitmodules，避免 token 出现在日志中）
+        # 用 -i.bak 以保证 GNU sed / BSD sed 都可移植，随后删除备份
+        sed -i.bak -E "s#(url = )git@github.com:#\1https://x-access-token:${SUBMODULE_TOKEN}@github.com/#" .gitmodules
+        rm -f .gitmodules.bak
+        git submodule sync --recursive
+        git submodule update --init --recursive
+        echo "子模块拉取完成："
+        git submodule status

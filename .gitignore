@@ -1,0 +1,28 @@
+# ========== 构建产物（聚合仓根） ==========
+/build/
+
+# ========== 子模块内容由各自仓库管理 ==========
+# opc/ 与 cat/ 是子模块，其内部 .gitignore 各自生效
+
+# ========== IDE ==========
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+.settings/
+.classpath
+.project
+.apt_generated
+.factorypath
+.sts4-cache
+
+# ========== 系统 ==========
+.DS_Store
+Thumbs.db
+
+# ========== 日志 ==========
+*.log
+
+# ========== 工具（CodeBuddy 项目数据，不提交） ==========
+.codebuddy/

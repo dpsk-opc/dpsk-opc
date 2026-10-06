@@ -1,0 +1,320 @@
+name: Release
+
+# 仅在合并进 main 时触发（推送 develop 不构建）
+on:
+  push:
+    branches: [main]
+  # 允许手动触发（便于验证 / 重跑）
+  workflow_dispatch:
+
+permissions:
+  contents: write   # 创建 tag / Release 需要
+
+jobs:
+  # ============================================================
+  # Job 0: 版本解析（三平台共享，避免重复判断）
+  # ============================================================
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      skip: ${{ steps.resolve.outputs.skip }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve version
+        id: resolve
+        shell: bash
+        run: |
+          set -e
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::VERSION 格式非法: '$VERSION'（要求三段数字，如 1.0.0）"
+            exit 1
+          fi
+          TAG="v${VERSION}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "版本号: $VERSION / tag: $TAG"
+
+          # 幂等保护：tag 已存在则跳过发布
+          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q "refs/tags/$TAG$"; then
+            echo "::warning::tag $TAG 已存在，跳过发布（请先修改 VERSION 再合并 main）"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ============================================================
+  # Job 1: Windows 构建
+  # ============================================================
+  build-windows:
+    needs: version
+    if: needs.version.outputs.skip == 'false'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Init submodules
+        uses: ./.github/actions/init-submodules
+        with:
+          token: ${{ secrets.SUBMODULE_TOKEN }}
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.pnpm-store
+          key: pnpm-${{ runner.os }}-${{ hashFiles('cat/pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
+      - name: Build (windows)
+        shell: bash
+        env:
+          OPC_VERSION: ${{ needs.version.outputs.version }}
+          OPC_PLATFORM: windows
+          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+        run: bash build.sh --clean --platform windows
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-windows
+          path: |
+            build/installer/*.exe
+          if-no-files-found: error
+
+  # ============================================================
+  # Job 2: Linux 构建（AppImage + deb）
+  # ============================================================
+  build-linux:
+    needs: version
+    if: needs.version.outputs.skip == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Init submodules
+        uses: ./.github/actions/init-submodules
+        with:
+          token: ${{ secrets.SUBMODULE_TOKEN }}
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.pnpm-store
+          key: pnpm-${{ runner.os }}-${{ hashFiles('cat/pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
+      - name: Install Linux packaging deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fakeroot dpkg rpm
+
+      - name: Build (linux)
+        shell: bash
+        env:
+          OPC_VERSION: ${{ needs.version.outputs.version }}
+          OPC_PLATFORM: linux
+          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+        run: bash build.sh --clean --platform linux
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-linux
+          path: |
+            build/installer/*.AppImage
+            build/installer/*.deb
+          if-no-files-found: error
+
+  # ============================================================
+  # Job 3: macOS 构建（未签名 dmg）
+  #   ⚠️ 必须在 macOS runner，且按 10x 倍率计费（private 仓库）
+  # ============================================================
+  build-macos:
+    needs: version
+    if: needs.version.outputs.skip == 'false'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Init submodules
+        uses: ./.github/actions/init-submodules
+        with:
+          token: ${{ secrets.SUBMODULE_TOKEN }}
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ~/.pnpm-store
+          key: pnpm-${{ runner.os }}-${{ hashFiles('cat/pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
+      - name: Build (macos)
+        shell: bash
+        env:
+          OPC_VERSION: ${{ needs.version.outputs.version }}
+          OPC_PLATFORM: macos
+          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+          # 未签名构建：跳过签名/公证
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+        run: bash build.sh --clean --platform macos
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-macos
+          path: |
+            build/installer/*.dmg
+            build/installer/*.zip
+          if-no-files-found: error
+
+  # ============================================================
+  # Job 4: 汇总 Release（下载三平台产物 → 打 tag → 建 Release）
+  # ============================================================
+  release:
+    needs: [version, build-windows, build-linux, build-macos]
+    if: needs.version.outputs.skip == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: List artifacts
+        run: find dist -type f | sort
+
+      - name: Create tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          TAG="${{ needs.version.outputs.tag }}"
+          git tag -a "$TAG" -m "Release $TAG"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$TAG"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          TAG="${{ needs.version.outputs.tag }}"
+          # 收集所有产物（各平台子目录展开）
+          ARGS=()
+          while IFS= read -r f; do
+            ARGS+=("$f")
+          done < <(find dist -type f)
+          echo "将上传 ${#ARGS[@]} 个文件"
+          gh release create "$TAG" \
+            --title "Yoo $TAG" \
+            --generate-notes \
+            "${ARGS[@]}"
+          echo "Release $TAG 创建完成"
+
+      - name: Release notes (unsigned macOS warning)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ needs.version.outputs.tag }}"
+          gh release edit "$TAG" --notes "$(gh release view "$TAG" --json body -q .body)
+
+          ---
+
+          ## macOS 安装说明（未签名版本）
+
+          本版本 **未经 Apple 代码签名与公证**，首次打开会被系统拦截，请按以下方式绕过：
+
+          1. 将 \`Yoo.app\` 拖入「应用程序」文件夹
+          2. **右键 → 打开**（不要双击），在弹窗中再次点「打开」
+          3. 若仍提示「已损坏」，在终端执行：
+             \`\`\`
+             xattr -cr /Applications/Yoo.app
+             \`\`\`
+
+          ## Linux 安装说明
+
+          - **AppImage**：\`chmod +x Yoo-*.AppImage && ./Yoo-*.AppImage\`
+          - **deb**：\`sudo dpkg -i yoo_*.deb\`（依赖缺失可执行 \`sudo apt-get -f install\`）"
+
+  # ============================================================
+  # 跳过时给出明确结论
+  # ============================================================
+  skipped:
+    needs: version
+    if: needs.version.outputs.skip == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "本次未发布：tag 已存在。修改 VERSION 后重新合并 main 即可发版。"

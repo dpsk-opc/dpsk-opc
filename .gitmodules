@@ -1,0 +1,8 @@
+[submodule "opc"]
+	path = opc
+	url = git@github.com:dpsk-opc/opc.git
+	branch = develop-2026-09-27
+[submodule "cat"]
+	path = cat
+	url = git@github.com:dpsk-opc/opc-cat.git
+	branch = develop
