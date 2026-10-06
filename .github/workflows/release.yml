@@ -75,20 +75,29 @@ jobs:
           java-version: '17'
           cache: maven
 
-      - name: Setup Node 20
+      # pnpm 11 依赖内置模块 node:sqlite（Node 22.13+ 才默认可用），Node 20 会直接崩溃
+      - name: Setup Node 22
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
+      # 必须与前端 cat/pnpm-workspace.yaml 匹配：该文件是 pnpm 11 配置
+      # （allowBuilds 放行 electron/esbuild 的 postinstall），pnpm < 11 会导致
+      # Electron 二进制缺失；pnpm 11 又要求 Node >= 22.13（内置 node:sqlite）
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 11.5.3
 
+      # pnpm 11 的默认 store 路径不是 ~/.pnpm-store，需动态获取才能命中缓存
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_ENV"
+
       - name: Cache pnpm store
         uses: actions/cache@v4
         with:
-          path: ~/.pnpm-store
+          path: ${{ env.STORE_PATH }}
           key: pnpm11-${{ runner.os }}-${{ hashFiles('cat/pnpm-lock.yaml') }}
           restore-keys: pnpm11-${{ runner.os }}-
 
@@ -135,20 +144,29 @@ jobs:
           java-version: '17'
           cache: maven
 
-      - name: Setup Node 20
+      # pnpm 11 依赖内置模块 node:sqlite（Node 22.13+ 才默认可用），Node 20 会直接崩溃
+      - name: Setup Node 22
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
+      # 必须与前端 cat/pnpm-workspace.yaml 匹配：该文件是 pnpm 11 配置
+      # （allowBuilds 放行 electron/esbuild 的 postinstall），pnpm < 11 会导致
+      # Electron 二进制缺失；pnpm 11 又要求 Node >= 22.13（内置 node:sqlite）
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 11.5.3
 
+      # pnpm 11 的默认 store 路径不是 ~/.pnpm-store，需动态获取才能命中缓存
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_ENV"
+
       - name: Cache pnpm store
         uses: actions/cache@v4
         with:
-          path: ~/.pnpm-store
+          path: ${{ env.STORE_PATH }}
           key: pnpm11-${{ runner.os }}-${{ hashFiles('cat/pnpm-lock.yaml') }}
           restore-keys: pnpm11-${{ runner.os }}-
 
@@ -202,20 +220,29 @@ jobs:
           java-version: '17'
           cache: maven
 
-      - name: Setup Node 20
+      # pnpm 11 依赖内置模块 node:sqlite（Node 22.13+ 才默认可用），Node 20 会直接崩溃
+      - name: Setup Node 22
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
+      # 必须与前端 cat/pnpm-workspace.yaml 匹配：该文件是 pnpm 11 配置
+      # （allowBuilds 放行 electron/esbuild 的 postinstall），pnpm < 11 会导致
+      # Electron 二进制缺失；pnpm 11 又要求 Node >= 22.13（内置 node:sqlite）
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 11.5.3
 
+      # pnpm 11 的默认 store 路径不是 ~/.pnpm-store，需动态获取才能命中缓存
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_ENV"
+
       - name: Cache pnpm store
         uses: actions/cache@v4
         with:
-          path: ~/.pnpm-store
+          path: ${{ env.STORE_PATH }}
           key: pnpm11-${{ runner.os }}-${{ hashFiles('cat/pnpm-lock.yaml') }}
           restore-keys: pnpm11-${{ runner.os }}-
 

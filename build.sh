@@ -14,7 +14,8 @@
 #  要求:
 #    - JDK 17+（带 jpackage）
 #    - Maven
-#    - Node.js 18+ + pnpm
+#    - Node.js >= 22.13 + pnpm 11（pnpm 11 依赖内置模块 node:sqlite，
+#      Node 20/21 不存在该模块，启动即报 ERR_UNKNOWN_BUILTIN_MODULE）
 #    - 跨平台提示：macOS 必须在 macOS 机器/runner 上构建（jpackage 不支持交叉编译）
 #
 #  目录假设（聚合仓结构，子模块为单层）:
@@ -178,6 +179,47 @@ resolve_version() {
 }
 
 #===============================================================================
+# Node 版本校验
+#   pnpm 11 启动时会 require 内置模块 node:sqlite，该模块自 Node 22.13 起默认可用。
+#   Node 20/21 上 pnpm 直接抛 ERR_UNKNOWN_BUILTIN_MODULE，故在此提前拦截。
+#===============================================================================
+REQUIRED_NODE_MAJOR=22
+REQUIRED_NODE_MINOR=13
+
+check_node_version() {
+  local cur major minor
+  cur="$(node -v | sed 's/^v//')"
+  major="${cur%%.*}"
+  minor="$(echo "$cur" | cut -d. -f2)"
+  if [ -z "$minor" ]; then minor=0; fi
+
+  if [ "$major" -lt "$REQUIRED_NODE_MAJOR" ] \
+     || { [ "$major" -eq "$REQUIRED_NODE_MAJOR" ] && [ "$minor" -lt "$REQUIRED_NODE_MINOR" ]; }; then
+    log_error "Node.js 版本过低: v$cur（需 >= v$REQUIRED_NODE_MAJOR.$REQUIRED_NODE_MINOR，pnpm 11 依赖 node:sqlite）"
+    exit 1
+  fi
+}
+
+#===============================================================================
+# pnpm 版本校验（与前端 cat/pnpm-workspace.yaml 联动）
+#   前端的 pnpm-workspace.yaml 是 pnpm 11 配置（allowBuilds 字段，pnpm 10 名为
+#   onlyBuiltDependencies）。若 pnpm < 11，该字段不生效，Electron / esbuild 的
+#   postinstall 会被默认策略拦截（ERR_PNPM_IGNORED_BUILDS），导致 Electron 运行时
+#   二进制缺失 —— 打包能过、装出来的应用起不来。故在此强制 pnpm >= 11。
+#===============================================================================
+REQUIRED_PNPM_MAJOR=11
+
+check_pnpm_version() {
+  local cur major
+  cur="$(pnpm -v 2>/dev/null | head -1 | sed 's/^v//' || true)"
+  major="${cur%%.*}"
+  if [ -z "$major" ] || ! [[ "$major" =~ ^[0-9]+$ ]] || [ "$major" -lt "$REQUIRED_PNPM_MAJOR" ]; then
+    log_error "pnpm 不可用或版本过低: ${cur:-未知}（需 >= ${REQUIRED_PNPM_MAJOR}.x，以兼容 cat/pnpm-workspace.yaml 的 allowBuilds）"
+    exit 1
+  fi
+}
+
+#===============================================================================
 # 环境检查
 #===============================================================================
 check_prerequisites() {
@@ -209,6 +251,14 @@ check_prerequisites() {
     exit 1
   fi
 
+  # pnpm 11 的专有配置（allowBuilds 等）只从前端 pnpm-workspace.yaml 读取
+  if [ ! -f "$FRONTEND_DIR/pnpm-workspace.yaml" ]; then
+    log_warn "未找到 $FRONTEND_DIR/pnpm-workspace.yaml：pnpm 11 将拦截所有依赖构建脚本，Electron 二进制可能缺失"
+  fi
+
+  check_node_version
+  check_pnpm_version
+  log_info "Node: $(node -v) / pnpm: $(pnpm -v 2>/dev/null || echo '?')"
   log_info "环境检查通过"
 }
 
