@@ -251,9 +251,14 @@ check_prerequisites() {
     exit 1
   fi
 
-  # pnpm 11 的专有配置（allowBuilds 等）只从前端 pnpm-workspace.yaml 读取
+  # pnpm 11 的专有配置（allowBuilds 等）只从前端 pnpm-workspace.yaml 读取。
+  # 该文件缺失 = 所有依赖构建脚本被拦截 -> ERR_PNPM_IGNORED_BUILDS（Electron 二进制缺失）。
+  # 常见原因：聚合仓的 cat 子模块指针过旧，未包含该文件，需更新指针。
   if [ ! -f "$FRONTEND_DIR/pnpm-workspace.yaml" ]; then
-    log_warn "未找到 $FRONTEND_DIR/pnpm-workspace.yaml：pnpm 11 将拦截所有依赖构建脚本，Electron 二进制可能缺失"
+    log_error "未找到 $FRONTEND_DIR/pnpm-workspace.yaml（pnpm 11 的 allowBuilds 配置）"
+    log_error "当前 cat 子模块: $(git -C "$FRONTEND_DIR" rev-parse --short HEAD 2>/dev/null || echo '未知')"
+    log_error "请在聚合仓更新子模块指针：cd cat && git fetch && git checkout <含 pnpm-workspace.yaml 的 commit> && cd .. && git add cat"
+    exit 1
   fi
 
   check_node_version
