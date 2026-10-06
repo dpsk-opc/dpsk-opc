@@ -380,6 +380,7 @@ build_frontend() {
   # deb 需要 maintainer 元信息（FPM 强制要求）
   # shellcheck disable=SC2086
   npx electron-builder $plat_arg \
+    --publish never \
     --config.directories.output="$INSTALLER_OUTPUT" \
     --config.extraMetadata.version="$version" \
     --config.linux.maintainer="$VENDOR <noreply@example.com>" \
