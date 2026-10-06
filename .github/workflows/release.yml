@@ -83,14 +83,14 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 11.5.3
 
       - name: Cache pnpm store
         uses: actions/cache@v4
         with:
           path: ~/.pnpm-store
-          key: pnpm-${{ runner.os }}-${{ hashFiles('cat/pnpm-lock.yaml') }}
-          restore-keys: pnpm-${{ runner.os }}-
+          key: pnpm11-${{ runner.os }}-${{ hashFiles('cat/pnpm-lock.yaml') }}
+          restore-keys: pnpm11-${{ runner.os }}-
 
       - name: Build (windows)
         shell: bash
@@ -106,6 +106,8 @@ jobs:
           name: installer-windows
           path: |
             build/installer/*.exe
+            build/installer/*.blockmap
+            build/installer/latest.yml
           if-no-files-found: error
 
   # ============================================================
@@ -141,14 +143,14 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 11.5.3
 
       - name: Cache pnpm store
         uses: actions/cache@v4
         with:
           path: ~/.pnpm-store
-          key: pnpm-${{ runner.os }}-${{ hashFiles('cat/pnpm-lock.yaml') }}
-          restore-keys: pnpm-${{ runner.os }}-
+          key: pnpm11-${{ runner.os }}-${{ hashFiles('cat/pnpm-lock.yaml') }}
+          restore-keys: pnpm11-${{ runner.os }}-
 
       - name: Install Linux packaging deps
         run: |
@@ -170,6 +172,8 @@ jobs:
           path: |
             build/installer/*.AppImage
             build/installer/*.deb
+            build/installer/*.blockmap
+            build/installer/latest-linux.yml
           if-no-files-found: error
 
   # ============================================================
@@ -206,14 +210,14 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 11.5.3
 
       - name: Cache pnpm store
         uses: actions/cache@v4
         with:
           path: ~/.pnpm-store
-          key: pnpm-${{ runner.os }}-${{ hashFiles('cat/pnpm-lock.yaml') }}
-          restore-keys: pnpm-${{ runner.os }}-
+          key: pnpm11-${{ runner.os }}-${{ hashFiles('cat/pnpm-lock.yaml') }}
+          restore-keys: pnpm11-${{ runner.os }}-
 
       - name: Build (macos)
         shell: bash
