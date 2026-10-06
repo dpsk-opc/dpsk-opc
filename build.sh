@@ -72,7 +72,12 @@ FRONTEND_BACKEND_DIR="$FRONTEND_DIR/backend/dist"
 #===============================================================================
 # 后端 jpackage 配置（搬迁自原 opc/build.sh）
 #===============================================================================
-APP_NAME="Yoo"                       # 应用名（与前端 productName 保持一致）
+# 后端启动器名（jpackage --name）：
+#   ⚠️ 必须与前端 electron/main.ts 的 BACKEND_EXE_NAME 一致，且不能与前端 Electron
+#   主程序同名（前端是 Yoo.exe，来自 productName）。若后端也叫 Yoo.exe，
+#   electron 主进程 stopBackend / cleanupStaleBackend 里的
+#   `taskkill /im Yoo.exe /f` 会误杀前端自身，应用表现为"启动后只剩前端/异常退出"。
+APP_NAME="opc"
 JPACKAGE_TYPE="app-image"            # app-image（文件夹含 exe）；Electron 内嵌用
 VENDOR="XiaoMiZhou"
 COPYRIGHT="Copyright © 2026"
