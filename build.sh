@@ -331,7 +331,7 @@ do_clean() {
   done
 
   # 清理后端 Maven target
-  for m in opc-cli opc-service opc-core opc-plugin opc-im; do
+  for m in opc-cli opc-core opc-ai-engine opc-plugin opc-im; do
     if [ -d "$BACKEND_DIR/$m/target" ]; then
       rm -rf "$BACKEND_DIR/$m/target"
     fi
@@ -398,6 +398,15 @@ build_trimmed_runtime() {
 build_backend() {
   local version="$1"
   log_step "Step 1: 构建后端 (Java + jpackage)"
+
+  # 构建环境诊断（排查跨平台构建差异时一眼可见）
+  log_info "构建环境诊断："
+  mvn -v 2>&1 | head -3 | sed 's/^/    /' || true
+  if [ -d "$ROOT_DIR/opc/.git" ] || git -C "$ROOT_DIR/opc" rev-parse --git-dir >/dev/null 2>&1; then
+    local opc_commit
+    opc_commit="$(git -C "$ROOT_DIR/opc" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    echo "    后端子模块 opc commit: $opc_commit"
+  fi
 
   # Maven 打包（生成 fat jar）
   log_info "执行 Maven 打包..."

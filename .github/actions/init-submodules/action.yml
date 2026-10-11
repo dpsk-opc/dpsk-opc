@@ -25,6 +25,9 @@ runs:
         sed -i.bak -E "s#(url = )git@github.com:#\1https://x-access-token:${SUBMODULE_TOKEN}@github.com/#" .gitmodules
         rm -f .gitmodules.bak
         git submodule sync --recursive
-        git submodule update --init --recursive
+        # --remote：跟随 .gitmodules 中配置的 branch（opc/cat 均为 develop）拉取各子模块
+        # 的**最新提交**，而非聚合仓里钉死的固定指针 —— 这样子模块推 develop 后，
+        # CI 无需手动更新聚合仓指针即可构建到最新代码。
+        git submodule update --init --recursive --remote
         echo "子模块拉取完成："
         git submodule status
