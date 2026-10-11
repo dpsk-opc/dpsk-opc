@@ -2,8 +2,9 @@
 #===============================================================================
 #  Yoo! 桌面应用打包脚本（聚合仓唯一构建入口）
 #
-#  流程：读取版本 → 构建后端 Java（mvn + jpackage）→ 拷贝后端到前端
-#        → 构建前端（pnpm + electron-builder）→ 输出到 build/
+#  流程：读取版本 → 构建后端 Java（mvn + 裁剪 fat jar + jlink 精简运行时 + jpackage）
+#        → 后端启动校验（用打包产物自带运行时真启一次）
+#        → 拷贝后端到前端 → 构建前端（pnpm + electron-builder）→ 输出到 build/
 #
 #  使用方式:
 #    bash build.sh                       # 默认构建（平台自动推断），版本取自 ./VERSION
@@ -24,6 +25,11 @@
 #    <repo-root>/opc/        后端子模块（根即 Maven 工程）
 #    <repo-root>/cat/        前端子模块（Electron + pnpm）
 #    <repo-root>/build/      产物输出（backend / installer）
+#
+#  体积优化（安装包瘦身，详见各自配置段）:
+#    1) tools/TrimJarNatives.java  裁掉非目标平台的原生负载（playwright / onnxruntime / tokenizers）
+#    2) TRIM_JRE + JRE_MODULES     用 jlink 按需模块替换 jpackage 默认的「整个 JDK」
+#    3) SMOKE_TEST                 校验 2) 没剪掉必需模块（打包产物真启一次后端）
 #===============================================================================
 
 set -e
@@ -36,10 +42,13 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-log_info()  { echo -e "${GREEN}[INFO]${NC}  $1"; }
-log_warn()  { echo -e "${YELLOW}[WARN]${NC}  $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
-log_step()  { echo -e "\n${GREEN}════════════════════════════════════════${NC}"; echo -e "${GREEN}  $1${NC}"; echo -e "${GREEN}════════════════════════════════════════${NC}\n"; }
+# 用 printf 而非 echo -e：消息里可能带 Windows 路径（W:\...\build\...），
+# echo -e 会把 \b \t 之类当转义序列吃掉（日志里路径变成 dpsk-opcuilduild 这种鬼样子）。
+# 颜色码用 %b 展开（\033），消息本身用 %s 原样输出，互不影响。
+log_info()  { printf '%b%s\n' "${GREEN}[INFO]${NC}  " "$1"; }
+log_warn()  { printf '%b%s\n' "${YELLOW}[WARN]${NC}  " "$1"; }
+log_error() { printf '%b%s\n' "${RED}[ERROR]${NC} " "$1"; }
+log_step()  { printf '\n%b\n' "${GREEN}════════════════════════════════════════${NC}"; printf '%b%s%b\n' "${GREEN}  " "$1" "${NC}"; printf '%b\n\n' "${GREEN}════════════════════════════════════════${NC}"; }
 
 #===============================================================================
 # 路径（全部相对聚合仓根，单层子模块）
@@ -88,6 +97,37 @@ CONFIG_FILE_NAME="application-uat.properties"
 
 # 强制 UTF-8：中文 Windows 下 JVM 默认 GBK，会导致日志与控制台乱码
 JAVA_OPTIONS="-Xmx512m -Dfile.encoding=UTF-8 -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -Dsun.stdout.encoding=UTF-8 -Dsun.stderr.encoding=UTF-8"
+
+#===============================================================================
+# 体积优化 ①：JRE 精简（jlink + jpackage --runtime-image）
+#   jpackage 对非模块化应用（--main-jar）默认把**整个 JDK** jlink 进 runtime/：
+#   Windows 上约 123MB，其中 lib/modules 就 93MB，还带 java.compiler / ct.sym 等
+#   启动与运行都用不到的模块。改成按需模块后实测 ≈53MB，安装包约省 30MB。
+#
+#   TRIM_JRE=false 可回退成 jpackage 默认行为（排查疑难问题时的逃生阀）
+#===============================================================================
+TRIM_JRE=true
+
+# 按需模块列表（实测 Windows 可启动；改动后**务必**让 SMOKE_TEST 通过）：
+#   java.base/java.sql/java.desktop/java.management …  Spring Boot + H2 + POI + ImageIO 基础
+#   jdk.charsets                                      GBK 等非 UTF-8 字符集（中文解析/日志）
+#   jdk.crypto.ec / jdk.crypto.cryptoki / jdk.security.auth  HTTPS + 系统证书库
+#   jdk.zipfs / jdk.httpserver / jdk.xml.dom          压缩包解析 / OAuth 本地回调 / DOM HTML
+#   jdk.localedata                                    中文日期货币等本地化数据
+# 运行期若报 NoClassDefFoundError / module not found，把对应模块追加到这里；
+# 常见候选：jdk.compiler（运行期编译 Java）、java.rmi、jdk.jcmd、jdk.jfr（已含）
+JRE_MODULES="java.base,java.compiler,java.datatransfer,java.desktop,java.instrument,java.logging,java.management,java.naming,java.net.http,java.prefs,java.scripting,java.security.jgss,java.security.sasl,java.sql,java.transaction.xa,java.xml,java.xml.crypto,jdk.charsets,jdk.crypto.cryptoki,jdk.crypto.ec,jdk.httpserver,jdk.jfr,jdk.localedata,jdk.management,jdk.naming.dns,jdk.net,jdk.security.auth,jdk.unsupported,jdk.xml.dom,jdk.zipfs"
+
+#===============================================================================
+# 体积优化 ②：后端启动校验
+#   用 jpackage 产物**自带的精简运行时**真启动一次后端（端口随机、数据目录隔离到
+#   build/smoke/，不碰 ~/.dpsk 真实数据），确认模块裁剪没有剪掉必需模块。
+#   模块漏了通常不在启动时报错，而是在某条业务路径上才炸 —— 故以启动校验兜底。
+#   SMOKE_TEST=false 可跳过（跳过＝放弃这层保护，不推荐）
+#===============================================================================
+SMOKE_TEST=true
+SMOKE_TIMEOUT=120                    # 等待 "Started OpcApplication" 的上限（秒）
+SMOKE_STARTED_MARKER="Started OpcApplication"
 
 #===============================================================================
 # 目标平台配置
@@ -231,7 +271,12 @@ check_prerequisites() {
   log_step "Step 0: 环境检查"
 
   local missing=()
-  for cmd in mvn jpackage node pnpm; do
+  # jlink 与 jpackage 同属一个 JDK；仅在做 JRE 精简时才强制要求
+  local required_tools="mvn jpackage node pnpm"
+  if [ "$TRIM_JRE" = true ]; then
+    required_tools="$required_tools jlink"
+  fi
+  for cmd in $required_tools; do
     if ! command -v $cmd &>/dev/null; then
       missing+=("$cmd")
     fi
@@ -301,6 +346,53 @@ do_clean() {
 }
 
 #===============================================================================
+# jlink：生成精简运行时（体积优化 ①）
+#   结果写入全局 TRIMMED_RUNTIME；为空表示未精简（jpackage 走默认行为）
+#===============================================================================
+TRIMMED_RUNTIME=""
+
+# JDK 21+ 支持 --compress=zip-N（压缩率更好），JDK 17 只支持 0/1/2
+jlink_compress_opt() {
+  if jlink --help 2>&1 | grep -q 'zip-'; then
+    echo "--compress=zip-6"
+  else
+    echo "--compress=2"
+  fi
+}
+
+build_trimmed_runtime() {
+  TRIMMED_RUNTIME=""
+
+  if [ "$TRIM_JRE" != true ]; then
+    log_warn "TRIM_JRE=false，跳过 JRE 精简（runtime/ 将是完整 JDK，安装包偏大）"
+    return 0
+  fi
+
+  local runtime_dir="$BUILD_DIR/runtime-image"
+  # jlink 要求输出目录不存在（相同内容重跑也要先删）
+  rm -rf "$runtime_dir"
+
+  local compress_opt
+  compress_opt="$(jlink_compress_opt)"
+  log_info "jlink 生成精简运行时（$compress_opt）..."
+
+  if ! jlink \
+      --add-modules "$JRE_MODULES" \
+      --strip-debug --no-header-files --no-man-pages \
+      "$compress_opt" \
+      --output "$runtime_dir"; then
+    log_warn "jlink 精简失败，回退为 jpackage 默认运行时（安装包会大 30MB 左右）"
+    rm -rf "$runtime_dir"
+    return 0
+  fi
+
+  TRIMMED_RUNTIME="$runtime_dir"
+  local size
+  size="$(du -sh "$runtime_dir" 2>/dev/null | cut -f1)"
+  log_info "精简运行时: $runtime_dir（${size:-?}，jpackage 默认为整个 JDK）"
+}
+
+#===============================================================================
 # Step 1: 构建后端（mvn package + jpackage）
 #===============================================================================
 build_backend() {
@@ -318,12 +410,36 @@ build_backend() {
   fi
   log_info "使用 JAR: $jar_path"
 
+  # 裁剪 fat jar 里的「非目标平台原生负载」：
+  #   playwright driver-bundle（各平台一套 Node）/ onnxruntime（各平台 .dll/.so/.dylib + .pdb/.dSYM）
+  #   / tokenizers（各平台 libtokenizers）—— 合计约 262MB，且永远不会被加载（桌面端按平台分别打包）。
+  # 工具在前端子模块内（单文件 Java 源码，JDK 17+ 直接运行；jpackage 本就要求 JDK）。
+  local trim_tool="$FRONTEND_DIR/tools/TrimJarNatives.java"
+  if [ -f "$trim_tool" ]; then
+    log_info "裁剪非目标平台原生负载 (platform=$PLATFORM)..."
+    java "$trim_tool" --jar "$jar_path" --platform "$PLATFORM"
+  else
+    log_warn "未找到裁剪工具 $trim_tool，跳过裁剪（安装包会明显偏大）"
+  fi
+
+  # JRE 精简：生成按需模块的 runtime，稍后交给 jpackage --runtime-image
+  build_trimmed_runtime
+
+  # jpackage 会把 --input 目录下的所有内容原样复制进 app/：
+  # 这里先只把 jar 放进一个干净的暂存目录，避免把 maven 的 target 目录
+  #（classes/ test-classes/ maven-archiver/ maven-status/ …）一起打进安装包
+  local stage_dir="$BUILD_DIR/backend-input"
+  rm -rf "$stage_dir"
+  mkdir -p "$stage_dir"
+  cp "$jar_path" "$stage_dir/$BACKEND_MAIN_JAR"
+  log_info "jpackage 输入目录: $stage_dir（仅含 $BACKEND_MAIN_JAR）"
+
   # 准备 jpackage 参数
   rm -rf "$BACKEND_OUTPUT"
   mkdir -p "$BACKEND_OUTPUT"
 
   local cmd="jpackage"
-  cmd="$cmd --input $BACKEND_DIR/$BACKEND_JAR_DIR"
+  cmd="$cmd --input $stage_dir"
   cmd="$cmd --main-jar $BACKEND_MAIN_JAR"
   cmd="$cmd --name $APP_NAME"
   cmd="$cmd --type $JPACKAGE_TYPE"
@@ -331,6 +447,11 @@ build_backend() {
   cmd="$cmd --copyright \"$COPYRIGHT\""
   cmd="$cmd --app-version $version"
   cmd="$cmd --dest $BACKEND_OUTPUT"
+
+  # 精简运行时（体积优化 ①）：jpackage 直接复制该 runtime，跳过默认的「整包 JDK」jlink
+  if [ -n "$TRIMMED_RUNTIME" ]; then
+    cmd="$cmd --runtime-image \"$TRIMMED_RUNTIME\""
+  fi
 
   # JVM 参数逐项传入，避免含空格时 jpackage 解析异常
   if [ -n "$JAVA_OPTIONS" ]; then
@@ -364,6 +485,171 @@ build_backend() {
   fi
 
   log_info "后端构建完成: $out_dir"
+}
+
+#===============================================================================
+# Step 1.5: 后端启动校验（体积优化 ②）
+#   用产物自带的精简运行时真启一次后端，确认模块裁剪没有剪掉必需模块。
+#   - 端口随机，避免与本机正在运行的应用冲突
+#   - base-path 指向 build/smoke/，绝不触碰 ~/.dpsk 真实数据
+#   - 起不来（或超时）＝打包失败，并在日志尾部给出可能缺失的模块提示
+#===============================================================================
+
+# 后端产物内置运行时的启动器（jpackage app-image）
+backend_launcher_path() {
+  case "$PLATFORM" in
+    macos) echo "$1/Contents/MacOS/$APP_NAME" ;;
+    *)     echo "$1/bin/$APP_NAME" ;;
+  esac
+}
+
+# Windows 上也是 bin/<APP_NAME>.exe（--win-console 保留控制台，便于抓 stdout）
+smoke_launcher_path() {
+  local out_dir="$1"
+  case "$PLATFORM" in
+    windows) echo "$out_dir/$APP_NAME.exe" ;;
+    *)       echo "$(backend_launcher_path "$out_dir")" ;;
+  esac
+}
+
+# 传给后端（原生程序）的路径必须是本机路径：
+# Git Bash 下 pwd 给的是 MSYS 形式（/w/workspace/...），直接丢给 Windows 的 opc.exe
+# 会被解释成「当前盘符下的 w/...」，数据目录会落到意料之外的位置。
+to_native_path() {
+  if command -v cygpath >/dev/null 2>&1; then
+    cygpath -w "$1" 2>/dev/null || echo "$1"
+  else
+    echo "$1"
+  fi
+}
+
+# 当前存在的后端进程 PID（Windows；用于「只杀本次新起的进程」）
+# 输出统一为「空格分隔 + 结尾空格」：调用方用 `case " $pre_pids " in *" $pid "*)` 判成员，
+# 若保留换行分隔会漏判（实测把用户在跑的后端一起杀了）
+list_backend_pids() {
+  tasklist //FI "IMAGENAME eq $APP_NAME.exe" //FO CSV //NH 2>/dev/null \
+    | awk -F'","' '{print $2}' | tr -d '\r"' | grep -E '^[0-9]+$' | tr '\n' ' ' || true
+}
+
+# 结束校验进程：
+#   - POSIX：$! 就是真实 PID，先 TERM 再 KILL 即可
+#   - Windows：Git Bash 的 $! 是 MSYS PID，taskkill 要用 /proc/<pid>/winpid 换真实 PID；
+#     且 launcher 可能先于 JVM 退出（JVM 挂在已死的父进程上，taskkill /T 追不到），
+#     故再按「本次启动后新增的 PID」逐个补杀。
+#   ⚠️ 绝不 taskkill /im <APP_NAME>.exe：那会连带杀掉用户正在运行的应用后端。
+stop_smoke_backend() {
+  local pid="$1"
+  local pre_pids="${2:-}"
+  [ -n "$pid" ] || return 0
+
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*|Windows*)
+      local winpid="$pid"
+      if [ -r "/proc/$pid/winpid" ]; then
+        winpid="$(cat "/proc/$pid/winpid" 2>/dev/null || echo "$pid")"
+      fi
+      taskkill //PID "$winpid" //T //F >/dev/null 2>&1 || true
+      kill -9 "$pid" >/dev/null 2>&1 || true
+
+      # 补杀：仅限「启动前不存在」的 PID
+      local p
+      for p in $(list_backend_pids); do
+        case " $pre_pids " in
+          *" $p "*) continue ;;
+        esac
+        taskkill //PID "$p" //T //F >/dev/null 2>&1 || true
+      done
+
+      # 收尾确认（残留会占着端口与内存，下一轮构建容易踩坑）
+      sleep 2
+      local left=""
+      for p in $(list_backend_pids); do
+        case " $pre_pids " in
+          *" $p "*) continue ;;
+        esac
+        left="$left $p"
+      done
+      if [ -n "$left" ]; then
+        log_warn "后端校验进程未完全回收，残留 PID:$left（可手动 taskkill /pid <pid> /f 清理）"
+      fi
+      ;;
+    *)
+      kill "$pid" >/dev/null 2>&1 || true
+      sleep 2
+      kill -9 "$pid" >/dev/null 2>&1 || true
+      ;;
+  esac
+}
+
+smoke_test_backend() {
+  local out_dir="$1"
+
+  if [ "$SMOKE_TEST" != true ]; then
+    log_warn "SMOKE_TEST=false，跳过后端启动校验（模块裁剪未经运行时验证）"
+    return 0
+  fi
+
+  local launcher
+  launcher="$(smoke_launcher_path "$out_dir")"
+  if [ ! -f "$launcher" ]; then
+    log_error "未找到后端启动器，无法启动校验: $launcher"
+    exit 1
+  fi
+
+  local smoke_dir="$BUILD_DIR/smoke"
+  rm -rf "$smoke_dir"
+  mkdir -p "$smoke_dir/data"
+  local log_file="$smoke_dir/backend.log"
+  local port=$(( RANDOM % 2000 + 18000 ))
+
+  # 启动前先记录已存在的后端进程，回收时据此排除「用户正在运行的应用」
+  local pre_pids=""
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*|Windows*) pre_pids="$(list_backend_pids)" ;;
+  esac
+
+  # 传给原生程序的路径要转成本机形式（Git Bash 下是 /w/... 形式）
+  local native_base
+  native_base="$(to_native_path "$smoke_dir/data")"
+
+  log_info "启动校验: $launcher（port=$port，base-path=$native_base）"
+  # 参数与前端 electron/config.ts 的 buildBackendArgs 保持一致；
+  # base-path 必须覆盖，否则会写入真实的 ~/.dpsk
+  "$launcher" \
+    "--server.port=$port" \
+    "--com.xiaomizhou.dpsk.base-path=$native_base" \
+    "--logging.charset.console=UTF-8" \
+    "--logging.charset.file=UTF-8" \
+    > "$log_file" 2>&1 &
+  local pid=$!
+
+  local waited=0 started=false
+  while [ "$waited" -lt "$SMOKE_TIMEOUT" ]; do
+    if grep -q "$SMOKE_STARTED_MARKER" "$log_file" 2>/dev/null; then
+      started=true
+      break
+    fi
+    # 进程提前退出：多半是缺模块 / 端口占用 / 配置错误
+    if ! kill -0 "$pid" 2>/dev/null; then
+      break
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+
+  stop_smoke_backend "$pid" "$pre_pids"
+
+  if [ "$started" != true ]; then
+    log_error "后端启动校验失败：${SMOKE_TIMEOUT}s 内未出现 \"$SMOKE_STARTED_MARKER\""
+    log_error "--- 日志尾部（$log_file） ---"
+    tail -n 40 "$log_file" 2>/dev/null || true
+    log_error "---------------------------------------------"
+    log_error "若日志提示缺模块（NoClassDefFoundError / module not found），"
+    log_error "请把对应模块追加进 build.sh 的 JRE_MODULES，或设 TRIM_JRE=false 回退"
+    exit 1
+  fi
+
+  log_info "后端启动校验通过（${waited}s）"
 }
 
 #===============================================================================
@@ -473,6 +759,14 @@ verify_output() {
   log_info "=============================================="
   log_info "后端产物: $BACKEND_OUTPUT"
   log_info "安装包目录: $INSTALLER_OUTPUT"
+  # 体积概览：便于确认 JRE 精简（体积优化 ①）是否生效
+  local backend_img="$BACKEND_OUTPUT/$(jpackage_output_dir "$PLATFORM")"
+  if [ -d "$backend_img/runtime" ]; then
+    log_info "后端运行时: $(du -sh "$backend_img/runtime" 2>/dev/null | cut -f1)（未精简的完整 JDK 约 123MB）"
+  fi
+  if [ -d "$backend_img" ]; then
+    log_info "后端产物大小: $(du -sh "$backend_img" 2>/dev/null | cut -f1)"
+  fi
   log_info ""
   # 各平台产物扩展名
   ls -lh "$INSTALLER_OUTPUT/" 2>/dev/null \
@@ -507,6 +801,8 @@ main() {
   fi
 
   build_backend "$version"
+  # 校验 JRE 裁剪没剪掉必需模块（失败即中止，避免把起不来的包发出去）
+  smoke_test_backend "$BACKEND_OUTPUT/$(jpackage_output_dir "$PLATFORM")"
   copy_backend
   build_frontend "$version"
   verify_output
