@@ -96,7 +96,7 @@ COPY_CONFIG_EXAMPLE=true
 CONFIG_FILE_NAME="application-uat.properties"
 
 # 强制 UTF-8：中文 Windows 下 JVM 默认 GBK，会导致日志与控制台乱码
-JAVA_OPTIONS="-Xmx512m -Dfile.encoding=UTF-8 -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -Dsun.stdout.encoding=UTF-8 -Dsun.stderr.encoding=UTF-8"
+JAVA_OPTIONS="-Xmx1024m -Dfile.encoding=UTF-8 -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -Dsun.stdout.encoding=UTF-8 -Dsun.stderr.encoding=UTF-8"
 
 #===============================================================================
 # 体积优化 ①：JRE 精简（jlink + jpackage --runtime-image）
